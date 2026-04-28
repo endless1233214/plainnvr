@@ -55,10 +55,10 @@ Use this if you want TrueNAS to pull updates later.
 5. Push to `main`. GitHub Actions should publish:
 
    ```text
-   ghcr.io/YOUR_GITHUB_USERNAME/plainnvr:latest
+   ghcr.io/endless1233214/plainnvr:latest
    ```
 
-6. Edit `truenas-compose.registry.yaml` and replace `YOUR_GITHUB_USERNAME`.
+6. Use `truenas-compose.registry.yaml`.
 
 7. If the package is public, TrueNAS can pull it without registry login.
 

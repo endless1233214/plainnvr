@@ -1,6 +1,6 @@
 services:
   plainnvr:
-    image: ghcr.io/YOUR_GITHUB_USERNAME/plainnvr:latest
+    image: ghcr.io/endless1233214/plainnvr:latest
     pull_policy: always
     container_name: plainnvr
     restart: unless-stopped
