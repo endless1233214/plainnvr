@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PlainNVR</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>PlainNVR</h1>
+        <p id="diskLine">Checking storage...</p>
+      </div>
+      <div class="top-actions">
+        <button id="refreshStatus" type="button">Refresh</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="panel cameras-panel">
+        <div class="panel-heading">
+          <h2>Cameras</h2>
+          <button id="newCamera" type="button">New</button>
+        </div>
+        <div id="cameraList" class="camera-list"></div>
+      </section>
+
+      <section class="panel editor-panel">
+        <div class="panel-heading">
+          <h2 id="editorTitle">Add Camera</h2>
+          <span id="saveState" class="muted"></span>
+        </div>
+        <form id="cameraForm" class="form-grid">
+          <input type="hidden" id="cameraId" />
+          <label>
+            Name
+            <input id="cameraName" autocomplete="off" placeholder="Driveway" required />
+          </label>
+          <label>
+            Stream URL
+            <input id="rtspUrl" autocomplete="off" placeholder="rtsp://user:pass@camera-ip:554/stream1" required />
+          </label>
+          <label>
+            Segment Length
+            <select id="segmentSeconds">
+              <option value="30">30 seconds</option>
+              <option value="60" selected>1 minute</option>
+              <option value="300">5 minutes</option>
+              <option value="600">10 minutes</option>
+            </select>
+          </label>
+          <label>
+            Retention
+            <input id="retentionDays" type="number" min="1" max="3650" value="14" />
+          </label>
+          <label>
+            Transport
+            <select id="rtspTransport">
+              <option value="tcp" selected>TCP</option>
+              <option value="udp">UDP</option>
+            </select>
+          </label>
+          <div class="toggles">
+            <label><input id="enabled" type="checkbox" checked /> Enabled</label>
+            <label><input id="recordAudio" type="checkbox" checked /> Audio</label>
+          </div>
+
+          <fieldset class="schedule">
+            <legend>Schedule</legend>
+            <div class="mode-row">
+              <label><input type="radio" name="scheduleMode" value="always" checked /> Always</label>
+              <label><input type="radio" name="scheduleMode" value="weekly" /> Weekly</label>
+            </div>
+            <div id="weeklySchedule" class="weekly disabled">
+              <div class="day-row">
+                <label><input type="checkbox" value="mon" checked /> Mon</label>
+                <label><input type="checkbox" value="tue" checked /> Tue</label>
+                <label><input type="checkbox" value="wed" checked /> Wed</label>
+                <label><input type="checkbox" value="thu" checked /> Thu</label>
+                <label><input type="checkbox" value="fri" checked /> Fri</label>
+                <label><input type="checkbox" value="sat" checked /> Sat</label>
+                <label><input type="checkbox" value="sun" checked /> Sun</label>
+              </div>
+              <div class="time-row">
+                <label>
+                  Start
+                  <input id="scheduleStart" type="time" value="00:00" />
+                </label>
+                <label>
+                  End
+                  <input id="scheduleEnd" type="time" value="23:59" />
+                </label>
+              </div>
+            </div>
+          </fieldset>
+
+          <div class="button-row">
+            <button id="saveCamera" type="submit">Save Camera</button>
+            <button id="testStream" type="button">Test Stream</button>
+            <button id="deleteCamera" class="danger" type="button" hidden>Delete</button>
+          </div>
+
+          <fieldset id="haPanel" class="ha-panel" hidden>
+            <legend>Home Assistant</legend>
+            <label>
+              MJPEG URL
+              <input id="haMjpegUrl" readonly />
+            </label>
+            <label>
+              Snapshot URL
+              <input id="haSnapshotUrl" readonly />
+            </label>
+            <label>
+              YAML
+              <textarea id="haYaml" readonly rows="6"></textarea>
+            </label>
+          </fieldset>
+        </form>
+      </section>
+
+      <section class="panel playback-panel">
+        <div class="panel-heading">
+          <h2>Playback</h2>
+          <span id="segmentCount" class="muted"></span>
+        </div>
+        <div class="playback-controls">
+          <label>
+            Camera
+            <select id="playbackCamera"></select>
+          </label>
+          <label>
+            Date
+            <input id="playbackDate" type="date" />
+          </label>
+          <button id="loadSegments" type="button">Load</button>
+        </div>
+        <video id="player" controls playsinline></video>
+        <div id="segments" class="segments"></div>
+      </section>
+
+      <section class="panel events-panel">
+        <div class="panel-heading">
+          <h2>Events</h2>
+        </div>
+        <div id="events" class="events"></div>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
