@@ -81,6 +81,14 @@ Open:
 http://TRUENAS-IP:8787
 ```
 
+The first visit creates the local admin account. If you want to seed the account
+from YAML instead, add these environment variables before first launch:
+
+```yaml
+NVR_AUTH_USERNAME: admin
+NVR_AUTH_PASSWORD: use-a-long-unique-password
+```
+
 Recordings land in:
 
 ```text

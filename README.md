@@ -15,6 +15,20 @@ python3 app/server.py
 
 Open `http://localhost:8787`.
 
+On first launch, PlainNVR asks you to create a local admin account. The password
+must be at least 12 characters.
+
+You can also pre-create the first admin account with environment variables:
+
+```bash
+NVR_AUTH_USERNAME=admin \
+NVR_AUTH_PASSWORD="use-a-long-unique-password" \
+NVR_DATA_DIR="$PWD/data" \
+NVR_RECORDINGS_DIR="$PWD/recordings" \
+NVR_STATIC_DIR="$PWD/static" \
+python3 app/server.py
+```
+
 ## Run With Docker Compose
 
 ```bash
@@ -22,6 +36,10 @@ docker compose up --build
 ```
 
 Open `http://localhost:8787`.
+
+If no account exists in `/data/nvr.sqlite3`, the first browser visit opens the
+account setup screen. After that, the UI, API, playback files, and camera
+management routes require login.
 
 ## TrueNAS Notes
 
@@ -51,6 +69,10 @@ http://PLAINNVR-HOST:8787/ha/CAMERA_ID/snapshot.jpg
 In Home Assistant, add the MJPEG IP Camera integration and use the first URL as the MJPEG URL and the second URL as the Still Image URL. The Generic Camera integration can also use PlainNVR's snapshot URL, but MJPEG IP Camera is the simplest bridge when RTSP is unreliable in Home Assistant.
 
 The PlainNVR camera editor shows the exact URLs after a camera is saved.
+
+Those Home Assistant URLs include a generated stream token after login. Keep
+that token private; it lets Home Assistant read the snapshot and MJPEG bridge
+without using your browser session cookie.
 
 ## Camera URL Examples
 

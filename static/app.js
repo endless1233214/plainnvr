@@ -2,6 +2,7 @@ const state = {
   cameras: [],
   recorders: {},
   selectedCameraId: "",
+  streamToken: "",
 };
 
 const dayKeys = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
@@ -66,10 +67,14 @@ function formatTime(value) {
 async function api(path, options = {}) {
   const response = await fetch(path, {
     headers: { "Content-Type": "application/json" },
+    credentials: "same-origin",
     ...options,
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
+    if (response.status === 401) {
+      window.location.href = "/login.html";
+    }
     throw new Error(data.error || `Request failed: ${response.status}`);
   }
   return data;
@@ -108,9 +113,11 @@ function applyScheduleToForm(schedule) {
 
 function cameraHaUrls(camera) {
   const base = window.location.origin;
+  const token = state.streamToken ? `token=${encodeURIComponent(state.streamToken)}` : "";
+  const tokenSuffix = token ? `&${token}` : "";
   return {
-    mjpeg: `${base}/ha/${camera.id}/stream.mjpeg?fps=2&width=1280`,
-    snapshot: `${base}/ha/${camera.id}/snapshot.jpg`,
+    mjpeg: `${base}/ha/${camera.id}/stream.mjpeg?fps=2&width=1280${tokenSuffix}`,
+    snapshot: `${base}/ha/${camera.id}/snapshot.jpg${token ? `?${token}` : ""}`,
   };
 }
 
@@ -257,6 +264,7 @@ async function loadStatus() {
   const data = await api("/api/status");
   state.cameras = data.cameras;
   state.recorders = data.recorders;
+  state.streamToken = data.stream_token || "";
   updateDiskLine(data.disk);
   renderCameras();
   renderPlaybackCameras();
@@ -332,6 +340,15 @@ async function loadSegments() {
   });
 }
 
+async function logout() {
+  await fetch("/api/auth/logout", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+  }).catch(() => {});
+  window.location.href = "/login.html";
+}
+
 function escapeHtml(value) {
   return String(value)
     .replaceAll("&", "&amp;")
@@ -352,6 +369,7 @@ document.addEventListener("DOMContentLoaded", () => {
   $("deleteCamera").addEventListener("click", deleteSelectedCamera);
   $("testStream").addEventListener("click", testStream);
   $("refreshStatus").addEventListener("click", loadStatus);
+  $("logoutButton").addEventListener("click", logout);
   $("loadSegments").addEventListener("click", loadSegments);
   document.querySelectorAll('input[name="scheduleMode"]').forEach((radio) => {
     radio.addEventListener("change", () => {

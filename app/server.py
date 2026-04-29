@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 import json
+import hashlib
+import hmac
 import mimetypes
 import os
 import re
+import secrets
 import shutil
 import signal
 import sqlite3
@@ -29,6 +32,12 @@ SCAN_INTERVAL_SECONDS = int(os.environ.get("NVR_SCAN_INTERVAL_SECONDS", "10"))
 RETENTION_INTERVAL_SECONDS = int(os.environ.get("NVR_RETENTION_INTERVAL_SECONDS", "3600"))
 DEFAULT_SEGMENT_SECONDS = int(os.environ.get("NVR_DEFAULT_SEGMENT_SECONDS", "60"))
 DB_PATH = DATA_DIR / "nvr.sqlite3"
+AUTH_COOKIE_NAME = "plainnvr_session"
+AUTH_SESSION_TTL_SECONDS = int(os.environ.get("NVR_SESSION_TTL_SECONDS", str(7 * 24 * 60 * 60)))
+AUTH_HASH_ITERATIONS = int(os.environ.get("NVR_AUTH_HASH_ITERATIONS", "260000"))
+BOOTSTRAP_USERNAME = os.environ.get("NVR_AUTH_USERNAME", "admin").strip() or "admin"
+BOOTSTRAP_PASSWORD = os.environ.get("NVR_AUTH_PASSWORD", "")
+STREAM_TOKEN_OVERRIDE = os.environ.get("NVR_STREAM_TOKEN", "").strip()
 
 DAY_KEYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 SEGMENT_RE = re.compile(r"^(?P<stamp>\d{8}T\d{6})\.mp4$")
@@ -68,6 +77,42 @@ def normalize_bool(value):
     if isinstance(value, str):
         return 1 if value.lower() in ("1", "true", "yes", "on") else 0
     return 0
+
+
+def password_hash(password, salt=None, iterations=AUTH_HASH_ITERATIONS):
+    salt = salt or secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        bytes.fromhex(salt),
+        iterations,
+    )
+    return f"pbkdf2_sha256${iterations}${salt}${digest.hex()}"
+
+
+def verify_password(password, stored_hash):
+    try:
+        algorithm, iterations, salt, expected = stored_hash.split("$", 3)
+        if algorithm != "pbkdf2_sha256":
+            return False
+        candidate = password_hash(password, salt=salt, iterations=int(iterations)).rsplit("$", 1)[-1]
+    except (ValueError, TypeError):
+        return False
+    return hmac.compare_digest(candidate, expected)
+
+
+def validate_username(username):
+    username = str(username or "").strip()
+    if not re.match(r"^[A-Za-z0-9_.-]{3,40}$", username):
+        raise ValueError("Username must be 3-40 letters, numbers, dots, dashes, or underscores.")
+    return username
+
+
+def validate_password(password):
+    password = str(password or "")
+    if len(password) < 12:
+        raise ValueError("Password must be at least 12 characters.")
+    return password
 
 
 def default_schedule():
@@ -171,6 +216,159 @@ def init_db():
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                username TEXT PRIMARY KEY,
+                password_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sessions (
+                id TEXT PRIMARY KEY,
+                username TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                last_seen_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                FOREIGN KEY(username) REFERENCES users(username) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        bootstrap_auth_from_env(conn)
+        ensure_stream_token(conn)
+        cleanup_expired_sessions(conn)
+
+
+def bootstrap_auth_from_env(conn):
+    row = conn.execute("SELECT username FROM users LIMIT 1").fetchone()
+    if row or not BOOTSTRAP_PASSWORD:
+        return
+    username = validate_username(BOOTSTRAP_USERNAME)
+    password = validate_password(BOOTSTRAP_PASSWORD)
+    now = iso_now()
+    conn.execute(
+        """
+        INSERT INTO users (username, password_hash, created_at, updated_at)
+        VALUES (?, ?, ?, ?)
+        """,
+        (username, password_hash(password), now, now),
+    )
+    print(f"Created PlainNVR admin user from NVR_AUTH_USERNAME/NVR_AUTH_PASSWORD: {username}")
+
+
+def ensure_stream_token(conn):
+    if STREAM_TOKEN_OVERRIDE:
+        return STREAM_TOKEN_OVERRIDE
+    row = conn.execute("SELECT value FROM app_settings WHERE key = 'stream_token'").fetchone()
+    if row:
+        return row["value"]
+    token = secrets.token_urlsafe(32)
+    conn.execute(
+        """
+        INSERT INTO app_settings (key, value, updated_at)
+        VALUES ('stream_token', ?, ?)
+        """,
+        (token, iso_now()),
+    )
+    return token
+
+
+def get_stream_token():
+    if STREAM_TOKEN_OVERRIDE:
+        return STREAM_TOKEN_OVERRIDE
+    with db_conn() as conn:
+        return ensure_stream_token(conn)
+
+
+def cleanup_expired_sessions(conn):
+    conn.execute("DELETE FROM sessions WHERE expires_at <= ?", (iso_now(),))
+
+
+def setup_required():
+    with db_conn() as conn:
+        row = conn.execute("SELECT username FROM users LIMIT 1").fetchone()
+    return row is None
+
+
+def create_user(username, password):
+    username = validate_username(username)
+    password = validate_password(password)
+    with db_conn() as conn:
+        if conn.execute("SELECT username FROM users LIMIT 1").fetchone():
+            raise ValueError("Admin account already exists.")
+        now = iso_now()
+        conn.execute(
+            """
+            INSERT INTO users (username, password_hash, created_at, updated_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (username, password_hash(password), now, now),
+        )
+    return username
+
+
+def authenticate_user(username, password):
+    username = str(username or "").strip()
+    with db_conn() as conn:
+        row = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+    if not row or not verify_password(str(password or ""), row["password_hash"]):
+        return None
+    return row["username"]
+
+
+def create_session(username):
+    session_id = secrets.token_urlsafe(32)
+    now = utcnow()
+    expires_at = now + timedelta(seconds=AUTH_SESSION_TTL_SECONDS)
+    with db_conn() as conn:
+        cleanup_expired_sessions(conn)
+        conn.execute(
+            """
+            INSERT INTO sessions (id, username, created_at, last_seen_at, expires_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (session_id, username, now.isoformat(), now.isoformat(), expires_at.isoformat()),
+        )
+    return session_id
+
+
+def delete_session(session_id):
+    if not session_id:
+        return
+    with db_conn() as conn:
+        conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+
+
+def current_session_user(session_id):
+    if not session_id:
+        return None
+    with db_conn() as conn:
+        row = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
+        if not row:
+            return None
+        try:
+            expires_at = datetime.fromisoformat(row["expires_at"])
+        except ValueError:
+            conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+            return None
+        if expires_at <= utcnow():
+            conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+            return None
+        conn.execute("UPDATE sessions SET last_seen_at = ? WHERE id = ?", (iso_now(), session_id))
+        return row["username"]
 
 
 def camera_from_row(row):
@@ -640,25 +838,107 @@ def disk_status():
     return {"total": usage.total, "used": usage.used, "free": usage.free}
 
 
+def parse_cookie_header(value):
+    cookies = {}
+    for part in str(value or "").split(";"):
+        if "=" not in part:
+            continue
+        key, raw_value = part.split("=", 1)
+        cookies[key.strip()] = raw_value.strip()
+    return cookies
+
+
+def bearer_token(headers):
+    value = headers.get("Authorization", "")
+    scheme, _, token = value.partition(" ")
+    if scheme.lower() == "bearer" and token:
+        return token.strip()
+    return ""
+
+
+def valid_stream_token(handler, parsed):
+    expected = get_stream_token()
+    query = parse_qs(parsed.query)
+    provided = query.get("token", [""])[0] or bearer_token(handler.headers)
+    return bool(expected and provided and hmac.compare_digest(provided, expected))
+
+
 class NvrHandler(SimpleHTTPRequestHandler):
     server_version = "PlainNVR/0.1"
 
     def log_message(self, fmt, *args):
         print(f"{self.address_string()} - {fmt % args}")
 
-    def send_json(self, value, status=HTTPStatus.OK):
+    def send_json(self, value, status=HTTPStatus.OK, headers=None):
         data = json.dumps(value).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Cache-Control", "no-store")
+        for key, header_value in (headers or {}).items():
+            self.send_header(key, header_value)
         self.end_headers()
         self.wfile.write(data)
 
     def send_error_json(self, status, message):
         self.send_json({"error": message}, status)
 
+    def session_id(self):
+        return parse_cookie_header(self.headers.get("Cookie", "")).get(AUTH_COOKIE_NAME, "")
+
+    def auth_user(self):
+        if not hasattr(self, "_auth_user"):
+            self._auth_user = current_session_user(self.session_id())
+        return self._auth_user
+
+    def is_public_path(self, parsed):
+        public_paths = {
+            "/login.html",
+            "/styles.css",
+            "/favicon.ico",
+            "/api/auth/state",
+            "/api/auth/login",
+            "/api/auth/setup",
+        }
+        return parsed.path in public_paths
+
+    def ensure_authorized(self, parsed):
+        if self.is_public_path(parsed):
+            return True
+        if parsed.path.startswith("/ha/") and valid_stream_token(self, parsed):
+            return True
+        if self.auth_user():
+            return True
+        if parsed.path.startswith("/api/"):
+            self.send_error_json(HTTPStatus.UNAUTHORIZED, "Authentication required.")
+        else:
+            self.redirect("/login.html")
+        return False
+
+    def redirect(self, location):
+        self.send_response(HTTPStatus.SEE_OTHER)
+        self.send_header("Location", location)
+        self.send_header("Content-Length", "0")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
+    def session_cookie(self, session_id):
+        return (
+            f"{AUTH_COOKIE_NAME}={session_id}; Path=/; HttpOnly; SameSite=Lax; "
+            f"Max-Age={AUTH_SESSION_TTL_SECONDS}"
+        )
+
+    def expired_session_cookie(self):
+        return f"{AUTH_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"
+
     def do_GET(self):
         parsed = urlparse(self.path)
+        if not self.ensure_authorized(parsed):
+            return
+        if parsed.path == "/login.html" and self.auth_user() and not setup_required():
+            self.redirect("/")
+            return
         if parsed.path.startswith("/api/"):
             self.handle_api_get(parsed)
             return
@@ -672,10 +952,22 @@ class NvrHandler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urlparse(self.path)
+        if not self.ensure_authorized(parsed):
+            return
         try:
             payload = parse_json_body(self)
         except ValueError as exc:
             self.send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
+            return
+        if parsed.path == "/api/auth/setup":
+            self.handle_auth_setup(payload)
+            return
+        if parsed.path == "/api/auth/login":
+            self.handle_auth_login(payload)
+            return
+        if parsed.path == "/api/auth/logout":
+            delete_session(self.session_id())
+            self.send_json({"ok": True}, headers={"Set-Cookie": self.expired_session_cookie()})
             return
         if parsed.path == "/api/cameras":
             try:
@@ -695,6 +987,8 @@ class NvrHandler(SimpleHTTPRequestHandler):
 
     def do_PUT(self):
         parsed = urlparse(self.path)
+        if not self.ensure_authorized(parsed):
+            return
         try:
             payload = parse_json_body(self)
         except ValueError as exc:
@@ -716,6 +1010,8 @@ class NvrHandler(SimpleHTTPRequestHandler):
 
     def do_DELETE(self):
         parsed = urlparse(self.path)
+        if not self.ensure_authorized(parsed):
+            return
         match = re.match(r"^/api/cameras/([a-f0-9]+)$", parsed.path)
         if match:
             if delete_camera(match.group(1)):
@@ -725,8 +1021,42 @@ class NvrHandler(SimpleHTTPRequestHandler):
             return
         self.send_error_json(HTTPStatus.NOT_FOUND, "Not found.")
 
+    def handle_auth_setup(self, payload):
+        if not setup_required():
+            self.send_error_json(HTTPStatus.CONFLICT, "Admin account already exists.")
+            return
+        try:
+            username = create_user(payload.get("username"), payload.get("password"))
+        except ValueError as exc:
+            self.send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
+            return
+        session_id = create_session(username)
+        self.send_json(
+            {"ok": True, "username": username},
+            HTTPStatus.CREATED,
+            headers={"Set-Cookie": self.session_cookie(session_id)},
+        )
+
+    def handle_auth_login(self, payload):
+        username = authenticate_user(payload.get("username"), payload.get("password"))
+        if not username:
+            self.send_error_json(HTTPStatus.UNAUTHORIZED, "Invalid username or password.")
+            return
+        session_id = create_session(username)
+        self.send_json({"ok": True, "username": username}, headers={"Set-Cookie": self.session_cookie(session_id)})
+
     def handle_api_get(self, parsed):
         query = parse_qs(parsed.query)
+        if parsed.path == "/api/auth/state":
+            username = self.auth_user()
+            self.send_json(
+                {
+                    "authenticated": bool(username),
+                    "setup_required": setup_required(),
+                    "username": username,
+                }
+            )
+            return
         if parsed.path == "/api/cameras":
             self.send_json({"cameras": list_cameras()})
             return
@@ -739,6 +1069,7 @@ class NvrHandler(SimpleHTTPRequestHandler):
                     "recorders": states,
                     "disk": disk_status(),
                     "events": get_recent_events(),
+                    "stream_token": get_stream_token(),
                     "now": iso_now(),
                 }
             )

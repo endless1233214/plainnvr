@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PlainNVR Login</title>
+    <script>
+      (() => {
+        try {
+          const saved = localStorage.getItem("plainnvr-theme");
+          const systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+          document.documentElement.dataset.theme = saved || (systemDark ? "dark" : "light");
+        } catch (_error) {
+          document.documentElement.dataset.theme = "light";
+        }
+      })();
+    </script>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body class="auth-page">
+    <main class="auth-card">
+      <div>
+        <h1>PlainNVR</h1>
+        <p id="authLead" class="muted">Sign in to manage cameras and recordings.</p>
+      </div>
+      <form id="authForm" class="auth-form">
+        <label>
+          Username
+          <input id="username" autocomplete="username" required />
+        </label>
+        <label>
+          Password
+          <input id="password" type="password" autocomplete="current-password" required />
+        </label>
+        <button id="authButton" type="submit">Sign In</button>
+        <p id="authMessage" class="auth-message" role="status"></p>
+      </form>
+    </main>
+
+    <script>
+      const form = document.getElementById("authForm");
+      const username = document.getElementById("username");
+      const password = document.getElementById("password");
+      const button = document.getElementById("authButton");
+      const lead = document.getElementById("authLead");
+      const message = document.getElementById("authMessage");
+      let setupRequired = false;
+
+      async function request(path, options = {}) {
+        const response = await fetch(path, {
+          headers: { "Content-Type": "application/json" },
+          credentials: "same-origin",
+          ...options,
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(data.error || `Request failed: ${response.status}`);
+        }
+        return data;
+      }
+
+      async function init() {
+        const state = await request("/api/auth/state");
+        if (state.authenticated) {
+          window.location.href = "/";
+          return;
+        }
+        setupRequired = state.setup_required;
+        if (setupRequired) {
+          lead.textContent = "Create the local admin account for this NVR.";
+          button.textContent = "Create Account";
+          password.autocomplete = "new-password";
+        }
+        username.value = state.username || "admin";
+      }
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        message.textContent = "";
+        button.disabled = true;
+        try {
+          await request(setupRequired ? "/api/auth/setup" : "/api/auth/login", {
+            method: "POST",
+            body: JSON.stringify({
+              username: username.value.trim(),
+              password: password.value,
+            }),
+          });
+          window.location.href = "/";
+        } catch (error) {
+          message.textContent = error.message;
+          button.disabled = false;
+        }
+      });
+
+      init().catch((error) => {
+        message.textContent = error.message;
+      });
+    </script>
+  </body>
+</html>
