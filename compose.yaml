@@ -4,10 +4,10 @@ services:
     container_name: plainnvr
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "8787:8787"
     environment:
       TZ: America/Detroit
-      NVR_PORT: "8080"
+      NVR_PORT: "8787"
       NVR_DATA_DIR: /data
       NVR_RECORDINGS_DIR: /recordings
       NVR_DEFAULT_SEGMENT_SECONDS: "60"

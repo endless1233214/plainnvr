@@ -19,7 +19,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 
 APP_HOST = os.environ.get("NVR_HOST", "0.0.0.0")
-APP_PORT = int(os.environ.get("NVR_PORT", "8080"))
+APP_PORT = int(os.environ.get("NVR_PORT", "8787"))
 DATA_DIR = Path(os.environ.get("NVR_DATA_DIR", "/data")).expanduser()
 RECORDINGS_DIR = Path(os.environ.get("NVR_RECORDINGS_DIR", "/recordings")).expanduser()
 STATIC_DIR = Path(os.environ.get("NVR_STATIC_DIR", "/app/static")).expanduser()

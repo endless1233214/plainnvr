@@ -10,11 +10,11 @@ COPY app /app/app
 COPY static /app/static
 
 ENV NVR_HOST=0.0.0.0 \
-    NVR_PORT=8080 \
+    NVR_PORT=8787 \
     NVR_DATA_DIR=/data \
     NVR_RECORDINGS_DIR=/recordings \
     NVR_STATIC_DIR=/app/static
 
-EXPOSE 8080
+EXPOSE 8787
 
 CMD ["python", "/app/app/server.py"]

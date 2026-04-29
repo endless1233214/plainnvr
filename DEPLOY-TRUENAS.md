@@ -78,7 +78,7 @@ Use this if you want TrueNAS to pull updates later.
 Open:
 
 ```text
-http://TRUENAS-IP:8080
+http://TRUENAS-IP:8787
 ```
 
 Recordings land in:

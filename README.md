@@ -13,7 +13,7 @@ NVR_STATIC_DIR="$PWD/static" \
 python3 app/server.py
 ```
 
-Open `http://localhost:8080`.
+Open `http://localhost:8787`.
 
 ## Run With Docker Compose
 
@@ -21,7 +21,7 @@ Open `http://localhost:8080`.
 docker compose up --build
 ```
 
-Open `http://localhost:8080`.
+Open `http://localhost:8787`.
 
 ## TrueNAS Notes
 
@@ -44,8 +44,8 @@ with real datasets on your TrueNAS box.
 Each saved camera exposes two local HTTP endpoints for Home Assistant:
 
 ```text
-http://PLAINNVR-HOST:8080/ha/CAMERA_ID/stream.mjpeg?fps=2&width=1280
-http://PLAINNVR-HOST:8080/ha/CAMERA_ID/snapshot.jpg
+http://PLAINNVR-HOST:8787/ha/CAMERA_ID/stream.mjpeg?fps=2&width=1280
+http://PLAINNVR-HOST:8787/ha/CAMERA_ID/snapshot.jpg
 ```
 
 In Home Assistant, add the MJPEG IP Camera integration and use the first URL as the MJPEG URL and the second URL as the Still Image URL. The Generic Camera integration can also use PlainNVR's snapshot URL, but MJPEG IP Camera is the simplest bridge when RTSP is unreliable in Home Assistant.
