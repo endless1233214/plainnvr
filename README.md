@@ -74,6 +74,11 @@ Those Home Assistant URLs include a generated stream token after login. Keep
 that token private; it lets Home Assistant read the snapshot and MJPEG bridge
 without using your browser session cookie.
 
+PlainNVR also accepts HTTP Basic auth on those bridge URLs, so the MJPEG IP
+Camera integration can use your PlainNVR username and password instead of the
+token if needed. The camera editor includes copy buttons for the full URLs and
+YAML.
+
 ## Live View
 
 PlainNVR also has a Live View panel for quick in-browser monitoring without Home

@@ -138,11 +138,15 @@ function cameraLiveUrl(camera) {
 
 function renderHaPanel(camera) {
   const panel = $("haPanel");
+  const copyButtons = ["copyHaMjpegUrl", "copyHaSnapshotUrl", "copyHaYaml"];
   if (!camera?.id) {
     panel.hidden = true;
     $("haMjpegUrl").value = "";
     $("haSnapshotUrl").value = "";
     $("haYaml").value = "";
+    copyButtons.forEach((id) => {
+      $(id).disabled = true;
+    });
     return;
   }
   const urls = cameraHaUrls(camera);
@@ -156,6 +160,9 @@ function renderHaPanel(camera) {
     `    mjpeg_url: ${urls.mjpeg}`,
     `    still_image_url: ${urls.snapshot}`,
   ].join("\n");
+  copyButtons.forEach((id) => {
+    $(id).disabled = false;
+  });
 }
 
 function cameraPayloadFromForm() {
@@ -414,6 +421,13 @@ async function logout() {
   window.location.href = "/login.html";
 }
 
+async function copyValue(elementId) {
+  const value = $(elementId).value;
+  if (!value) return;
+  await navigator.clipboard.writeText(value);
+  setSaveState("Copied");
+}
+
 function escapeHtml(value) {
   return String(value)
     .replaceAll("&", "&amp;")
@@ -436,6 +450,9 @@ document.addEventListener("DOMContentLoaded", () => {
   $("refreshStatus").addEventListener("click", loadStatus);
   $("logoutButton").addEventListener("click", logout);
   $("loadSegments").addEventListener("click", loadSegments);
+  $("copyHaMjpegUrl").addEventListener("click", () => copyValue("haMjpegUrl"));
+  $("copyHaSnapshotUrl").addEventListener("click", () => copyValue("haSnapshotUrl"));
+  $("copyHaYaml").addEventListener("click", () => copyValue("haYaml"));
   $("startLive").addEventListener("click", startLive);
   $("stopLive").addEventListener("click", stopLive);
   $("liveCamera").addEventListener("change", (event) => {

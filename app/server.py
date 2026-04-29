@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import base64
 import json
 import hashlib
 import hmac
@@ -856,11 +857,29 @@ def bearer_token(headers):
     return ""
 
 
-def valid_stream_token(handler, parsed):
+def basic_auth_credentials(headers):
+    value = headers.get("Authorization", "")
+    scheme, _, token = value.partition(" ")
+    if scheme.lower() != "basic" or not token:
+        return None, None
+    try:
+        decoded = base64.b64decode(token, validate=True).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        return None, None
+    username, separator, password = decoded.partition(":")
+    if not separator:
+        return None, None
+    return username, password
+
+
+def valid_stream_auth(handler, parsed):
     expected = get_stream_token()
     query = parse_qs(parsed.query)
     provided = query.get("token", [""])[0] or bearer_token(handler.headers)
-    return bool(expected and provided and hmac.compare_digest(provided, expected))
+    if expected and provided and hmac.compare_digest(provided, expected):
+        return True
+    username, password = basic_auth_credentials(handler.headers)
+    return bool(username and authenticate_user(username, password))
 
 
 class NvrHandler(SimpleHTTPRequestHandler):
@@ -906,8 +925,11 @@ class NvrHandler(SimpleHTTPRequestHandler):
     def ensure_authorized(self, parsed):
         if self.is_public_path(parsed):
             return True
-        if parsed.path.startswith("/ha/") and valid_stream_token(self, parsed):
-            return True
+        if parsed.path.startswith("/ha/"):
+            if valid_stream_auth(self, parsed):
+                return True
+            self.send_basic_auth_required()
+            return False
         if self.auth_user():
             return True
         if parsed.path.startswith("/api/"):
@@ -919,6 +941,13 @@ class NvrHandler(SimpleHTTPRequestHandler):
     def redirect(self, location):
         self.send_response(HTTPStatus.SEE_OTHER)
         self.send_header("Location", location)
+        self.send_header("Content-Length", "0")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
+    def send_basic_auth_required(self):
+        self.send_response(HTTPStatus.UNAUTHORIZED)
+        self.send_header("WWW-Authenticate", 'Basic realm="PlainNVR"')
         self.send_header("Content-Length", "0")
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
@@ -949,6 +978,20 @@ class NvrHandler(SimpleHTTPRequestHandler):
             self.handle_media(parsed.path)
             return
         self.serve_static(parsed.path)
+
+    def do_HEAD(self):
+        parsed = urlparse(self.path)
+        if not self.ensure_authorized(parsed):
+            return
+        if parsed.path.startswith("/ha/"):
+            self.handle_home_assistant_head(parsed)
+            return
+        if parsed.path.startswith("/api/"):
+            self.send_response(HTTPStatus.METHOD_NOT_ALLOWED)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        self.serve_static(parsed.path, head_only=True)
 
     def do_POST(self):
         parsed = urlparse(self.path)
@@ -1102,6 +1145,27 @@ class NvrHandler(SimpleHTTPRequestHandler):
         width = query.get("width", ["1280"])[0]
         self.handle_mjpeg(camera, fps, width)
 
+    def handle_home_assistant_head(self, parsed):
+        match = re.match(r"^/ha/([a-f0-9]+)/(snapshot\.jpg|stream\.mjpeg)$", parsed.path)
+        if not match:
+            self.send_response(HTTPStatus.NOT_FOUND)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        if not get_camera(match.group(1)):
+            self.send_response(HTTPStatus.NOT_FOUND)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        self.send_response(HTTPStatus.OK)
+        if match.group(2) == "snapshot.jpg":
+            self.send_header("Content-Type", "image/jpeg")
+        else:
+            self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=ffmpeg")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def handle_snapshot(self, camera):
         try:
             result = subprocess.run(build_snapshot_command(camera), capture_output=True, timeout=20)
@@ -1202,7 +1266,7 @@ class NvrHandler(SimpleHTTPRequestHandler):
                 self.wfile.write(chunk)
                 remaining -= len(chunk)
 
-    def serve_static(self, path):
+    def serve_static(self, path, head_only=False):
         if path in ("", "/"):
             path = "/index.html"
         target = (STATIC_DIR / path.lstrip("/")).resolve()
@@ -1218,6 +1282,8 @@ class NvrHandler(SimpleHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(target.stat().st_size))
         self.end_headers()
+        if head_only:
+            return
         with target.open("rb") as src:
             shutil.copyfileobj(src, self.wfile)
 
