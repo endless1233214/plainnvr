@@ -7,6 +7,33 @@ const state = {
 const dayKeys = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 
 const $ = (id) => document.getElementById(id);
+const themeStorageKey = "plainnvr-theme";
+
+function preferredTheme() {
+  try {
+    const saved = localStorage.getItem(themeStorageKey);
+    if (saved === "dark" || saved === "light") return saved;
+  } catch (_error) {
+    return "light";
+  }
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function applyTheme(theme) {
+  const nextTheme = theme === "dark" ? "dark" : "light";
+  document.documentElement.dataset.theme = nextTheme;
+  $("themeToggle").checked = nextTheme === "dark";
+  $("themeLabel").textContent = nextTheme === "dark" ? "Dark" : "Light";
+}
+
+function saveTheme(theme) {
+  try {
+    localStorage.setItem(themeStorageKey, theme);
+  } catch (_error) {
+    // Theme persistence is nice to have, not required for the app to work.
+  }
+  applyTheme(theme);
+}
 
 function today() {
   return new Date().toISOString().slice(0, 10);
@@ -315,6 +342,10 @@ function escapeHtml(value) {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  applyTheme(preferredTheme());
+  $("themeToggle").addEventListener("change", (event) => {
+    saveTheme(event.target.checked ? "dark" : "light");
+  });
   $("playbackDate").value = today();
   $("cameraForm").addEventListener("submit", saveCamera);
   $("newCamera").addEventListener("click", resetForm);

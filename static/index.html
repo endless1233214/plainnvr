@@ -4,6 +4,17 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>PlainNVR</title>
+    <script>
+      (() => {
+        try {
+          const saved = localStorage.getItem("plainnvr-theme");
+          const systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+          document.documentElement.dataset.theme = saved || (systemDark ? "dark" : "light");
+        } catch (_error) {
+          document.documentElement.dataset.theme = "light";
+        }
+      })();
+    </script>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
@@ -13,6 +24,11 @@
         <p id="diskLine">Checking storage...</p>
       </div>
       <div class="top-actions">
+        <label class="theme-toggle" title="Toggle dark mode">
+          <input id="themeToggle" type="checkbox" />
+          <span class="theme-toggle-track" aria-hidden="true"></span>
+          <span id="themeLabel">Dark</span>
+        </label>
         <button id="refreshStatus" type="button">Refresh</button>
       </div>
     </header>
