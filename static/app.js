@@ -2,6 +2,7 @@ const state = {
   cameras: [],
   recorders: {},
   selectedCameraId: "",
+  liveCameraId: "",
   streamToken: "",
 };
 
@@ -121,6 +122,20 @@ function cameraHaUrls(camera) {
   };
 }
 
+function cameraLiveUrl(camera) {
+  const fps = Number($("liveFps").value) || 2;
+  const width = Number($("liveWidth").value) || 1280;
+  const token = state.streamToken || "";
+  const params = new URLSearchParams({
+    fps: String(Math.max(1, Math.min(fps, 10))),
+    width: String(Math.max(320, Math.min(width, 1920))),
+  });
+  if (token) {
+    params.set("token", token);
+  }
+  return `/ha/${camera.id}/stream.mjpeg?${params.toString()}`;
+}
+
 function renderHaPanel(camera) {
   const panel = $("haPanel");
   if (!camera?.id) {
@@ -234,6 +249,31 @@ function renderPlaybackCameras() {
   }
 }
 
+function renderLiveCameras() {
+  const select = $("liveCamera");
+  const current = state.liveCameraId || select.value;
+  select.innerHTML = "";
+  state.cameras.forEach((camera) => {
+    const option = document.createElement("option");
+    option.value = camera.id;
+    option.textContent = camera.name;
+    select.appendChild(option);
+  });
+  if (state.cameras.some((camera) => camera.id === current)) {
+    select.value = current;
+    state.liveCameraId = current;
+  } else if (state.cameras.length) {
+    select.value = state.cameras[0].id;
+    state.liveCameraId = state.cameras[0].id;
+  } else {
+    state.liveCameraId = "";
+    stopLive();
+  }
+  const hasCameras = state.cameras.length > 0;
+  $("startLive").disabled = !hasCameras;
+  $("stopLive").disabled = !hasCameras;
+}
+
 function renderEvents(events) {
   const target = $("events");
   if (!events.length) {
@@ -267,6 +307,7 @@ async function loadStatus() {
   state.streamToken = data.stream_token || "";
   updateDiskLine(data.disk);
   renderCameras();
+  renderLiveCameras();
   renderPlaybackCameras();
   renderEvents(data.events);
 }
@@ -340,6 +381,30 @@ async function loadSegments() {
   });
 }
 
+function startLive() {
+  const cameraId = $("liveCamera").value;
+  const camera = state.cameras.find((item) => item.id === cameraId);
+  if (!camera) {
+    stopLive();
+    $("liveState").textContent = "No camera";
+    return;
+  }
+  state.liveCameraId = camera.id;
+  $("liveEmpty").hidden = true;
+  $("liveImage").hidden = false;
+  $("liveImage").src = cameraLiveUrl(camera);
+  $("liveState").textContent = camera.name;
+  $("stopLive").disabled = false;
+}
+
+function stopLive() {
+  $("liveImage").removeAttribute("src");
+  $("liveImage").hidden = true;
+  $("liveEmpty").hidden = false;
+  $("liveState").textContent = "";
+  $("stopLive").disabled = state.cameras.length === 0;
+}
+
 async function logout() {
   await fetch("/api/auth/logout", {
     method: "POST",
@@ -371,6 +436,18 @@ document.addEventListener("DOMContentLoaded", () => {
   $("refreshStatus").addEventListener("click", loadStatus);
   $("logoutButton").addEventListener("click", logout);
   $("loadSegments").addEventListener("click", loadSegments);
+  $("startLive").addEventListener("click", startLive);
+  $("stopLive").addEventListener("click", stopLive);
+  $("liveCamera").addEventListener("change", (event) => {
+    state.liveCameraId = event.target.value;
+  });
+  $("liveFps").addEventListener("change", () => {
+    if ($("liveImage").src) startLive();
+  });
+  $("liveWidth").addEventListener("change", () => {
+    if ($("liveImage").src) startLive();
+  });
+  stopLive();
   document.querySelectorAll('input[name="scheduleMode"]').forEach((radio) => {
     radio.addEventListener("change", () => {
       $("weeklySchedule").classList.toggle("disabled", radio.value !== "weekly" || !radio.checked);

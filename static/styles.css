@@ -308,6 +308,7 @@ legend {
 .mode-row,
 .day-row,
 .button-row,
+.live-controls,
 .playback-controls {
   display: flex;
   flex-wrap: wrap;
@@ -424,18 +425,61 @@ fieldset {
   background: var(--off-bg);
 }
 
+.monitor-column {
+  display: grid;
+  align-content: start;
+  gap: 18px;
+  min-width: 0;
+}
+
+.live-panel,
 .playback-panel {
   display: grid;
   align-content: start;
 }
 
+.live-controls,
 .playback-controls {
   padding: 16px;
   border-bottom: 1px solid var(--line);
 }
 
+.live-controls label,
 .playback-controls label {
   flex: 1 1 180px;
+}
+
+.live-controls label:not(:first-child) {
+  flex: 0 1 96px;
+}
+
+.live-frame {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: calc(100% - 32px);
+  min-height: 260px;
+  margin: 16px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--video-bg);
+}
+
+.live-frame .empty {
+  color: #c0c7c3;
+}
+
+#liveImage {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 260px;
+  object-fit: contain;
+}
+
+#liveImage[hidden] {
+  display: none;
 }
 
 video {
@@ -499,6 +543,7 @@ video {
     grid-template-columns: minmax(240px, 320px) 1fr;
   }
 
+  .monitor-column,
   .playback-panel,
   .events-panel {
     grid-column: 1 / -1;
@@ -516,6 +561,7 @@ video {
   }
 
   .panel,
+  .live-frame,
   video {
     border-radius: 6px;
   }

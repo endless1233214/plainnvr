@@ -136,25 +136,62 @@
         </form>
       </section>
 
-      <section class="panel playback-panel">
-        <div class="panel-heading">
-          <h2>Playback</h2>
-          <span id="segmentCount" class="muted"></span>
-        </div>
-        <div class="playback-controls">
-          <label>
-            Camera
-            <select id="playbackCamera"></select>
-          </label>
-          <label>
-            Date
-            <input id="playbackDate" type="date" />
-          </label>
-          <button id="loadSegments" type="button">Load</button>
-        </div>
-        <video id="player" controls playsinline></video>
-        <div id="segments" class="segments"></div>
-      </section>
+      <div class="monitor-column">
+        <section class="panel live-panel">
+          <div class="panel-heading">
+            <h2>Live View</h2>
+            <span id="liveState" class="muted"></span>
+          </div>
+          <div class="live-controls">
+            <label>
+              Camera
+              <select id="liveCamera"></select>
+            </label>
+            <label>
+              FPS
+              <select id="liveFps">
+                <option value="2" selected>2</option>
+                <option value="5">5</option>
+                <option value="10">10</option>
+              </select>
+            </label>
+            <label>
+              Width
+              <select id="liveWidth">
+                <option value="640">640</option>
+                <option value="1280" selected>1280</option>
+                <option value="1920">1920</option>
+              </select>
+            </label>
+            <button id="startLive" type="button">Start</button>
+            <button id="stopLive" type="button">Stop</button>
+          </div>
+          <div class="live-frame">
+            <img id="liveImage" alt="" />
+            <div id="liveEmpty" class="empty">No live stream selected.</div>
+          </div>
+        </section>
+
+        <section class="panel playback-panel">
+          <div class="panel-heading">
+            <h2>Playback</h2>
+            <span id="segmentCount" class="muted"></span>
+          </div>
+          <div class="playback-controls">
+            <label>
+              Camera
+              <select id="playbackCamera"></select>
+            </label>
+            <label>
+              Date
+              <input id="playbackDate" type="date" />
+            </label>
+            <button id="loadSegments" type="button">Load</button>
+          </div>
+          <video id="player" controls playsinline></video>
+          <div id="segments" class="segments"></div>
+        </section>
+      </div>
 
       <section class="panel events-panel">
         <div class="panel-heading">

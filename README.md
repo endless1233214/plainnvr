@@ -74,6 +74,12 @@ Those Home Assistant URLs include a generated stream token after login. Keep
 that token private; it lets Home Assistant read the snapshot and MJPEG bridge
 without using your browser session cookie.
 
+## Live View
+
+PlainNVR also has a Live View panel for quick in-browser monitoring without Home
+Assistant. It uses the same protected MJPEG bridge as the Home Assistant
+integration, so Home Assistant support stays available.
+
 ## Camera URL Examples
 
 Common RTSP shapes look like:
