@@ -1,6 +1,9 @@
 const state = {
   cameras: [],
   recorders: {},
+  users: [],
+  username: "",
+  coverage: {},
   selectedCameraId: "",
   liveCameraId: "",
   streamToken: "",
@@ -38,7 +41,9 @@ function saveTheme(theme) {
 }
 
 function today() {
-  return new Date().toISOString().slice(0, 10);
+  const now = new Date();
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 10);
 }
 
 function formatBytes(value) {
@@ -62,6 +67,16 @@ function formatTime(value) {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
+  });
+}
+
+function formatDate(value) {
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString([], {
+    month: "short",
+    day: "2-digit",
+    year: "numeric",
   });
 }
 
@@ -253,7 +268,71 @@ function renderPlaybackCameras() {
   });
   if (state.cameras.some((camera) => camera.id === current)) {
     select.value = current;
+  } else if (state.cameras.length) {
+    select.value = state.cameras[0].id;
   }
+}
+
+function renderCoverage() {
+  const cameraId = $("playbackCamera").value;
+  const summary = state.coverage[cameraId];
+  const target = $("coverageSummary");
+  if (!cameraId) {
+    target.className = "coverage-summary empty";
+    target.textContent = "No camera selected.";
+    return;
+  }
+  if (!summary) {
+    target.className = "coverage-summary empty";
+    target.textContent = "No recording summary loaded.";
+    return;
+  }
+  if (!summary.count) {
+    target.className = "coverage-summary empty";
+    target.textContent = `No saved recordings yet. Retention is ${summary.retention_days} days.`;
+    return;
+  }
+
+  target.className = "coverage-summary";
+  const dates = summary.dates || [];
+  const currentDate = $("playbackDate").value;
+  const dateButtons = dates
+    .slice(-14)
+    .reverse()
+    .map((date) => {
+      const active = date === currentDate ? " active" : "";
+      return `<button class="date-chip${active}" type="button" data-date="${date}">${formatDate(date)}</button>`;
+    })
+    .join("");
+  target.innerHTML = `
+    <div>
+      Saved ${formatTime(summary.oldest)} to ${formatTime(summary.newest)}
+      <span>${summary.count} segments</span>
+      <span>${formatBytes(summary.total_size)}</span>
+      <span>${summary.retention_days}d retention</span>
+    </div>
+    <div class="date-chips">${dateButtons}</div>
+  `;
+  target.querySelectorAll("[data-date]").forEach((button) => {
+    button.addEventListener("click", () => {
+      $("playbackDate").value = button.dataset.date;
+      renderCoverage();
+      loadSegments().catch((error) => {
+        $("segments").innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+      });
+    });
+  });
+}
+
+async function loadCoverage() {
+  const cameraId = $("playbackCamera").value;
+  if (!cameraId) {
+    renderCoverage();
+    return;
+  }
+  const data = await api(`/api/coverage?camera_id=${encodeURIComponent(cameraId)}`);
+  state.coverage[cameraId] = data.coverage;
+  renderCoverage();
 }
 
 function renderLiveCameras() {
@@ -300,6 +379,34 @@ function renderEvents(events) {
   });
 }
 
+function renderUsers() {
+  const target = $("userList");
+  if (!state.users.length) {
+    target.innerHTML = '<div class="empty">No users yet.</div>';
+    return;
+  }
+  target.innerHTML = "";
+  state.users.forEach((user) => {
+    const row = document.createElement("div");
+    row.className = "user-row";
+    const isCurrent = user.username === state.username;
+    row.innerHTML = `
+      <div>
+        <strong>${escapeHtml(user.username)}</strong>
+        <span>${isCurrent ? "current user" : `created ${formatTime(user.created_at)}`}</span>
+      </div>
+      <button class="danger" type="button" ${isCurrent ? "disabled" : ""}>Delete</button>
+    `;
+    row.querySelector("button").addEventListener("click", async () => {
+      if (!window.confirm(`Delete user ${user.username}?`)) return;
+      await api(`/api/users/${encodeURIComponent(user.username)}`, { method: "DELETE" });
+      $("usersState").textContent = "Deleted";
+      await loadStatus();
+    });
+    target.appendChild(row);
+  });
+}
+
 function updateDiskLine(disk) {
   const used = formatBytes(disk.used);
   const total = formatBytes(disk.total);
@@ -311,12 +418,16 @@ async function loadStatus() {
   const data = await api("/api/status");
   state.cameras = data.cameras;
   state.recorders = data.recorders;
+  state.users = data.users || [];
+  state.username = data.username || "";
   state.streamToken = data.stream_token || "";
   updateDiskLine(data.disk);
   renderCameras();
   renderLiveCameras();
   renderPlaybackCameras();
+  renderCoverage();
   renderEvents(data.events);
+  renderUsers();
 }
 
 async function saveCamera(event) {
@@ -364,6 +475,7 @@ async function loadSegments() {
     return;
   }
   const date = $("playbackDate").value || today();
+  $("playbackDate").value = date;
   const data = await api(`/api/segments?camera_id=${encodeURIComponent(cameraId)}&date=${encodeURIComponent(date)}`);
   const target = $("segments");
   $("segmentCount").textContent = `${data.segments.length} segments`;
@@ -386,6 +498,26 @@ async function loadSegments() {
     });
     target.appendChild(row);
   });
+}
+
+async function saveUser(event) {
+  event.preventDefault();
+  $("usersState").textContent = "Adding...";
+  try {
+    await api("/api/users", {
+      method: "POST",
+      body: JSON.stringify({
+        username: $("newUsername").value.trim(),
+        password: $("newPassword").value,
+      }),
+    });
+    $("newUsername").value = "";
+    $("newPassword").value = "";
+    $("usersState").textContent = "Added";
+    await loadStatus();
+  } catch (error) {
+    $("usersState").textContent = error.message;
+  }
 }
 
 function startLive() {
@@ -450,6 +582,7 @@ document.addEventListener("DOMContentLoaded", () => {
   $("refreshStatus").addEventListener("click", loadStatus);
   $("logoutButton").addEventListener("click", logout);
   $("loadSegments").addEventListener("click", loadSegments);
+  $("userForm").addEventListener("submit", saveUser);
   $("copyHaMjpegUrl").addEventListener("click", () => copyValue("haMjpegUrl"));
   $("copyHaSnapshotUrl").addEventListener("click", () => copyValue("haSnapshotUrl"));
   $("copyHaYaml").addEventListener("click", () => copyValue("haYaml"));
@@ -464,13 +597,19 @@ document.addEventListener("DOMContentLoaded", () => {
   $("liveWidth").addEventListener("change", () => {
     if ($("liveImage").src) startLive();
   });
+  $("playbackCamera").addEventListener("change", () => {
+    loadCoverage().catch((error) => {
+      $("coverageSummary").textContent = error.message;
+    });
+  });
+  $("playbackDate").addEventListener("change", renderCoverage);
   stopLive();
   document.querySelectorAll('input[name="scheduleMode"]').forEach((radio) => {
     radio.addEventListener("change", () => {
       $("weeklySchedule").classList.toggle("disabled", radio.value !== "weekly" || !radio.checked);
     });
   });
-  loadStatus().catch((error) => {
+  loadStatus().then(loadCoverage).catch((error) => {
     $("diskLine").textContent = error.message;
   });
   setInterval(loadStatus, 10000);

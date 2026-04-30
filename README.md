@@ -41,6 +41,9 @@ If no account exists in `/data/nvr.sqlite3`, the first browser visit opens the
 account setup screen. After that, the UI, API, playback files, and camera
 management routes require login.
 
+Additional accounts can be created from the Users panel after signing in. All
+accounts currently have full PlainNVR access.
+
 ## TrueNAS Notes
 
 See `DEPLOY-TRUENAS.md` for the two supported paths:
@@ -112,4 +115,6 @@ Four cameras at 4 Mbps each need about 173 GB per day, before filesystem overhea
 - Playback is per segment, not a scrubby merged timeline yet.
 - H.265 may record fine but may not play in every browser.
 - Recordings are timestamped MP4 chunks under each camera folder.
+- The Playback panel shows one selected date at a time, plus a recording
+  coverage summary with the oldest/newest segment and available dates.
 - Deleting a camera leaves existing recordings on disk.

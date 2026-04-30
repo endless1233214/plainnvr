@@ -308,8 +308,8 @@ def create_user(username, password):
     username = validate_username(username)
     password = validate_password(password)
     with db_conn() as conn:
-        if conn.execute("SELECT username FROM users LIMIT 1").fetchone():
-            raise ValueError("Admin account already exists.")
+        if conn.execute("SELECT username FROM users WHERE username = ?", (username,)).fetchone():
+            raise ValueError("Username already exists.")
         now = iso_now()
         conn.execute(
             """
@@ -319,6 +319,29 @@ def create_user(username, password):
             (username, password_hash(password), now, now),
         )
     return username
+
+
+def list_users():
+    with db_conn() as conn:
+        rows = conn.execute(
+            "SELECT username, created_at, updated_at FROM users ORDER BY username COLLATE NOCASE"
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def delete_user(username, current_username=None):
+    username = validate_username(unquote(username))
+    if current_username and username == current_username:
+        raise ValueError("You cannot delete the account you are using.")
+    with db_conn() as conn:
+        row = conn.execute("SELECT username FROM users WHERE username = ?", (username,)).fetchone()
+        if not row:
+            return False
+        count = conn.execute("SELECT COUNT(*) AS count FROM users").fetchone()["count"]
+        if count <= 1:
+            raise ValueError("At least one user account is required.")
+        conn.execute("DELETE FROM users WHERE username = ?", (username,))
+    return True
 
 
 def authenticate_user(username, password):
@@ -754,12 +777,8 @@ def scan_segments(camera, date_value=None):
         return []
     segments = []
     for path in root.glob("*.mp4"):
-        match = SEGMENT_RE.match(path.name)
-        if not match:
-            continue
-        try:
-            start = datetime.strptime(match.group("stamp"), "%Y%m%dT%H%M%S")
-        except ValueError:
+        start = segment_start(path)
+        if not start:
             continue
         if date_value and start.strftime("%Y-%m-%d") != date_value:
             continue
@@ -780,6 +799,51 @@ def scan_segments(camera, date_value=None):
         )
     segments.sort(key=lambda item: item["start"])
     return segments
+
+
+def segment_start(path):
+    match = SEGMENT_RE.match(path.name)
+    if not match:
+        return None
+    try:
+        return datetime.strptime(match.group("stamp"), "%Y%m%dT%H%M%S")
+    except ValueError:
+        return None
+
+
+def recording_coverage(camera):
+    root = camera_dir(camera)
+    summary = {
+        "camera_id": camera["id"],
+        "count": 0,
+        "total_size": 0,
+        "oldest": None,
+        "newest": None,
+        "dates": [],
+        "retention_days": int(camera.get("retention_days") or 14),
+    }
+    if not root.exists():
+        return summary
+    dates = set()
+    oldest = None
+    newest = None
+    for path in root.glob("*.mp4"):
+        start = segment_start(path)
+        if not start:
+            continue
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        summary["count"] += 1
+        summary["total_size"] += stat.st_size
+        dates.add(start.strftime("%Y-%m-%d"))
+        oldest = start if oldest is None or start < oldest else oldest
+        newest = start if newest is None or start > newest else newest
+    summary["oldest"] = oldest.isoformat() if oldest else None
+    summary["newest"] = newest.isoformat() if newest else None
+    summary["dates"] = sorted(dates)
+    return summary
 
 
 def test_stream(payload):
@@ -1026,6 +1090,14 @@ class NvrHandler(SimpleHTTPRequestHandler):
             except ValueError as exc:
                 self.send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
             return
+        if parsed.path == "/api/users":
+            try:
+                username = create_user(payload.get("username"), payload.get("password"))
+            except ValueError as exc:
+                self.send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
+                return
+            self.send_json({"ok": True, "username": username}, HTTPStatus.CREATED)
+            return
         self.send_error_json(HTTPStatus.NOT_FOUND, "Not found.")
 
     def do_PUT(self):
@@ -1061,6 +1133,18 @@ class NvrHandler(SimpleHTTPRequestHandler):
                 self.send_json({"ok": True})
             else:
                 self.send_error_json(HTTPStatus.NOT_FOUND, "Camera not found.")
+            return
+        match = re.match(r"^/api/users/([^/]+)$", parsed.path)
+        if match:
+            try:
+                deleted = delete_user(match.group(1), self.auth_user())
+            except ValueError as exc:
+                self.send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
+                return
+            if deleted:
+                self.send_json({"ok": True})
+            else:
+                self.send_error_json(HTTPStatus.NOT_FOUND, "User not found.")
             return
         self.send_error_json(HTTPStatus.NOT_FOUND, "Not found.")
 
@@ -1113,9 +1197,19 @@ class NvrHandler(SimpleHTTPRequestHandler):
                     "disk": disk_status(),
                     "events": get_recent_events(),
                     "stream_token": get_stream_token(),
+                    "users": list_users(),
+                    "username": self.auth_user(),
                     "now": iso_now(),
                 }
             )
+            return
+        if parsed.path == "/api/coverage":
+            camera_id = query.get("camera_id", [""])[0]
+            camera = get_camera(camera_id)
+            if not camera:
+                self.send_error_json(HTTPStatus.NOT_FOUND, "Camera not found.")
+                return
+            self.send_json({"coverage": recording_coverage(camera)})
             return
         if parsed.path == "/api/segments":
             camera_id = query.get("camera_id", [""])[0]

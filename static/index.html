@@ -191,6 +191,7 @@
             </label>
             <button id="loadSegments" type="button">Load</button>
           </div>
+          <div id="coverageSummary" class="coverage-summary empty">No recording summary loaded.</div>
           <video id="player" controls playsinline></video>
           <div id="segments" class="segments"></div>
         </section>
@@ -201,6 +202,25 @@
           <h2>Events</h2>
         </div>
         <div id="events" class="events"></div>
+      </section>
+
+      <section class="panel users-panel">
+        <div class="panel-heading">
+          <h2>Users</h2>
+          <span id="usersState" class="muted"></span>
+        </div>
+        <div id="userList" class="user-list"></div>
+        <form id="userForm" class="user-form">
+          <label>
+            Username
+            <input id="newUsername" autocomplete="off" required />
+          </label>
+          <label>
+            Password
+            <input id="newPassword" type="password" autocomplete="new-password" required />
+          </label>
+          <button type="submit">Add User</button>
+        </form>
       </section>
     </main>
 
