@@ -100,6 +100,11 @@ rtsp://user:password@192.168.1.50:554/cam/realmonitor?channel=1&subtype=0
 
 The exact path depends on the camera brand.
 
+Most cameras send video and audio in the same RTSP stream. Leave the Audio URL
+field empty for those cameras; PlainNVR will record audio from the main stream
+when Audio is enabled. If a camera exposes audio separately, put the video
+stream in Stream URL and the audio-only stream in Audio URL.
+
 ## Storage Estimate
 
 Use:

@@ -184,6 +184,7 @@ function cameraPayloadFromForm() {
   return {
     name: $("cameraName").value.trim(),
     rtsp_url: $("rtspUrl").value.trim(),
+    audio_url: $("audioUrl").value.trim(),
     enabled: $("enabled").checked,
     segment_seconds: Number($("segmentSeconds").value),
     retention_days: Number($("retentionDays").value),
@@ -199,6 +200,7 @@ function resetForm() {
   $("cameraId").value = "";
   $("cameraName").value = "";
   $("rtspUrl").value = "";
+  $("audioUrl").value = "";
   $("enabled").checked = true;
   $("recordAudio").checked = true;
   $("segmentSeconds").value = "60";
@@ -217,6 +219,7 @@ function editCamera(camera) {
   $("cameraId").value = camera.id;
   $("cameraName").value = camera.name;
   $("rtspUrl").value = camera.rtsp_url;
+  $("audioUrl").value = camera.audio_url || "";
   $("enabled").checked = camera.enabled;
   $("recordAudio").checked = camera.record_audio;
   $("segmentSeconds").value = String(camera.segment_seconds);

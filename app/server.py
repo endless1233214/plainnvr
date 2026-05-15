@@ -44,6 +44,7 @@ STREAM_TOKEN_OVERRIDE = os.environ.get("NVR_STREAM_TOKEN", "").strip()
 
 DAY_KEYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 SEGMENT_RE = re.compile(r"^(?P<stamp>\d{8}T\d{6})\.mp4$")
+STREAM_URL_PREFIXES = ("rtsp://", "rtsps://", "http://", "https://")
 
 
 def utcnow():
@@ -196,6 +197,7 @@ def init_db():
                 name TEXT NOT NULL,
                 slug TEXT NOT NULL UNIQUE,
                 rtsp_url TEXT NOT NULL,
+                audio_url TEXT NOT NULL DEFAULT '',
                 enabled INTEGER NOT NULL DEFAULT 1,
                 segment_seconds INTEGER NOT NULL DEFAULT 60,
                 retention_days INTEGER NOT NULL DEFAULT 14,
@@ -207,6 +209,7 @@ def init_db():
             )
             """
         )
+        ensure_camera_schema(conn)
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS recorder_events (
@@ -253,6 +256,12 @@ def init_db():
         bootstrap_auth_from_env(conn)
         ensure_stream_token(conn)
         cleanup_expired_sessions(conn)
+
+
+def ensure_camera_schema(conn):
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(cameras)").fetchall()}
+    if "audio_url" not in columns:
+        conn.execute("ALTER TABLE cameras ADD COLUMN audio_url TEXT NOT NULL DEFAULT ''")
 
 
 def bootstrap_auth_from_env(conn):
@@ -401,6 +410,7 @@ def camera_from_row(row):
     data = dict(row)
     data["enabled"] = bool(data["enabled"])
     data["record_audio"] = bool(data["record_audio"])
+    data["audio_url"] = data.get("audio_url") or ""
     data["schedule"] = normalize_schedule(json.loads(data.pop("schedule_json")))
     return data
 
@@ -433,14 +443,17 @@ def validate_camera_payload(payload, partial=False):
     errors = {}
     name = str(payload.get("name", "")).strip()
     rtsp_url = str(payload.get("rtsp_url", "")).strip()
+    audio_url = str(payload.get("audio_url", "")).strip()
     if not partial or "name" in payload:
         if not name:
             errors["name"] = "Name is required."
     if not partial or "rtsp_url" in payload:
         if not rtsp_url:
             errors["rtsp_url"] = "RTSP URL is required."
-        elif not rtsp_url.startswith(("rtsp://", "rtsps://", "http://", "https://")):
+        elif not rtsp_url.startswith(STREAM_URL_PREFIXES):
             errors["rtsp_url"] = "Use an rtsp://, rtsps://, http://, or https:// stream URL."
+    if audio_url and not audio_url.startswith(STREAM_URL_PREFIXES):
+        errors["audio_url"] = "Use an rtsp://, rtsps://, http://, or https:// audio URL."
     if errors:
         raise ValueError(json.dumps(errors))
 
@@ -457,16 +470,17 @@ def create_camera(payload):
         conn.execute(
             """
             INSERT INTO cameras (
-                id, name, slug, rtsp_url, enabled, segment_seconds, retention_days,
+                id, name, slug, rtsp_url, audio_url, enabled, segment_seconds, retention_days,
                 schedule_json, record_audio, rtsp_transport, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 camera_id,
                 payload["name"].strip(),
                 slug,
                 payload["rtsp_url"].strip(),
+                str(payload.get("audio_url", "")).strip(),
                 normalize_bool(payload.get("enabled", True)),
                 segment_seconds,
                 retention_days,
@@ -494,7 +508,7 @@ def update_camera(camera_id, payload):
         conn.execute(
             """
             UPDATE cameras
-            SET name = ?, slug = ?, rtsp_url = ?, enabled = ?, segment_seconds = ?,
+            SET name = ?, slug = ?, rtsp_url = ?, audio_url = ?, enabled = ?, segment_seconds = ?,
                 retention_days = ?, schedule_json = ?, record_audio = ?,
                 rtsp_transport = ?, updated_at = ?
             WHERE id = ?
@@ -503,6 +517,7 @@ def update_camera(camera_id, payload):
                 str(merged["name"]).strip(),
                 slug,
                 str(merged["rtsp_url"]).strip(),
+                str(merged.get("audio_url", "")).strip(),
                 normalize_bool(merged.get("enabled")),
                 segment_seconds,
                 retention_days,
@@ -555,6 +570,8 @@ def build_ffmpeg_command(camera):
     target_dir = camera_dir(camera)
     target_dir.mkdir(parents=True, exist_ok=True)
     output_pattern = str(target_dir / "%Y%m%dT%H%M%S.mp4")
+    audio_url = str(camera.get("audio_url") or "").strip()
+    record_audio = camera.get("record_audio", True)
     command = [
         FFMPEG_BIN,
         "-hide_banner",
@@ -563,14 +580,19 @@ def build_ffmpeg_command(camera):
         "warning",
     ]
     command.extend(ffmpeg_input_args(camera))
+    if record_audio and audio_url:
+        command.extend(ffmpeg_input_args(camera, "audio_url"))
     command.extend(
         [
             "-map",
             "0:v:0",
         ]
     )
-    if camera.get("record_audio", True):
-        command.extend(["-map", "0:a?"])
+    if record_audio:
+        if audio_url:
+            command.extend(["-map", "1:a:0?"])
+        else:
+            command.extend(["-map", "0:a?"])
     command.extend(
         [
             "-c",
@@ -593,8 +615,8 @@ def build_ffmpeg_command(camera):
     return command
 
 
-def ffmpeg_input_args(camera_or_payload):
-    url = str(camera_or_payload["rtsp_url"]).strip()
+def ffmpeg_input_args(camera_or_payload, url_key="rtsp_url"):
+    url = str(camera_or_payload[url_key]).strip()
     transport = camera_or_payload.get("rtsp_transport", "tcp")
     args = []
     if url.startswith(("rtsp://", "rtsps://")):
@@ -861,17 +883,14 @@ def recording_coverage(camera):
     return summary
 
 
-def test_stream(payload):
-    rtsp_url = str(payload.get("rtsp_url", "")).strip()
-    if not rtsp_url:
-        raise ValueError("RTSP URL is required.")
+def probe_stream_url(url, payload, select_streams, show_entries):
     transport = payload.get("rtsp_transport", "tcp")
     command = [
         FFPROBE_BIN,
         "-v",
         "error",
     ]
-    if rtsp_url.startswith(("rtsp://", "rtsps://")):
+    if url.startswith(("rtsp://", "rtsps://")):
         command.extend(
             [
                 "-rtsp_transport",
@@ -887,12 +906,12 @@ def test_stream(payload):
     command.extend(
         [
             "-select_streams",
-            "v:0",
+            select_streams,
             "-show_entries",
-            "stream=codec_name,width,height,r_frame_rate",
+            show_entries,
             "-of",
             "json",
-            rtsp_url,
+            url,
         ]
     )
     started = time.time()
@@ -909,6 +928,36 @@ def test_stream(payload):
     except json.JSONDecodeError:
         details = {}
     return {"ok": True, "message": "Stream is reachable.", "seconds": elapsed, "details": details}
+
+
+def test_stream(payload):
+    rtsp_url = str(payload.get("rtsp_url", "")).strip()
+    audio_url = str(payload.get("audio_url", "")).strip()
+    if not rtsp_url:
+        raise ValueError("RTSP URL is required.")
+    if not rtsp_url.startswith(STREAM_URL_PREFIXES):
+        raise ValueError("Use an rtsp://, rtsps://, http://, or https:// stream URL.")
+    if audio_url and not audio_url.startswith(STREAM_URL_PREFIXES):
+        raise ValueError("Use an rtsp://, rtsps://, http://, or https:// audio URL.")
+
+    video = probe_stream_url(rtsp_url, payload, "v:0", "stream=codec_name,width,height,r_frame_rate")
+    if not audio_url or not normalize_bool(payload.get("record_audio", True)):
+        return video
+
+    audio = probe_stream_url(audio_url, payload, "a:0", "stream=codec_name,sample_rate,channels")
+    if video["ok"] and audio["ok"]:
+        return {
+            "ok": True,
+            "message": "Video and secondary audio are reachable.",
+            "seconds": round(video["seconds"] + audio["seconds"], 2),
+            "details": {"video": video.get("details", {}), "audio": audio.get("details", {})},
+        }
+    return {
+        "ok": False,
+        "message": audio["message"] if video["ok"] else video["message"],
+        "seconds": round(video["seconds"] + audio["seconds"], 2),
+        "details": {"video": video, "audio": audio},
+    }
 
 
 def get_recent_events(camera_id=None):
