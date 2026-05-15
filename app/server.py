@@ -29,6 +29,8 @@ RECORDINGS_DIR = Path(os.environ.get("NVR_RECORDINGS_DIR", "/recordings")).expan
 STATIC_DIR = Path(os.environ.get("NVR_STATIC_DIR", "/app/static")).expanduser()
 FFMPEG_BIN = os.environ.get("FFMPEG_BIN", "ffmpeg")
 FFPROBE_BIN = os.environ.get("FFPROBE_BIN", "ffprobe")
+RTSP_PROBESIZE = os.environ.get("NVR_RTSP_PROBESIZE", "32768")
+RTSP_ANALYZE_DURATION = os.environ.get("NVR_RTSP_ANALYZE_DURATION", "0")
 SCAN_INTERVAL_SECONDS = int(os.environ.get("NVR_SCAN_INTERVAL_SECONDS", "10"))
 RETENTION_INTERVAL_SECONDS = int(os.environ.get("NVR_RETENTION_INTERVAL_SECONDS", "3600"))
 DEFAULT_SEGMENT_SECONDS = int(os.environ.get("NVR_DEFAULT_SEGMENT_SECONDS", "60"))
@@ -596,7 +598,20 @@ def ffmpeg_input_args(camera_or_payload):
     transport = camera_or_payload.get("rtsp_transport", "tcp")
     args = []
     if url.startswith(("rtsp://", "rtsps://")):
-        args.extend(["-rtsp_transport", transport if transport in ("tcp", "udp") else "tcp"])
+        args.extend(
+            [
+                "-rtsp_transport",
+                transport if transport in ("tcp", "udp") else "tcp",
+                "-probesize",
+                RTSP_PROBESIZE,
+                "-analyzeduration",
+                RTSP_ANALYZE_DURATION,
+                "-fflags",
+                "nobuffer",
+                "-flags",
+                "low_delay",
+            ]
+        )
     args.extend(["-i", url])
     return args
 
@@ -857,7 +872,18 @@ def test_stream(payload):
         "error",
     ]
     if rtsp_url.startswith(("rtsp://", "rtsps://")):
-        command.extend(["-rtsp_transport", transport if transport in ("tcp", "udp") else "tcp"])
+        command.extend(
+            [
+                "-rtsp_transport",
+                transport if transport in ("tcp", "udp") else "tcp",
+                "-probesize",
+                RTSP_PROBESIZE,
+                "-analyzeduration",
+                RTSP_ANALYZE_DURATION,
+                "-fflags",
+                "nobuffer",
+            ]
+        )
     command.extend(
         [
             "-select_streams",
