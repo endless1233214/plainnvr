@@ -186,44 +186,83 @@ struct CameraDetailView: View {
 
 struct LiveView: View {
     @EnvironmentObject private var viewModel: PlainNVRViewModel
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
+    private var isLandscape: Bool {
+        verticalSizeClass == .compact
+    }
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 16) {
-                if viewModel.cameras.isEmpty {
-                    ContentUnavailableView("No Cameras", systemImage: "video.slash")
-                } else {
-                    CameraPicker()
-
-                    if let camera = viewModel.selectedCamera, let url = viewModel.liveURL(for: camera) {
-                        LivePlayerView(url: url)
-                            .aspectRatio(16 / 9, contentMode: .fit)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                            .overlay {
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(.quaternary, lineWidth: 1)
-                            }
-
-                        CameraRow(camera: camera, recorder: viewModel.status?.recorders[camera.id])
-                            .padding(.horizontal)
-                    } else {
-                        ContentUnavailableView("Stream Unavailable", systemImage: "wifi.exclamationmark")
-                    }
-                }
-
-                Spacer()
-            }
-            .padding(.top, 16)
+            liveContent
             .navigationTitle("Live")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                Button {
-                    Task { await viewModel.refreshAll() }
-                } label: {
-                    Image(systemName: "arrow.clockwise")
+                if !isLandscape {
+                    Button {
+                        Task { await viewModel.refreshAll() }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .disabled(viewModel.isBusy)
                 }
-                .disabled(viewModel.isBusy)
+            }
+            .toolbar(isLandscape ? .hidden : .visible, for: .navigationBar)
+            .toolbar(isLandscape ? .hidden : .visible, for: .tabBar)
+            .statusBarHidden(isLandscape)
+        }
+    }
+
+    @ViewBuilder
+    private var liveContent: some View {
+        if isLandscape {
+            landscapeLiveView
+        } else {
+            portraitLiveView
+        }
+    }
+
+    private var portraitLiveView: some View {
+        VStack(spacing: 16) {
+            if viewModel.cameras.isEmpty {
+                ContentUnavailableView("No Cameras", systemImage: "video.slash")
+            } else {
+                CameraPicker()
+
+                if let camera = viewModel.selectedCamera, let url = viewModel.liveURL(for: camera) {
+                    LivePlayerView(url: url)
+                        .aspectRatio(16 / 9, contentMode: .fit)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(.quaternary, lineWidth: 1)
+                        }
+
+                    CameraRow(camera: camera, recorder: viewModel.status?.recorders[camera.id])
+                        .padding(.horizontal)
+                } else {
+                    ContentUnavailableView("Stream Unavailable", systemImage: "wifi.exclamationmark")
+                }
+            }
+
+            Spacer()
+        }
+        .padding(.top, 16)
+    }
+
+    private var landscapeLiveView: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+
+            if let camera = viewModel.selectedCamera, let url = viewModel.liveURL(for: camera) {
+                LivePlayerView(url: url)
+                    .ignoresSafeArea()
+            } else {
+                ContentUnavailableView("Stream Unavailable", systemImage: "wifi.exclamationmark")
+                    .foregroundStyle(.white)
             }
         }
+        .ignoresSafeArea()
     }
 }
 

@@ -38,6 +38,9 @@ DEFAULT_SEGMENT_SECONDS = int(os.environ.get("NVR_DEFAULT_SEGMENT_SECONDS", "60"
 LIVE_HLS_SEGMENT_SECONDS = int(os.environ.get("NVR_LIVE_HLS_SEGMENT_SECONDS", "2"))
 LIVE_HLS_LIST_SIZE = int(os.environ.get("NVR_LIVE_HLS_LIST_SIZE", "8"))
 LIVE_HLS_IDLE_SECONDS = int(os.environ.get("NVR_LIVE_HLS_IDLE_SECONDS", "90"))
+LIVE_AUDIO_GAIN = os.environ.get("NVR_LIVE_AUDIO_GAIN", "4.0").strip() or "4.0"
+if not re.match(r"^\d+(\.\d+)?$", LIVE_AUDIO_GAIN):
+    LIVE_AUDIO_GAIN = "4.0"
 DB_PATH = DATA_DIR / "nvr.sqlite3"
 AUTH_COOKIE_NAME = "plainnvr_session"
 AUTH_SESSION_TTL_SECONDS = int(os.environ.get("NVR_SESSION_TTL_SECONDS", str(7 * 24 * 60 * 60)))
@@ -708,6 +711,8 @@ def build_live_hls_command(camera, output_dir):
         command.extend(["-map", "1:a:0?"] if audio_url else ["-map", "0:a?"])
     command.extend(["-sn", "-dn", "-c:v", "copy"])
     if record_audio:
+        if LIVE_AUDIO_GAIN not in ("1", "1.0", "1.00"):
+            command.extend(["-filter:a", f"volume={LIVE_AUDIO_GAIN}"])
         command.extend(["-c:a", "aac", "-b:a", "128k", "-ac", "2"])
     else:
         command.append("-an")
