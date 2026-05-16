@@ -8,3 +8,5 @@ recordings/
 *.pid
 ios/PlainNVRiPhone/build/
 ios/PlainNVRiPhone/DerivedData/
+ios/PlainNVRiPhone/PlainNVRiPhone.xcodeproj/project.xcworkspace/xcuserdata/
+ios/PlainNVRiPhone/PlainNVRiPhone.xcodeproj/xcuserdata/
