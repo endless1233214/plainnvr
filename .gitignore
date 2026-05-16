@@ -6,3 +6,5 @@ data/
 recordings/
 *.log
 *.pid
+ios/PlainNVRiPhone/build/
+ios/PlainNVRiPhone/DerivedData/

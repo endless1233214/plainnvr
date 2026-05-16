@@ -1,5 +1,10 @@
 # PlainNVR
 
+PlainNVR also includes a small native iPhone companion app in
+[`ios/PlainNVRiPhone`](ios/PlainNVRiPhone). The app signs in with the normal
+PlainNVR account, plays live audio/video through the server's HLS endpoint,
+browses recordings, and can save or share MP4 clips from the phone.
+
 PlainNVR is a small RTSP recorder with a web UI for camera setup, schedules, continuous recording, retention cleanup, and simple timeline playback.
 
 It is intentionally boring: FFmpeg copies camera streams straight to disk instead of re-encoding them. Use H.264 camera streams for the smoothest browser playback.

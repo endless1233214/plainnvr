@@ -19,7 +19,7 @@ from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 
 APP_HOST = os.environ.get("NVR_HOST", "0.0.0.0")
@@ -27,6 +27,7 @@ APP_PORT = int(os.environ.get("NVR_PORT", "8787"))
 DATA_DIR = Path(os.environ.get("NVR_DATA_DIR", "/data")).expanduser()
 RECORDINGS_DIR = Path(os.environ.get("NVR_RECORDINGS_DIR", "/recordings")).expanduser()
 STATIC_DIR = Path(os.environ.get("NVR_STATIC_DIR", "/app/static")).expanduser()
+LIVE_DIR = Path(os.environ.get("NVR_LIVE_DIR", str(DATA_DIR / "live"))).expanduser()
 FFMPEG_BIN = os.environ.get("FFMPEG_BIN", "ffmpeg")
 FFPROBE_BIN = os.environ.get("FFPROBE_BIN", "ffprobe")
 RTSP_PROBESIZE = os.environ.get("NVR_RTSP_PROBESIZE", "32768")
@@ -34,6 +35,9 @@ RTSP_ANALYZE_DURATION = os.environ.get("NVR_RTSP_ANALYZE_DURATION", "0")
 SCAN_INTERVAL_SECONDS = int(os.environ.get("NVR_SCAN_INTERVAL_SECONDS", "10"))
 RETENTION_INTERVAL_SECONDS = int(os.environ.get("NVR_RETENTION_INTERVAL_SECONDS", "3600"))
 DEFAULT_SEGMENT_SECONDS = int(os.environ.get("NVR_DEFAULT_SEGMENT_SECONDS", "60"))
+LIVE_HLS_SEGMENT_SECONDS = int(os.environ.get("NVR_LIVE_HLS_SEGMENT_SECONDS", "2"))
+LIVE_HLS_LIST_SIZE = int(os.environ.get("NVR_LIVE_HLS_LIST_SIZE", "8"))
+LIVE_HLS_IDLE_SECONDS = int(os.environ.get("NVR_LIVE_HLS_IDLE_SECONDS", "90"))
 DB_PATH = DATA_DIR / "nvr.sqlite3"
 AUTH_COOKIE_NAME = "plainnvr_session"
 AUTH_SESSION_TTL_SECONDS = int(os.environ.get("NVR_SESSION_TTL_SECONDS", str(7 * 24 * 60 * 60)))
@@ -685,6 +689,122 @@ def build_mjpeg_command(camera, fps=2, width=1280):
     return command
 
 
+def build_live_hls_command(camera, output_dir):
+    output_dir.mkdir(parents=True, exist_ok=True)
+    audio_url = str(camera.get("audio_url") or "").strip()
+    record_audio = camera.get("record_audio", True)
+    command = [
+        FFMPEG_BIN,
+        "-hide_banner",
+        "-nostdin",
+        "-loglevel",
+        "warning",
+    ]
+    command.extend(ffmpeg_input_args(camera))
+    if record_audio and audio_url:
+        command.extend(ffmpeg_input_args(camera, "audio_url"))
+    command.extend(["-map", "0:v:0"])
+    if record_audio:
+        command.extend(["-map", "1:a:0?"] if audio_url else ["-map", "0:a?"])
+    command.extend(["-sn", "-dn", "-c:v", "copy"])
+    if record_audio:
+        command.extend(["-c:a", "aac", "-b:a", "128k", "-ac", "2"])
+    else:
+        command.append("-an")
+    command.extend(
+        [
+            "-f",
+            "hls",
+            "-hls_time",
+            str(max(1, LIVE_HLS_SEGMENT_SECONDS)),
+            "-hls_list_size",
+            str(max(3, LIVE_HLS_LIST_SIZE)),
+            "-hls_flags",
+            "delete_segments+omit_endlist+program_date_time+independent_segments",
+            "-hls_segment_filename",
+            str(output_dir / "segment_%05d.ts"),
+            str(output_dir / "stream.m3u8"),
+        ]
+    )
+    return command
+
+
+class LiveHLSManager:
+    def __init__(self):
+        self.lock = threading.RLock()
+        self.processes = {}
+
+    def stream_dir(self, camera_id):
+        return LIVE_DIR / camera_id
+
+    def start(self, camera):
+        camera_id = camera["id"]
+        with self.lock:
+            self._sweep_idle_locked()
+            entry = self.processes.get(camera_id)
+            if entry and entry["process"].poll() is None:
+                entry["last_seen"] = time.time()
+                return entry["dir"] / "stream.m3u8"
+            self._stop_locked(camera_id)
+            output_dir = self.stream_dir(camera_id)
+            shutil.rmtree(output_dir, ignore_errors=True)
+            output_dir.mkdir(parents=True, exist_ok=True)
+            process = subprocess.Popen(
+                build_live_hls_command(camera, output_dir),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            self.processes[camera_id] = {
+                "process": process,
+                "dir": output_dir,
+                "last_seen": time.time(),
+            }
+
+        playlist = self.stream_dir(camera_id) / "stream.m3u8"
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            with self.lock:
+                entry = self.processes.get(camera_id)
+                process = entry["process"] if entry else None
+            if process is None or process.poll() is not None:
+                raise RuntimeError("Live stream exited before it produced a playlist.")
+            if playlist.exists() and playlist.stat().st_size > 0:
+                return playlist
+            time.sleep(0.2)
+        raise RuntimeError("Live stream did not become ready in time.")
+
+    def stop(self, camera_id):
+        with self.lock:
+            self._stop_locked(camera_id)
+
+    def _sweep_idle_locked(self):
+        now = time.time()
+        for camera_id, entry in list(self.processes.items()):
+            if entry["process"].poll() is not None or now - entry["last_seen"] > LIVE_HLS_IDLE_SECONDS:
+                self._stop_locked(camera_id)
+
+    def _stop_locked(self, camera_id):
+        entry = self.processes.pop(camera_id, None)
+        if not entry:
+            return
+        process = entry["process"]
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+
+    def shutdown(self):
+        with self.lock:
+            camera_ids = list(self.processes.keys())
+        for camera_id in camera_ids:
+            self.stop(camera_id)
+
+
+live_hls = LiveHLSManager()
+
+
 class RecorderSupervisor:
     def __init__(self):
         self.lock = threading.RLock()
@@ -1064,11 +1184,12 @@ class NvrHandler(SimpleHTTPRequestHandler):
     def ensure_authorized(self, parsed):
         if self.is_public_path(parsed):
             return True
-        if parsed.path.startswith("/ha/"):
+        if parsed.path.startswith(("/ha/", "/live/", "/media/")):
             if valid_stream_auth(self, parsed):
                 return True
-            self.send_basic_auth_required()
-            return False
+            if parsed.path.startswith("/ha/"):
+                self.send_basic_auth_required()
+                return False
         if self.auth_user():
             return True
         if parsed.path.startswith("/api/"):
@@ -1113,6 +1234,9 @@ class NvrHandler(SimpleHTTPRequestHandler):
         if parsed.path.startswith("/ha/"):
             self.handle_home_assistant(parsed)
             return
+        if parsed.path.startswith("/live/"):
+            self.handle_live_hls(parsed)
+            return
         if parsed.path.startswith("/media/"):
             self.handle_media(parsed.path)
             return
@@ -1124,6 +1248,12 @@ class NvrHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path.startswith("/ha/"):
             self.handle_home_assistant_head(parsed)
+            return
+        if parsed.path.startswith("/live/"):
+            self.handle_live_hls_head(parsed)
+            return
+        if parsed.path.startswith("/media/"):
+            self.handle_media(parsed.path, head_only=True)
             return
         if parsed.path.startswith("/api/"):
             self.send_response(HTTPStatus.METHOD_NOT_ALLOWED)
@@ -1335,6 +1465,73 @@ class NvrHandler(SimpleHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
+    def handle_live_hls(self, parsed):
+        match = re.match(r"^/live/([a-f0-9]+)/(stream\.m3u8|segment_\d+\.ts)$", parsed.path)
+        if not match:
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        camera = get_camera(match.group(1))
+        if not camera:
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        filename = match.group(2)
+        try:
+            live_hls.start(camera)
+        except RuntimeError as exc:
+            self.send_error(HTTPStatus.BAD_GATEWAY, str(exc))
+            return
+        target = (live_hls.stream_dir(camera["id"]) / filename).resolve()
+        root = live_hls.stream_dir(camera["id"]).resolve()
+        if root not in target.parents or not target.exists():
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        if filename == "stream.m3u8":
+            self.send_live_playlist(target, parsed)
+            return
+        self.send_live_file(target, "video/mp2t")
+
+    def handle_live_hls_head(self, parsed):
+        match = re.match(r"^/live/([a-f0-9]+)/(stream\.m3u8|segment_\d+\.ts)$", parsed.path)
+        if not match or not get_camera(match.group(1)):
+            self.send_response(HTTPStatus.NOT_FOUND)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        content_type = "application/vnd.apple.mpegurl" if match.group(2) == "stream.m3u8" else "video/mp2t"
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def send_live_playlist(self, target, parsed):
+        text = target.read_text(encoding="utf-8", errors="replace")
+        token = parse_qs(parsed.query).get("token", [""])[0]
+        if token:
+            lines = []
+            for line in text.splitlines():
+                if line and not line.startswith("#"):
+                    separator = "&" if "?" in line else "?"
+                    line = f"{line}{separator}token={quote(token)}"
+                lines.append(line)
+            text = "\n".join(lines) + "\n"
+        payload = text.encode("utf-8")
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "application/vnd.apple.mpegurl")
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def send_live_file(self, target, content_type):
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(target.stat().st_size))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        with target.open("rb") as src:
+            shutil.copyfileobj(src, self.wfile)
+
     def handle_snapshot(self, camera):
         try:
             result = subprocess.run(build_snapshot_command(camera), capture_output=True, timeout=20)
@@ -1384,7 +1581,7 @@ class NvrHandler(SimpleHTTPRequestHandler):
                 except subprocess.TimeoutExpired:
                     process.kill()
 
-    def handle_media(self, path):
+    def handle_media(self, path, head_only=False):
         parts = path.split("/")
         if len(parts) != 4:
             self.send_error(HTTPStatus.NOT_FOUND)
@@ -1425,6 +1622,8 @@ class NvrHandler(SimpleHTTPRequestHandler):
         if status == HTTPStatus.PARTIAL_CONTENT:
             self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
         self.end_headers()
+        if head_only:
+            return
         with target.open("rb") as src:
             src.seek(start)
             remaining = end - start + 1
@@ -1460,6 +1659,7 @@ class NvrHandler(SimpleHTTPRequestHandler):
 def main():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
+    LIVE_DIR.mkdir(parents=True, exist_ok=True)
     init_db()
     recorder.start()
     server = ThreadingHTTPServer((APP_HOST, APP_PORT), NvrHandler)
@@ -1474,6 +1674,7 @@ def main():
     try:
         server.serve_forever()
     finally:
+        live_hls.shutdown()
         recorder.shutdown()
         server.server_close()
 
