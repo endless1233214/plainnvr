@@ -1,4 +1,7 @@
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 
 struct ContentView: View {
     @EnvironmentObject private var viewModel: PlainNVRViewModel
@@ -6,7 +9,7 @@ struct ContentView: View {
     var body: some View {
         Group {
             if viewModel.connectionState == .signedIn {
-                MainTabView()
+                SignedInRootView()
             } else {
                 SignInView()
             }
@@ -30,6 +33,33 @@ struct ContentView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(viewModel.errorMessage ?? "")
+        }
+    }
+}
+
+enum AppSection: String, CaseIterable, Identifiable {
+    case cameras
+    case live
+    case recordings
+    case settings
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .cameras: return "Cameras"
+        case .live: return "Live"
+        case .recordings: return "Recordings"
+        case .settings: return "Settings"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .cameras: return "video"
+        case .live: return "dot.radiowaves.left.and.right"
+        case .recordings: return "play.rectangle"
+        case .settings: return "gearshape"
         }
     }
 }
@@ -66,7 +96,9 @@ struct SignInView: View {
                         .disabled(viewModel.isBusy)
                     }
                 }
+                .frame(maxWidth: 560)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .navigationTitle("PlainNVR")
             .toolbar {
                 if viewModel.isBusy {
@@ -77,7 +109,23 @@ struct SignInView: View {
     }
 }
 
-struct MainTabView: View {
+struct SignedInRootView: View {
+    var body: some View {
+        #if targetEnvironment(macCatalyst)
+        MacRootView()
+        #elseif os(iOS)
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            PadRootView()
+        } else {
+            PhoneRootView()
+        }
+        #else
+        MacRootView()
+        #endif
+    }
+}
+
+struct PhoneRootView: View {
     var body: some View {
         TabView {
             CamerasView()
@@ -95,6 +143,80 @@ struct MainTabView: View {
     }
 }
 
+struct PadRootView: View {
+    var body: some View {
+        SidebarRootView(defaultSection: .live, liveDetail: .wide)
+    }
+}
+
+struct MacRootView: View {
+    var body: some View {
+        SidebarRootView(defaultSection: .cameras, liveDetail: .wide)
+    }
+}
+
+enum LiveDetailStyle {
+    case compact
+    case wide
+}
+
+struct SidebarRootView: View {
+    @EnvironmentObject private var viewModel: PlainNVRViewModel
+    let defaultSection: AppSection
+    let liveDetail: LiveDetailStyle
+    @State private var selectedSection: AppSection?
+
+    init(defaultSection: AppSection, liveDetail: LiveDetailStyle) {
+        self.defaultSection = defaultSection
+        self.liveDetail = liveDetail
+        _selectedSection = State(initialValue: defaultSection)
+    }
+
+    var body: some View {
+        NavigationSplitView {
+            List(AppSection.allCases, selection: $selectedSection) { section in
+                Label(section.title, systemImage: section.systemImage)
+                    .tag(section as AppSection?)
+            }
+            .navigationTitle("PlainNVR")
+            .toolbar {
+                Button {
+                    Task { await viewModel.refreshAll() }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .disabled(viewModel.isBusy)
+            }
+        } detail: {
+            SidebarDetailView(section: selectedSection ?? defaultSection, liveDetail: liveDetail)
+        }
+        .navigationSplitViewStyle(.balanced)
+    }
+}
+
+struct SidebarDetailView: View {
+    let section: AppSection
+    let liveDetail: LiveDetailStyle
+
+    var body: some View {
+        switch section {
+        case .cameras:
+            CamerasContentView()
+        case .live:
+            switch liveDetail {
+            case .compact:
+                LiveContentView()
+            case .wide:
+                WideLiveContentView()
+            }
+        case .recordings:
+            RecordingsContentView()
+        case .settings:
+            SettingsContentView()
+        }
+    }
+}
+
 struct BrandHeader: View {
     var body: some View {
         Image("PlainNVRBanner")
@@ -107,51 +229,57 @@ struct BrandHeader: View {
 }
 
 struct CamerasView: View {
+    var body: some View {
+        NavigationStack {
+            CamerasContentView()
+        }
+    }
+}
+
+struct CamerasContentView: View {
     @EnvironmentObject private var viewModel: PlainNVRViewModel
 
     var body: some View {
-        NavigationStack {
-            List {
-                if let disk = viewModel.status?.disk {
-                    Section("Storage") {
-                        DiskUsageView(disk: disk)
-                    }
+        List {
+            if let disk = viewModel.status?.disk {
+                Section("Storage") {
+                    DiskUsageView(disk: disk)
                 }
+            }
 
-                Section("Cameras") {
-                    if viewModel.cameras.isEmpty {
-                        ContentUnavailableView("No Cameras", systemImage: "video.slash")
-                    } else {
-                        ForEach(viewModel.cameras) { camera in
-                            NavigationLink {
-                                CameraDetailView(camera: camera)
-                            } label: {
-                                CameraRow(camera: camera, recorder: viewModel.status?.recorders[camera.id])
-                            }
-                        }
-                    }
-                }
-
-                if let events = viewModel.status?.events, !events.isEmpty {
-                    Section("Recent Events") {
-                        ForEach(events.prefix(8)) { event in
-                            EventRow(event: event)
+            Section("Cameras") {
+                if viewModel.cameras.isEmpty {
+                    ContentUnavailableView("No Cameras", systemImage: "video.slash")
+                } else {
+                    ForEach(viewModel.cameras) { camera in
+                        NavigationLink {
+                            CameraDetailView(camera: camera)
+                        } label: {
+                            CameraRow(camera: camera, recorder: viewModel.status?.recorders[camera.id])
                         }
                     }
                 }
             }
-            .navigationTitle("PlainNVR")
-            .toolbar {
-                Button {
-                    Task { await viewModel.refreshAll() }
-                } label: {
-                    Image(systemName: "arrow.clockwise")
+
+            if let events = viewModel.status?.events, !events.isEmpty {
+                Section("Recent Events") {
+                    ForEach(events.prefix(8)) { event in
+                        EventRow(event: event)
+                    }
                 }
-                .disabled(viewModel.isBusy)
             }
-            .refreshable {
-                await viewModel.refreshAll()
+        }
+        .navigationTitle("Cameras")
+        .toolbar {
+            Button {
+                Task { await viewModel.refreshAll() }
+            } label: {
+                Image(systemName: "arrow.clockwise")
             }
+            .disabled(viewModel.isBusy)
+        }
+        .refreshable {
+            await viewModel.refreshAll()
         }
     }
 }
@@ -198,22 +326,31 @@ struct CameraDetailView: View {
 }
 
 struct LiveView: View {
+    var body: some View {
+        NavigationStack {
+            LiveContentView()
+        }
+    }
+}
+
+struct LiveContentView: View {
     @EnvironmentObject private var viewModel: PlainNVRViewModel
     #if os(iOS)
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     #endif
 
     private var isLandscape: Bool {
-        #if os(iOS)
-        verticalSizeClass == .compact
+        #if targetEnvironment(macCatalyst)
+        false
+        #elseif os(iOS)
+        UIDevice.current.userInterfaceIdiom == .phone && verticalSizeClass == .compact
         #else
         false
         #endif
     }
 
     var body: some View {
-        NavigationStack {
-            liveContent
+        liveContent
             .navigationTitle("Live")
             .plainNVRInlineNavigationTitle()
             .toolbar {
@@ -227,7 +364,6 @@ struct LiveView: View {
                 }
             }
             .plainNVRLiveChromeHidden(isLandscape)
-        }
     }
 
     @ViewBuilder
@@ -283,127 +419,221 @@ struct LiveView: View {
     }
 }
 
-struct RecordingsView: View {
+struct WideLiveContentView: View {
     @EnvironmentObject private var viewModel: PlainNVRViewModel
 
     var body: some View {
-        NavigationStack {
+        HStack(spacing: 0) {
             List {
-                if viewModel.cameras.isEmpty {
-                    ContentUnavailableView("No Cameras", systemImage: "video.slash")
-                } else {
-                    Section("Camera") {
-                        CameraPicker()
-                    }
-
-                    Section("Date") {
-                        DatePicker(
-                            "Recording Date",
-                            selection: Binding(
-                                get: { viewModel.selectedRecordingDate },
-                                set: { date in
-                                    viewModel.selectedRecordingDate = date
-                                    Task { await viewModel.refreshCoverageAndSegments() }
-                                }
-                            ),
-                            displayedComponents: .date
-                        )
-                    }
-
-                    if let coverage = viewModel.coverage {
-                        Section("Coverage") {
-                            CoverageView(coverage: coverage)
-                        }
-                    }
-
-                    Section("Segments") {
-                        if viewModel.segments.isEmpty {
-                            ContentUnavailableView("No Recordings", systemImage: "play.slash")
-                        } else {
-                            ForEach(viewModel.segments) { segment in
-                                Button {
-                                    viewModel.activeSegment = segment
-                                } label: {
-                                    SegmentRow(segment: segment)
-                                }
-                                .buttonStyle(.plain)
+                Section("Camera") {
+                    if viewModel.cameras.isEmpty {
+                        ContentUnavailableView("No Cameras", systemImage: "video.slash")
+                    } else {
+                        ForEach(viewModel.cameras) { camera in
+                            Button {
+                                Task { await viewModel.selectCamera(camera.id) }
+                            } label: {
+                                CameraRow(camera: camera, recorder: viewModel.status?.recorders[camera.id])
                             }
+                            .buttonStyle(.plain)
+                            .listRowBackground(camera.id == viewModel.selectedCamera?.id ? Color.accentColor.opacity(0.12) : Color.clear)
                         }
                     }
                 }
             }
-            .navigationTitle("Recordings")
-            .toolbar {
-                Button {
-                    Task { await viewModel.refreshCoverageAndSegments() }
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .disabled(viewModel.isBusy)
-            }
-            .sheet(item: $viewModel.activeSegment) { segment in
-                if let url = viewModel.playbackURL(for: segment) {
-                    SegmentPlayerView(url: url, title: PlainNVRFormat.displayTime(segment.start), segment: segment)
+            .frame(minWidth: 260, idealWidth: 300, maxWidth: 360)
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 16) {
+                if let camera = viewModel.selectedCamera, let url = viewModel.liveURL(for: camera) {
+                    LivePlayerView(url: url)
+                        .aspectRatio(16 / 9, contentMode: .fit)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .stroke(.quaternary, lineWidth: 1)
+                        }
+
+                    CameraStatusStrip(camera: camera, recorder: viewModel.status?.recorders[camera.id])
                 } else {
-                    ContentUnavailableView("Video Unavailable", systemImage: "exclamationmark.triangle")
+                    ContentUnavailableView("Stream Unavailable", systemImage: "wifi.exclamationmark")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
+
+                Spacer(minLength: 0)
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+        .navigationTitle("Live")
+        .toolbar {
+            Button {
+                Task { await viewModel.refreshAll() }
+            } label: {
+                Image(systemName: "arrow.clockwise")
+            }
+            .disabled(viewModel.isBusy)
+        }
+    }
+}
+
+struct CameraStatusStrip: View {
+    let camera: Camera
+    let recorder: RecorderState?
+
+    var body: some View {
+        HStack(spacing: 16) {
+            Label(camera.name, systemImage: recorder?.running == true ? "record.circle.fill" : "video")
+                .foregroundStyle(recorder?.running == true ? .red : .primary)
+
+            Label(camera.enabled ? "Enabled" : "Disabled", systemImage: camera.enabled ? "checkmark.circle" : "pause.circle")
+
+            Text(camera.shortRetention)
+                .foregroundStyle(.secondary)
+
+            Text("\(camera.segmentSeconds)s segments")
+                .foregroundStyle(.secondary)
+
+            Spacer()
+        }
+        .font(.subheadline)
+    }
+}
+
+struct RecordingsView: View {
+    var body: some View {
+        NavigationStack {
+            RecordingsContentView()
+        }
+    }
+}
+
+struct RecordingsContentView: View {
+    @EnvironmentObject private var viewModel: PlainNVRViewModel
+
+    var body: some View {
+        List {
+            if viewModel.cameras.isEmpty {
+                ContentUnavailableView("No Cameras", systemImage: "video.slash")
+            } else {
+                Section("Camera") {
+                    CameraPicker()
+                }
+
+                Section("Date") {
+                    DatePicker(
+                        "Recording Date",
+                        selection: Binding(
+                            get: { viewModel.selectedRecordingDate },
+                            set: { date in
+                                viewModel.selectedRecordingDate = date
+                                Task { await viewModel.refreshCoverageAndSegments() }
+                            }
+                        ),
+                        displayedComponents: .date
+                    )
+                }
+
+                if let coverage = viewModel.coverage {
+                    Section("Coverage") {
+                        CoverageView(coverage: coverage)
+                    }
+                }
+
+                Section("Segments") {
+                    if viewModel.segments.isEmpty {
+                        ContentUnavailableView("No Recordings", systemImage: "play.slash")
+                    } else {
+                        ForEach(viewModel.segments) { segment in
+                            Button {
+                                viewModel.activeSegment = segment
+                            } label: {
+                                SegmentRow(segment: segment)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle("Recordings")
+        .toolbar {
+            Button {
+                Task { await viewModel.refreshCoverageAndSegments() }
+            } label: {
+                Image(systemName: "arrow.clockwise")
+            }
+            .disabled(viewModel.isBusy)
+        }
+        .sheet(item: $viewModel.activeSegment) { segment in
+            if let url = viewModel.playbackURL(for: segment) {
+                SegmentPlayerView(url: url, title: PlainNVRFormat.displayTime(segment.start), segment: segment)
+            } else {
+                ContentUnavailableView("Video Unavailable", systemImage: "exclamationmark.triangle")
             }
         }
     }
 }
 
 struct SettingsView: View {
+    var body: some View {
+        NavigationStack {
+            SettingsContentView()
+        }
+    }
+}
+
+struct SettingsContentView: View {
     @EnvironmentObject private var viewModel: PlainNVRViewModel
     @Environment(\.openURL) private var openURL
 
     var body: some View {
-        NavigationStack {
-            Form {
-                Section("PlainNVR") {
-                    HStack(spacing: 12) {
-                        Image("PlainNVRMark")
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 32, height: 32)
-                            .foregroundStyle(Color.accentColor)
+        Form {
+            Section("PlainNVR") {
+                HStack(spacing: 12) {
+                    Image("PlainNVRMark")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 32, height: 32)
+                        .foregroundStyle(Color.accentColor)
 
-                        Text("PlainNVR")
-                            .font(.headline)
-                    }
-                    .accessibilityElement(children: .combine)
+                    Text("PlainNVR")
+                        .font(.headline)
+                }
+                .accessibilityElement(children: .combine)
+            }
+
+            Section("Server") {
+                TextField("Server URL", text: $viewModel.serverAddress)
+                    .plainNVRURLInput()
+
+                Button {
+                    Task { await viewModel.bootstrap() }
+                } label: {
+                    Label("Reconnect", systemImage: "arrow.triangle.2.circlepath")
                 }
 
-                Section("Server") {
-                    TextField("Server URL", text: $viewModel.serverAddress)
-                        .plainNVRURLInput()
-
+                if let url = URL(string: viewModel.serverAddress) {
                     Button {
-                        Task { await viewModel.bootstrap() }
+                        openURL(url)
                     } label: {
-                        Label("Reconnect", systemImage: "arrow.triangle.2.circlepath")
-                    }
-
-                    if let url = URL(string: viewModel.serverAddress) {
-                        Button {
-                            openURL(url)
-                        } label: {
-                            Label("Open Web UI", systemImage: "safari")
-                        }
-                    }
-                }
-
-                Section("Account") {
-                    LabeledContent("Signed In", value: viewModel.currentUsername)
-
-                    Button(role: .destructive) {
-                        Task { await viewModel.logout() }
-                    } label: {
-                        Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
+                        Label("Open Web UI", systemImage: "safari")
                     }
                 }
             }
-            .navigationTitle("Settings")
+
+            Section("Account") {
+                LabeledContent("Signed In", value: viewModel.currentUsername)
+
+                Button(role: .destructive) {
+                    Task { await viewModel.logout() }
+                } label: {
+                    Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
+                }
+            }
         }
+        .navigationTitle("Settings")
     }
 }
 

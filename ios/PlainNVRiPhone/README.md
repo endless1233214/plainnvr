@@ -13,6 +13,14 @@ Native SwiftUI companion app for PlainNVR. It is meant for personal sideloading 
 - Play, share, or save selected recording clips to Photos.
 - Build the same app for macOS through Mac Catalyst for quick desktop testing.
 
+## Layout Paths
+
+`PlainNVRCompainion` is one Xcode target, but the SwiftUI root chooses a different layout at runtime:
+
+- iPhone uses `PhoneRootView`, a compact tab layout with landscape live-view fullscreen behavior.
+- iPad uses `PadRootView`, a sidebar/tablet layout.
+- Mac Catalyst uses `MacRootView`, a desktop-style sidebar layout.
+
 ## Server Support
 
 The app uses the existing session cookie API plus these media paths:
