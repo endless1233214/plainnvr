@@ -149,6 +149,33 @@ enum PlainNVRFormat {
         return formatter
     }()
 
+    private static let displayDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        return formatter
+    }()
+
+    private static let displayDateTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .short
+        formatter.timeStyle = .short
+        return formatter
+    }()
+
+    private static let displayTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .none
+        formatter.timeStyle = .short
+        return formatter
+    }()
+
+    private static let byteFormatter: ByteCountFormatter = {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        return formatter
+    }()
+
     static func apiDate(_ date: Date) -> String {
         dayFormatter.string(from: date)
     }
@@ -159,17 +186,17 @@ enum PlainNVRFormat {
 
     static func displayDate(_ value: String) -> String {
         guard let date = date(fromAPI: value) else { return value }
-        return DateFormatter.localizedString(from: date, dateStyle: .medium, timeStyle: .none)
+        return displayDateFormatter.string(from: date)
     }
 
     static func displayDateTime(_ value: String?) -> String {
         guard let value, let date = parseDateTime(value) else { return value ?? "Unknown" }
-        return DateFormatter.localizedString(from: date, dateStyle: .short, timeStyle: .short)
+        return displayDateTimeFormatter.string(from: date)
     }
 
     static func displayTime(_ value: String?) -> String {
         guard let value, let date = parseDateTime(value) else { return value ?? "Unknown" }
-        return DateFormatter.localizedString(from: date, dateStyle: .none, timeStyle: .short)
+        return displayTimeFormatter.string(from: date)
     }
 
     static func parseDateTime(_ value: String) -> Date? {
@@ -179,6 +206,6 @@ enum PlainNVRFormat {
     }
 
     static func bytes(_ value: Int64) -> String {
-        ByteCountFormatter.string(fromByteCount: value, countStyle: .file)
+        byteFormatter.string(fromByteCount: value)
     }
 }

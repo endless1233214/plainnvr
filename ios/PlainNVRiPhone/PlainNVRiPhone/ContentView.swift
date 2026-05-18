@@ -77,7 +77,7 @@ struct SignInView: View {
 
                 Form {
                     Section("Server") {
-                        TextField("http://192.168.1.172:8787", text: $viewModel.serverAddress)
+                        TextField("http://192.168.1.0:8787", text: $viewModel.serverAddress)
                             .plainNVRURLInput()
                     }
 
@@ -172,20 +172,7 @@ struct SidebarRootView: View {
 
     var body: some View {
         NavigationSplitView {
-            List(AppSection.allCases) { section in
-                Button {
-                    selectedSection = section
-                } label: {
-                    HStack {
-                        Label(section.title, systemImage: section.systemImage)
-                        Spacer()
-                    }
-                    .contentShape(Rectangle())
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .buttonStyle(.plain)
-                .listRowBackground(section == selectedSection ? Color.accentColor.opacity(0.14) : Color.clear)
-            }
+            sidebarList
             .navigationTitle("PlainNVR")
             .toolbar {
                 Button {
@@ -199,6 +186,24 @@ struct SidebarRootView: View {
             SidebarDetailView(section: selectedSection, liveDetail: liveDetail)
         }
         .navigationSplitViewStyle(.balanced)
+    }
+
+    private var sidebarList: some View {
+        List {
+            ForEach(AppSection.allCases) { section in
+                HStack {
+                    Label(section.title, systemImage: section.systemImage)
+                    Spacer()
+                }
+                .contentShape(Rectangle())
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .onTapGesture {
+                    selectedSection = section
+                }
+                .listRowBackground(section == selectedSection ? Color.accentColor.opacity(0.14) : Color.clear)
+            }
+        }
+        .listStyle(.sidebar)
     }
 }
 
@@ -389,7 +394,7 @@ struct LiveContentView: View {
             if viewModel.cameras.isEmpty {
                 ContentUnavailableView("No Cameras", systemImage: "video.slash")
             } else {
-                CameraPicker()
+                CameraPicker(refreshRecordings: false)
 
                 if let camera = viewModel.selectedCamera, let url = viewModel.liveURL(for: camera) {
                     LivePlayerView(url: url)
@@ -440,7 +445,7 @@ struct WideLiveContentView: View {
                     } else {
                         ForEach(viewModel.cameras) { camera in
                             Button {
-                                Task { await viewModel.selectCamera(camera.id) }
+                                Task { await viewModel.selectCamera(camera.id, refreshRecordings: false) }
                             } label: {
                                 CameraRow(camera: camera, recorder: viewModel.status?.recorders[camera.id])
                             }
@@ -527,7 +532,7 @@ struct RecordingsContentView: View {
                 ContentUnavailableView("No Cameras", systemImage: "video.slash")
             } else {
                 Section("Camera") {
-                    CameraPicker()
+                    CameraPicker(refreshRecordings: true)
                 }
 
                 Section("Date") {
@@ -568,6 +573,9 @@ struct RecordingsContentView: View {
         }
         .navigationTitle("Recordings")
         .plainNVRInlineNavigationTitle()
+        .task {
+            await viewModel.loadRecordingBrowserIfNeeded()
+        }
         .toolbar {
             Button {
                 Task { await viewModel.refreshCoverageAndSegments() }
@@ -600,20 +608,6 @@ struct SettingsContentView: View {
 
     var body: some View {
         Form {
-            Section("PlainNVR") {
-                HStack(spacing: 12) {
-                    Image("PlainNVRMark")
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 32, height: 32)
-                        .foregroundStyle(Color.accentColor)
-
-                    Text("PlainNVR")
-                        .font(.headline)
-                }
-                .accessibilityElement(children: .combine)
-            }
-
             Section("Server") {
                 TextField("Server URL", text: $viewModel.serverAddress)
                     .plainNVRURLInput()
@@ -650,6 +644,11 @@ struct SettingsContentView: View {
 
 struct CameraPicker: View {
     @EnvironmentObject private var viewModel: PlainNVRViewModel
+    let refreshRecordings: Bool
+
+    init(refreshRecordings: Bool = false) {
+        self.refreshRecordings = refreshRecordings
+    }
 
     var body: some View {
         Picker(
@@ -657,7 +656,7 @@ struct CameraPicker: View {
             selection: Binding(
                 get: { viewModel.selectedCameraID ?? viewModel.cameras.first?.id ?? "" },
                 set: { cameraID in
-                    Task { await viewModel.selectCamera(cameraID) }
+                    Task { await viewModel.selectCamera(cameraID, refreshRecordings: refreshRecordings) }
                 }
             )
         ) {

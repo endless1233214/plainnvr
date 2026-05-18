@@ -6,6 +6,17 @@ import UIKit
 import AppKit
 #endif
 
+private extension View {
+    @ViewBuilder
+    func plainNVRSegmentPlayerSizing() -> some View {
+        #if targetEnvironment(macCatalyst)
+        self.frame(minWidth: 960, idealWidth: 1120, minHeight: 620, idealHeight: 720)
+        #else
+        self
+        #endif
+    }
+}
+
 struct SegmentPlayerView: View {
     let url: URL
     let title: String
@@ -22,6 +33,7 @@ struct SegmentPlayerView: View {
         NavigationStack {
             playerView
         }
+        .plainNVRSegmentPlayerSizing()
     }
 
     private var playerView: some View {
@@ -31,7 +43,13 @@ struct SegmentPlayerView: View {
             .navigationTitle(title)
             .plainNVRInlineNavigationTitle()
             .toolbar {
-                #if os(iOS)
+                #if targetEnvironment(macCatalyst)
+                ToolbarItemGroup {
+                    saveButton
+                    shareButton
+                    closeButton
+                }
+                #elseif os(iOS)
                 ToolbarItemGroup(placement: .navigationBarLeading) {
                     saveButton
                     shareButton
@@ -51,7 +69,9 @@ struct SegmentPlayerView: View {
             .onAppear(perform: startPlayback)
             .onDisappear(perform: stopPlayback)
             .sheet(item: $shareItem) { item in
-                #if os(iOS)
+                #if targetEnvironment(macCatalyst)
+                CatalystShareView(url: item.url)
+                #elseif os(iOS)
                 ShareSheet(activityItems: [item.url])
                 #else
                 MacShareView(url: item.url)
@@ -111,7 +131,12 @@ struct SegmentPlayerView: View {
     }
 
     private func saveRecording() async {
-        #if os(iOS)
+        #if targetEnvironment(macCatalyst)
+        await runPreparation {
+            let destination = try await viewModel.saveSegmentToDownloads(segment)
+            message = "Saved to \(destination.lastPathComponent) in Downloads."
+        }
+        #elseif os(iOS)
         await runPreparation {
             try await viewModel.saveSegmentToPhotos(segment)
             message = "Saved to Photos."
@@ -266,7 +291,27 @@ struct ShareItem: Identifiable {
     var id: String { url.absoluteString }
 }
 
-#if os(iOS)
+#if targetEnvironment(macCatalyst)
+struct CatalystShareView: View {
+    let url: URL
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 16) {
+            ShareLink(item: url) {
+                Label("Share Recording", systemImage: "square.and.arrow.up")
+            }
+
+            Button("Done") {
+                dismiss()
+            }
+            .keyboardShortcut(.defaultAction)
+        }
+        .padding(24)
+        .frame(width: 280)
+    }
+}
+#elseif os(iOS)
 struct ShareSheet: UIViewControllerRepresentable {
     let activityItems: [Any]
 
