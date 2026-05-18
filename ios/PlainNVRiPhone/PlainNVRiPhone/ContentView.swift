@@ -129,13 +129,13 @@ struct PhoneRootView: View {
     var body: some View {
         TabView {
             CamerasView()
-                .tabItem { Label("Cameras", image: "PlainNVRCameraSymbol") }
+                .tabItem { Label("Cameras", systemImage: "video") }
 
             LiveView()
-                .tabItem { Label("Live", image: "PlainNVRGridSymbol") }
+                .tabItem { Label("Live", systemImage: "dot.radiowaves.left.and.right") }
 
             RecordingsView()
-                .tabItem { Label("Recordings", image: "PlainNVRRecordingSymbol") }
+                .tabItem { Label("Recordings", systemImage: "play.rectangle") }
 
             SettingsView()
                 .tabItem { Label("Settings", systemImage: "gearshape") }
@@ -162,21 +162,29 @@ enum LiveDetailStyle {
 
 struct SidebarRootView: View {
     @EnvironmentObject private var viewModel: PlainNVRViewModel
-    let defaultSection: AppSection
     let liveDetail: LiveDetailStyle
-    @State private var selectedSection: AppSection?
+    @State private var selectedSection: AppSection
 
     init(defaultSection: AppSection, liveDetail: LiveDetailStyle) {
-        self.defaultSection = defaultSection
         self.liveDetail = liveDetail
         _selectedSection = State(initialValue: defaultSection)
     }
 
     var body: some View {
         NavigationSplitView {
-            List(AppSection.allCases, selection: $selectedSection) { section in
-                Label(section.title, systemImage: section.systemImage)
-                    .tag(section as AppSection?)
+            List(AppSection.allCases) { section in
+                Button {
+                    selectedSection = section
+                } label: {
+                    HStack {
+                        Label(section.title, systemImage: section.systemImage)
+                        Spacer()
+                    }
+                    .contentShape(Rectangle())
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+                .listRowBackground(section == selectedSection ? Color.accentColor.opacity(0.14) : Color.clear)
             }
             .navigationTitle("PlainNVR")
             .toolbar {
@@ -188,7 +196,7 @@ struct SidebarRootView: View {
                 .disabled(viewModel.isBusy)
             }
         } detail: {
-            SidebarDetailView(section: selectedSection ?? defaultSection, liveDetail: liveDetail)
+            SidebarDetailView(section: selectedSection, liveDetail: liveDetail)
         }
         .navigationSplitViewStyle(.balanced)
     }
@@ -270,6 +278,7 @@ struct CamerasContentView: View {
             }
         }
         .navigationTitle("Cameras")
+        .plainNVRInlineNavigationTitle()
         .toolbar {
             Button {
                 Task { await viewModel.refreshAll() }
@@ -558,6 +567,7 @@ struct RecordingsContentView: View {
             }
         }
         .navigationTitle("Recordings")
+        .plainNVRInlineNavigationTitle()
         .toolbar {
             Button {
                 Task { await viewModel.refreshCoverageAndSegments() }
@@ -634,6 +644,7 @@ struct SettingsContentView: View {
             }
         }
         .navigationTitle("Settings")
+        .plainNVRInlineNavigationTitle()
     }
 }
 
@@ -668,9 +679,13 @@ struct DiskUsageView: View {
 
             HStack {
                 Label(PlainNVRFormat.bytes(disk.used), systemImage: "externaldrive.fill")
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
                 Spacer()
                 Text("\(PlainNVRFormat.bytes(disk.free)) free")
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
             }
             .font(.footnote)
         }
@@ -683,28 +698,32 @@ struct CameraRow: View {
     let recorder: RecorderState?
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(alignment: .center, spacing: 12) {
             Image(systemName: recorder?.running == true ? "record.circle.fill" : "video.circle")
-                .font(.title2)
+                .font(.title3)
                 .foregroundStyle(recorder?.running == true ? .red : .secondary)
+                .frame(width: 28)
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(camera.name)
                     .font(.headline)
                     .lineLimit(1)
+                    .minimumScaleFactor(0.8)
 
-                HStack(spacing: 8) {
-                    Label(camera.enabled ? "Enabled" : "Disabled", systemImage: camera.enabled ? "checkmark.circle" : "pause.circle")
-                    Text(camera.shortRetention)
-                    Text("\(camera.segmentSeconds)s")
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                Text(cameraSummary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Spacer()
         }
         .contentShape(Rectangle())
+    }
+
+    private var cameraSummary: String {
+        "\(camera.enabled ? "On" : "Off")  \(camera.shortRetention)  \(camera.segmentSeconds)s"
     }
 }
 
