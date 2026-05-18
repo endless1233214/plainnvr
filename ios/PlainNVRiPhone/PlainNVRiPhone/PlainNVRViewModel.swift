@@ -1,5 +1,7 @@
 import Foundation
+#if os(iOS)
 import Photos
+#endif
 import SwiftUI
 
 enum PlainNVRConnectionState: Equatable {
@@ -193,10 +195,28 @@ final class PlainNVRViewModel: ObservableObject {
         return try await client.downloadSegment(segment, streamToken: status?.streamToken ?? "")
     }
 
+    #if os(iOS)
     func saveSegmentToPhotos(_ segment: RecordingSegment) async throws {
         let fileURL = try await downloadSegment(segment)
         try await PhotoLibrarySaver.saveVideo(fileURL)
     }
+    #endif
+
+    #if os(macOS)
+    func saveSegmentToDownloads(_ segment: RecordingSegment) async throws -> URL {
+        let fileURL = try await downloadSegment(segment)
+        guard let downloadsDirectory = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first else {
+            throw PlainNVRClientError.server("Downloads folder is unavailable.")
+        }
+
+        let destination = uniqueDestination(
+            in: downloadsDirectory,
+            filename: segment.filename
+        )
+        try FileManager.default.copyItem(at: fileURL, to: destination)
+        return destination
+    }
+    #endif
 
     private func configuredClient() throws -> PlainNVRClient {
         let client = try PlainNVRClient(serverAddress: serverAddress)
@@ -230,8 +250,30 @@ final class PlainNVRViewModel: ObservableObject {
         }
         return error.localizedDescription
     }
+
+    #if os(macOS)
+    private func uniqueDestination(in directory: URL, filename: String) -> URL {
+        let original = directory.appendingPathComponent(filename, conformingTo: .mpeg4Movie)
+        guard FileManager.default.fileExists(atPath: original.path) else {
+            return original
+        }
+
+        let base = original.deletingPathExtension().lastPathComponent
+        let pathExtension = original.pathExtension
+        for index in 1...999 {
+            let candidate = directory
+                .appendingPathComponent("\(base)-\(index)")
+                .appendingPathExtension(pathExtension)
+            if !FileManager.default.fileExists(atPath: candidate.path) {
+                return candidate
+            }
+        }
+        return directory.appendingPathComponent("\(base)-\(UUID().uuidString)").appendingPathExtension(pathExtension)
+    }
+    #endif
 }
 
+#if os(iOS)
 enum PhotoLibrarySaver {
     static func saveVideo(_ fileURL: URL) async throws {
         let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
@@ -254,3 +296,4 @@ enum PhotoLibrarySaver {
         }
     }
 }
+#endif

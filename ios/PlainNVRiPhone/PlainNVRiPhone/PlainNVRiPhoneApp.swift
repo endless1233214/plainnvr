@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct PlainNVRiPhoneApp: App {
+struct PlainNVRCompainionApp: App {
     @StateObject private var viewModel = PlainNVRViewModel()
 
     var body: some Scene {

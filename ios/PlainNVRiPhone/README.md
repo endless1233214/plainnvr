@@ -1,6 +1,6 @@
-# PlainNVR iPhone
+# PlainNVRCompainion
 
-Native SwiftUI companion app for PlainNVR. It is meant for personal sideloading through Xcode and talks directly to the PlainNVR server on the local network or over a private tunnel.
+Native SwiftUI companion app for PlainNVR. It is meant for personal sideloading through Xcode and talks directly to the PlainNVR server on the local network or over a private tunnel. The same app target builds for iPhone and Mac Catalyst.
 
 ## Features
 
@@ -11,6 +11,7 @@ Native SwiftUI companion app for PlainNVR. It is meant for personal sideloading 
 - Pinch live video to zoom into the image and drag while zoomed to inspect a specific area.
 - Browse saved recording dates and MP4 segments.
 - Play, share, or save selected recording clips to Photos.
+- Build the same app for macOS through Mac Catalyst for quick desktop testing.
 
 ## Server Support
 
@@ -29,9 +30,16 @@ Live HLS audio is boosted by default with `NVR_LIVE_AUDIO_GAIN=4.0`. Set it lowe
 ## Run On iPhone
 
 1. Open `PlainNVRiPhone.xcodeproj` in Xcode.
-2. Set the target's signing team to your Apple developer account.
+2. Select the `PlainNVRCompainion` target and set the signing team to your Apple developer account.
 3. Plug in the iPhone 15 and choose it as the run destination.
 4. Press Run.
 5. Enter the PlainNVR server URL, for example `http://192.168.1.172:8787`, and sign in.
+
+## Run On Mac
+
+1. Open `PlainNVRiPhone.xcodeproj` in Xcode.
+2. Select the `PlainNVRCompainion` scheme.
+3. Choose `My Mac (Mac Catalyst)` as the run destination.
+4. Press Run.
 
 If Xcode says the iOS platform is missing, install it from Xcode Settings > Components, then reopen the project.

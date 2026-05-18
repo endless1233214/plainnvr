@@ -39,30 +39,32 @@ struct SignInView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section("Server") {
-                    TextField("http://192.168.1.172:8787", text: $viewModel.serverAddress)
-                        .keyboardType(.URL)
-                        .textContentType(.URL)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                }
+            VStack(spacing: 0) {
+                BrandHeader()
+                    .padding(.horizontal, 20)
+                    .padding(.top, 18)
+                    .padding(.bottom, 10)
 
-                Section(viewModel.setupRequired ? "Create Account" : "Sign In") {
-                    TextField("Username", text: $viewModel.username)
-                        .textContentType(.username)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-
-                    SecureField("Password", text: $viewModel.password)
-                        .textContentType(viewModel.setupRequired ? .newPassword : .password)
-
-                    Button {
-                        Task { await viewModel.connectOrSignIn() }
-                    } label: {
-                        Label(viewModel.setupRequired ? "Create Account" : "Sign In", systemImage: "person.crop.circle.badge.checkmark")
+                Form {
+                    Section("Server") {
+                        TextField("http://192.168.1.172:8787", text: $viewModel.serverAddress)
+                            .plainNVRURLInput()
                     }
-                    .disabled(viewModel.isBusy)
+
+                    Section(viewModel.setupRequired ? "Create Account" : "Sign In") {
+                        TextField("Username", text: $viewModel.username)
+                            .plainNVRUsernameInput()
+
+                        SecureField("Password", text: $viewModel.password)
+                            .plainNVRPasswordInput(isNewPassword: viewModel.setupRequired)
+
+                        Button {
+                            Task { await viewModel.connectOrSignIn() }
+                        } label: {
+                            Label(viewModel.setupRequired ? "Create Account" : "Sign In", systemImage: "person.crop.circle.badge.checkmark")
+                        }
+                        .disabled(viewModel.isBusy)
+                    }
                 }
             }
             .navigationTitle("PlainNVR")
@@ -79,17 +81,28 @@ struct MainTabView: View {
     var body: some View {
         TabView {
             CamerasView()
-                .tabItem { Label("Cameras", systemImage: "video") }
+                .tabItem { Label("Cameras", image: "PlainNVRCameraSymbol") }
 
             LiveView()
-                .tabItem { Label("Live", systemImage: "dot.radiowaves.left.and.right") }
+                .tabItem { Label("Live", image: "PlainNVRGridSymbol") }
 
             RecordingsView()
-                .tabItem { Label("Recordings", systemImage: "play.rectangle") }
+                .tabItem { Label("Recordings", image: "PlainNVRRecordingSymbol") }
 
             SettingsView()
                 .tabItem { Label("Settings", systemImage: "gearshape") }
         }
+    }
+}
+
+struct BrandHeader: View {
+    var body: some View {
+        Image("PlainNVRBanner")
+            .resizable()
+            .scaledToFit()
+            .frame(maxWidth: 420, maxHeight: 150)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .accessibilityLabel("PlainNVR")
     }
 }
 
@@ -180,23 +193,29 @@ struct CameraDetailView: View {
             }
         }
         .navigationTitle(camera.name)
-        .navigationBarTitleDisplayMode(.inline)
+        .plainNVRInlineNavigationTitle()
     }
 }
 
 struct LiveView: View {
     @EnvironmentObject private var viewModel: PlainNVRViewModel
+    #if os(iOS)
     @Environment(\.verticalSizeClass) private var verticalSizeClass
+    #endif
 
     private var isLandscape: Bool {
+        #if os(iOS)
         verticalSizeClass == .compact
+        #else
+        false
+        #endif
     }
 
     var body: some View {
         NavigationStack {
             liveContent
             .navigationTitle("Live")
-            .navigationBarTitleDisplayMode(.inline)
+            .plainNVRInlineNavigationTitle()
             .toolbar {
                 if !isLandscape {
                     Button {
@@ -207,9 +226,7 @@ struct LiveView: View {
                     .disabled(viewModel.isBusy)
                 }
             }
-            .toolbar(isLandscape ? .hidden : .visible, for: .navigationBar)
-            .toolbar(isLandscape ? .hidden : .visible, for: .tabBar)
-            .statusBarHidden(isLandscape)
+            .plainNVRLiveChromeHidden(isLandscape)
         }
     }
 
@@ -342,11 +359,23 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section("PlainNVR") {
+                    HStack(spacing: 12) {
+                        Image("PlainNVRMark")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 32, height: 32)
+                            .foregroundStyle(Color.accentColor)
+
+                        Text("PlainNVR")
+                            .font(.headline)
+                    }
+                    .accessibilityElement(children: .combine)
+                }
+
                 Section("Server") {
                     TextField("Server URL", text: $viewModel.serverAddress)
-                        .keyboardType(.URL)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
+                        .plainNVRURLInput()
 
                     Button {
                         Task { await viewModel.bootstrap() }
@@ -526,5 +555,62 @@ struct SegmentRow: View {
                 .foregroundStyle(.secondary)
         }
         .contentShape(Rectangle())
+    }
+}
+
+extension View {
+    @ViewBuilder
+    func plainNVRURLInput() -> some View {
+        #if os(iOS)
+        self
+            .keyboardType(.URL)
+            .textContentType(.URL)
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+        #else
+        self
+        #endif
+    }
+
+    @ViewBuilder
+    func plainNVRUsernameInput() -> some View {
+        #if os(iOS)
+        self
+            .textContentType(.username)
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+        #else
+        self
+        #endif
+    }
+
+    @ViewBuilder
+    func plainNVRPasswordInput(isNewPassword: Bool) -> some View {
+        #if os(iOS)
+        self.textContentType(isNewPassword ? .newPassword : .password)
+        #else
+        self
+        #endif
+    }
+
+    @ViewBuilder
+    func plainNVRInlineNavigationTitle() -> some View {
+        #if os(iOS)
+        self.navigationBarTitleDisplayMode(.inline)
+        #else
+        self
+        #endif
+    }
+
+    @ViewBuilder
+    func plainNVRLiveChromeHidden(_ hidden: Bool) -> some View {
+        #if os(iOS)
+        self
+            .toolbar(hidden ? .hidden : .visible, for: .navigationBar)
+            .toolbar(hidden ? .hidden : .visible, for: .tabBar)
+            .statusBarHidden(hidden)
+        #else
+        self
+        #endif
     }
 }

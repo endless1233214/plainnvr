@@ -1,6 +1,10 @@
 import AVKit
 import SwiftUI
+#if os(iOS)
 import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 
 struct SegmentPlayerView: View {
     let url: URL
@@ -25,8 +29,9 @@ struct SegmentPlayerView: View {
             .background(.black)
             .ignoresSafeArea(edges: .bottom)
             .navigationTitle(title)
-            .navigationBarTitleDisplayMode(.inline)
+            .plainNVRInlineNavigationTitle()
             .toolbar {
+                #if os(iOS)
                 ToolbarItemGroup(placement: .navigationBarLeading) {
                     saveButton
                     shareButton
@@ -35,11 +40,22 @@ struct SegmentPlayerView: View {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     closeButton
                 }
+                #else
+                ToolbarItemGroup {
+                    saveButton
+                    shareButton
+                    closeButton
+                }
+                #endif
             }
             .onAppear(perform: startPlayback)
             .onDisappear(perform: stopPlayback)
             .sheet(item: $shareItem) { item in
+                #if os(iOS)
                 ShareSheet(activityItems: [item.url])
+                #else
+                MacShareView(url: item.url)
+                #endif
             }
             .alert("PlainNVR", isPresented: messageBinding) {
                 Button("OK", role: .cancel) {}
@@ -50,7 +66,7 @@ struct SegmentPlayerView: View {
 
     private var saveButton: some View {
         Button {
-            Task { await saveToPhotos() }
+            Task { await saveRecording() }
         } label: {
             Image(systemName: "square.and.arrow.down")
         }
@@ -94,11 +110,18 @@ struct SegmentPlayerView: View {
         player.replaceCurrentItem(with: nil)
     }
 
-    private func saveToPhotos() async {
+    private func saveRecording() async {
+        #if os(iOS)
         await runPreparation {
             try await viewModel.saveSegmentToPhotos(segment)
             message = "Saved to Photos."
         }
+        #else
+        await runPreparation {
+            let destination = try await viewModel.saveSegmentToDownloads(segment)
+            message = "Saved to \(destination.lastPathComponent) in Downloads."
+        }
+        #endif
     }
 
     private func prepareShare() async {
@@ -243,6 +266,7 @@ struct ShareItem: Identifiable {
     var id: String { url.absoluteString }
 }
 
+#if os(iOS)
 struct ShareSheet: UIViewControllerRepresentable {
     let activityItems: [Any]
 
@@ -253,3 +277,30 @@ struct ShareSheet: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {
     }
 }
+#elseif os(macOS)
+struct MacShareView: View {
+    let url: URL
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 16) {
+            ShareLink(item: url) {
+                Label("Share Recording", systemImage: "square.and.arrow.up")
+            }
+
+            Button {
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+            } label: {
+                Label("Show in Finder", systemImage: "folder")
+            }
+
+            Button("Done") {
+                dismiss()
+            }
+            .keyboardShortcut(.defaultAction)
+        }
+        .padding(24)
+        .frame(width: 280)
+    }
+}
+#endif
