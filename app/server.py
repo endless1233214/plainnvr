@@ -667,7 +667,7 @@ def build_mjpeg_command(camera, fps=2, width=1280):
         width = int(width)
     except (TypeError, ValueError):
         width = 1280
-    fps = max(1, min(fps, 10))
+    fps = max(1, min(fps, 15))
     width = max(320, min(width, 1920))
     command = [
         FFMPEG_BIN,

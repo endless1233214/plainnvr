@@ -142,7 +142,7 @@ function cameraLiveUrl(camera) {
   const width = Number($("liveWidth").value) || 1280;
   const token = state.streamToken || "";
   const params = new URLSearchParams({
-    fps: String(Math.max(1, Math.min(fps, 10))),
+    fps: String(Math.max(1, Math.min(fps, 15))),
     width: String(Math.max(320, Math.min(width, 1920))),
   });
   if (token) {
