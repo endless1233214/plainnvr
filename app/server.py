@@ -39,6 +39,7 @@ RETENTION_INTERVAL_SECONDS = int(os.environ.get("NVR_RETENTION_INTERVAL_SECONDS"
 DEFAULT_SEGMENT_SECONDS = int(os.environ.get("NVR_DEFAULT_SEGMENT_SECONDS", "60"))
 LIVE_HLS_SEGMENT_SECONDS = int(os.environ.get("NVR_LIVE_HLS_SEGMENT_SECONDS", "2"))
 LIVE_HLS_LIST_SIZE = int(os.environ.get("NVR_LIVE_HLS_LIST_SIZE", "8"))
+LIVE_HLS_DELETE_THRESHOLD = int(os.environ.get("NVR_LIVE_HLS_DELETE_THRESHOLD", "10"))
 LIVE_HLS_IDLE_SECONDS = int(os.environ.get("NVR_LIVE_HLS_IDLE_SECONDS", "90"))
 LIVE_AUDIO_GAIN = os.environ.get("NVR_LIVE_AUDIO_GAIN", "4.0").strip() or "4.0"
 if not re.match(r"^\d+(\.\d+)?$", LIVE_AUDIO_GAIN):
@@ -775,6 +776,8 @@ def build_live_hls_command(camera, output_dir, fps=None, width=None):
             str(max(1, LIVE_HLS_SEGMENT_SECONDS)),
             "-hls_list_size",
             str(max(3, LIVE_HLS_LIST_SIZE)),
+            "-hls_delete_threshold",
+            str(max(1, LIVE_HLS_DELETE_THRESHOLD)),
             "-hls_flags",
             "delete_segments+omit_endlist+program_date_time+independent_segments",
             "-hls_segment_filename",
@@ -1759,7 +1762,14 @@ class NvrHandler(SimpleHTTPRequestHandler):
             live_hls.touch(camera["id"])
         target = (live_hls.stream_dir(camera["id"]) / filename).resolve()
         root = live_hls.stream_dir(camera["id"]).resolve()
-        if root not in target.parents or not target.exists():
+        if root not in target.parents:
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        if not target.exists() and filename != "stream.m3u8":
+            deadline = time.time() + 2
+            while time.time() < deadline and not target.exists():
+                time.sleep(0.1)
+        if not target.exists():
             self.send_error(HTTPStatus.NOT_FOUND)
             return
         if filename == "stream.m3u8":
@@ -1784,14 +1794,17 @@ class NvrHandler(SimpleHTTPRequestHandler):
     def send_live_playlist(self, target, parsed):
         text = target.read_text(encoding="utf-8", errors="replace")
         token = parse_qs(parsed.query).get("token", [""])[0]
-        if token:
-            lines = []
-            for line in text.splitlines():
-                if line and not line.startswith("#"):
+        playlist_path = parsed.path.rsplit("/", 1)[0]
+        lines = []
+        for line in text.splitlines():
+            if line and not line.startswith("#"):
+                if not re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", line) and not line.startswith("/"):
+                    line = f"{playlist_path}/{line}"
+                if token:
                     separator = "&" if "?" in line else "?"
                     line = f"{line}{separator}token={quote(token)}"
-                lines.append(line)
-            text = "\n".join(lines) + "\n"
+            lines.append(line)
+        text = "\n".join(lines) + "\n"
         payload = text.encode("utf-8")
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "application/vnd.apple.mpegurl")

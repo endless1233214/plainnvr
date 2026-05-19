@@ -247,9 +247,9 @@ final class PlainNVRViewModel: ObservableObject {
 
     func updateLivePlayerFailure(_ message: String) {
         if liveQuality == .source {
-            liveStatusMessage = "\(message)\nTry Low or Balanced if Source is not playable."
+            liveStatusMessage = "\(message)\nTry Low or Balanced if Source is not playable. Tap Check for server details."
         } else {
-            liveStatusMessage = message
+            liveStatusMessage = "\(message)\nTap Check for server details."
         }
     }
 
