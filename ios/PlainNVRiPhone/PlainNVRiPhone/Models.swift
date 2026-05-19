@@ -123,6 +123,12 @@ struct ServerErrorResponse: Decodable {
     let error: String
 }
 
+struct LiveDiagnosticsResponse: Decodable {
+    let ok: Bool
+    let message: String
+    let log: String?
+}
+
 enum LiveQuality: String, CaseIterable, Identifiable {
     case source
     case low

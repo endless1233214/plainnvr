@@ -8,6 +8,7 @@ Native SwiftUI companion app for PlainNVR. It is meant for personal sideloading 
 - View camera status, recorder state, disk usage, and recent recorder events.
 - Play live camera video with audio through PlainNVR's HLS endpoint.
 - Choose live stream FPS and quality from the Live tab. Source quality copies the camera stream and is the default for stability.
+- Check a selected live stream from the Live tab and show player/server diagnostics in the app.
 - Start, pause, and restart a camera recorder from its detail screen.
 - Rotate the phone sideways on the Live tab to show the selected camera full screen.
 - Pinch live video to zoom into the image and drag while zoomed to inspect a specific area.
@@ -23,6 +24,7 @@ The app uses the existing session cookie API plus these media paths:
 - `GET /api/segments?camera_id=<id>&date=<yyyy-mm-dd>` for MP4 segment metadata.
 - `POST /api/cameras/<id>/recorder/start|stop|restart` for manual recorder controls.
 - `POST /api/cameras/<id>/live/stop|restart` for live HLS recovery.
+- `GET /api/cameras/<id>/live/diagnostics` for stream/player troubleshooting details.
 - `GET /live/<camera_id>/stream.m3u8?fps=<fps>&width=<width>&token=<stream_token>` for live iPhone playback with audio. Omit `fps` and `width` to use source quality.
 - `GET /media/<camera_id>/<segment>.mp4?token=<stream_token>` for playback, share, and download.
 

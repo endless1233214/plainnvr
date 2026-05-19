@@ -124,8 +124,12 @@ struct SegmentPlayerView: View {
 
 struct LivePlayerView: View {
     let url: URL
+    var onStatus: (String?) -> Void = { _ in }
+    var onFailure: (String) -> Void = { _ in }
 
     @State private var player = AVPlayer()
+    @State private var statusObservation: NSKeyValueObservation?
+    @State private var errorLogObserver: NSObjectProtocol?
     @State private var baseScale: CGFloat = 1
     @GestureState private var gestureScale: CGFloat = 1
     @State private var baseOffset: CGSize = .zero
@@ -164,17 +168,60 @@ struct LivePlayerView: View {
         }
         .background(.black)
         .onAppear {
-            player.replaceCurrentItem(with: AVPlayerItem(url: url))
-            player.play()
+            startPlayback(url)
         }
         .onChange(of: url) { _, newURL in
             resetZoom()
-            player.replaceCurrentItem(with: AVPlayerItem(url: newURL))
-            player.play()
+            startPlayback(newURL)
         }
         .onDisappear {
-            player.pause()
-            player.replaceCurrentItem(with: nil)
+            stopPlayback()
+        }
+    }
+
+    private func startPlayback(_ url: URL) {
+        clearObservers()
+        onStatus("Opening live stream...")
+        let item = AVPlayerItem(url: url)
+        statusObservation = item.observe(\.status, options: [.new]) { item, _ in
+            DispatchQueue.main.async {
+                switch item.status {
+                case .readyToPlay:
+                    onStatus(nil)
+                case .failed:
+                    onFailure("Player failed: \(item.error?.localizedDescription ?? "Unknown AVPlayer error")")
+                case .unknown:
+                    break
+                @unknown default:
+                    onFailure("Player failed with an unknown status.")
+                }
+            }
+        }
+        errorLogObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemNewErrorLogEntry,
+            object: item,
+            queue: .main
+        ) { _ in
+            guard let event = item.errorLog()?.events.last else { return }
+            let details = event.errorComment ?? event.errorStatusCode.description
+            onFailure("Player error \(event.errorStatusCode): \(details)")
+        }
+        player.replaceCurrentItem(with: item)
+        player.play()
+    }
+
+    private func stopPlayback() {
+        clearObservers()
+        player.pause()
+        player.replaceCurrentItem(with: nil)
+    }
+
+    private func clearObservers() {
+        statusObservation?.invalidate()
+        statusObservation = nil
+        if let errorLogObserver {
+            NotificationCenter.default.removeObserver(errorLogObserver)
+            self.errorLogObserver = nil
         }
     }
 

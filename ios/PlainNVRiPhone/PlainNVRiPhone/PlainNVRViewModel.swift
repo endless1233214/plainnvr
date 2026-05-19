@@ -30,15 +30,18 @@ final class PlainNVRViewModel: ObservableObject {
     @Published var selectedRecordingDate = Date()
     @Published var activeSegment: RecordingSegment?
     @Published var livePlaybackEnabled = true
+    @Published var liveStatusMessage: String?
     @Published var liveQuality: LiveQuality {
         didSet {
             UserDefaults.standard.set(liveQuality.rawValue, forKey: Self.liveQualityDefaultsKey)
+            liveStatusMessage = nil
             bumpLiveReload()
         }
     }
     @Published var liveFrameRate: LiveFrameRate {
         didSet {
             UserDefaults.standard.set(liveFrameRate.rawValue, forKey: Self.liveFrameRateDefaultsKey)
+            liveStatusMessage = nil
             bumpLiveReload()
         }
     }
@@ -198,6 +201,7 @@ final class PlainNVRViewModel: ObservableObject {
                 try await client.restartLive(cameraID: camera.id)
             }
             livePlaybackEnabled = true
+            liveStatusMessage = "Restarting live stream..."
             bumpLiveReload()
         } catch {
             errorMessage = userFacingError(error)
@@ -210,8 +214,42 @@ final class PlainNVRViewModel: ObservableObject {
                 try await client.stopLive(cameraID: camera.id)
             }
             livePlaybackEnabled = false
+            liveStatusMessage = nil
         } catch {
             errorMessage = userFacingError(error)
+        }
+    }
+
+    func diagnoseLiveStream() async {
+        do {
+            guard let client, let camera = selectedCamera else {
+                throw PlainNVRClientError.invalidServerURL
+            }
+            liveStatusMessage = "Checking live stream..."
+            let diagnostics = try await client.liveDiagnostics(
+                camera: camera,
+                fps: liveQuality.width == nil ? nil : liveFrameRate.rawValue,
+                width: liveQuality.width
+            )
+            if let log = diagnostics.log, !log.isEmpty {
+                liveStatusMessage = "\(diagnostics.message)\n\nFFmpeg: \(log)"
+            } else {
+                liveStatusMessage = diagnostics.message
+            }
+        } catch {
+            liveStatusMessage = userFacingError(error)
+        }
+    }
+
+    func updateLivePlayerStatus(_ message: String?) {
+        liveStatusMessage = message
+    }
+
+    func updateLivePlayerFailure(_ message: String) {
+        if liveQuality == .source {
+            liveStatusMessage = "\(message)\nTry Low or Balanced if Source is not playable."
+        } else {
+            liveStatusMessage = message
         }
     }
 

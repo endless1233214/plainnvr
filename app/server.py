@@ -809,16 +809,22 @@ class LiveHLSManager:
             output_dir = self.stream_dir(camera_id)
             shutil.rmtree(output_dir, ignore_errors=True)
             output_dir.mkdir(parents=True, exist_ok=True)
-            process = subprocess.Popen(
-                build_live_hls_command(camera, output_dir, fps=profile[0], width=profile[1]),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
+            log_file = output_dir / "ffmpeg.log"
+            log_handle = log_file.open("w", encoding="utf-8", errors="replace")
+            try:
+                process = subprocess.Popen(
+                    build_live_hls_command(camera, output_dir, fps=profile[0], width=profile[1]),
+                    stdout=subprocess.DEVNULL,
+                    stderr=log_handle,
+                )
+            finally:
+                log_handle.close()
             self.processes[camera_id] = {
                 "process": process,
                 "dir": output_dir,
                 "last_seen": time.time(),
                 "profile": profile,
+                "log": log_file,
             }
 
         playlist = self.stream_dir(camera_id) / "stream.m3u8"
@@ -828,11 +834,17 @@ class LiveHLSManager:
                 entry = self.processes.get(camera_id)
                 process = entry["process"] if entry else None
             if process is None or process.poll() is not None:
-                raise RuntimeError("Live stream exited before it produced a playlist.")
+                entry_log = entry.get("log") if entry else None
+                log_tail = self._read_log_tail(entry_log)
+                self.stop(camera_id)
+                detail = f" {log_tail}" if log_tail else ""
+                raise RuntimeError(f"Live stream exited before it produced a playlist.{detail}")
             if playlist.exists() and playlist.stat().st_size > 0:
                 return playlist
             time.sleep(0.2)
-        raise RuntimeError("Live stream did not become ready in time.")
+        log_tail = self.log_tail(camera_id)
+        detail = f" {log_tail}" if log_tail else ""
+        raise RuntimeError(f"Live stream did not become ready in time.{detail}")
 
     def stop(self, camera_id):
         with self.lock:
@@ -845,6 +857,21 @@ class LiveHLSManager:
                 entry["last_seen"] = time.time()
                 return True
             return False
+
+    def log_tail(self, camera_id, line_count=20):
+        with self.lock:
+            entry = self.processes.get(camera_id)
+            log_file = entry.get("log") if entry else self.stream_dir(camera_id) / "ffmpeg.log"
+        return self._read_log_tail(log_file, line_count=line_count)
+
+    def _read_log_tail(self, log_file, line_count=20):
+        if not log_file:
+            return ""
+        try:
+            lines = Path(log_file).read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            return ""
+        return "\n".join(lines[-line_count:]).strip()
 
     def _sweep_idle_locked(self):
         now = time.time()
@@ -1111,7 +1138,7 @@ def recording_coverage(camera):
     return summary
 
 
-def probe_stream_url(url, payload, select_streams, show_entries):
+def probe_stream_url(url, payload, select_streams, show_entries, low_latency=True):
     transport = payload.get("rtsp_transport", "tcp")
     command = [
         FFPROBE_BIN,
@@ -1119,18 +1146,22 @@ def probe_stream_url(url, payload, select_streams, show_entries):
         "error",
     ]
     if url.startswith(("rtsp://", "rtsps://")):
+        probesize = RTSP_PROBESIZE if low_latency else RTSP_LIVE_PROBESIZE
+        analyze_duration = RTSP_ANALYZE_DURATION if low_latency else RTSP_LIVE_ANALYZE_DURATION
         command.extend(
             [
                 "-rtsp_transport",
                 transport if transport in ("tcp", "udp") else "tcp",
                 "-probesize",
-                RTSP_PROBESIZE,
+                probesize,
                 "-analyzeduration",
-                RTSP_ANALYZE_DURATION,
-                "-fflags",
-                "nobuffer",
+                analyze_duration,
             ]
         )
+        if low_latency:
+            command.extend(["-fflags", "nobuffer"])
+        else:
+            command.extend(["-fflags", "+genpts"])
     command.extend(
         [
             "-select_streams",
@@ -1185,6 +1216,86 @@ def test_stream(payload):
         "message": audio["message"] if video["ok"] else video["message"],
         "seconds": round(video["seconds"] + audio["seconds"], 2),
         "details": {"video": video, "audio": audio},
+    }
+
+
+def redact_camera_text(text, camera):
+    redacted = text or ""
+    replacements = {
+        str(camera.get("rtsp_url") or "").strip(): "<stream-url>",
+        str(camera.get("audio_url") or "").strip(): "<audio-url>",
+    }
+    for value, label in replacements.items():
+        if value:
+            redacted = redacted.replace(value, label)
+    return redacted
+
+
+def stream_summary(probe):
+    if not probe or not probe.get("ok"):
+        return probe.get("message", "Unavailable") if probe else "Unavailable"
+    streams = (probe.get("details") or {}).get("streams") or []
+    if not streams:
+        return "Reachable, but no matching stream details were returned"
+    stream = streams[0]
+    codec = stream.get("codec_name") or "unknown"
+    size = ""
+    if stream.get("width") and stream.get("height"):
+        size = f" {stream['width']}x{stream['height']}"
+    sample_rate = stream.get("sample_rate")
+    channels = stream.get("channels")
+    audio = ""
+    if sample_rate or channels:
+        audio = f" {sample_rate or '?'}Hz {channels or '?'}ch"
+    rate = stream.get("r_frame_rate") or stream.get("avg_frame_rate") or ""
+    suffix = rate if rate and rate != "0/0" else ""
+    return " ".join(part for part in [codec + size + audio, suffix] if part)
+
+
+def live_diagnostics(camera, fps=None, width=None):
+    fps = optional_bounded_int(fps, 1, 15)
+    width = optional_bounded_int(width, 320, 1920)
+    profile = "Source" if fps is None and width is None else f"{width or 'source'}px / {fps or 'source'}fps"
+    video = probe_stream_url(
+        camera["rtsp_url"],
+        camera,
+        "v:0",
+        "stream=codec_name,width,height,r_frame_rate,avg_frame_rate",
+        low_latency=False,
+    )
+    audio = None
+    if camera.get("record_audio", True):
+        audio_url = str(camera.get("audio_url") or "").strip() or camera["rtsp_url"]
+        audio = probe_stream_url(
+            audio_url,
+            camera,
+            "a:0",
+            "stream=codec_name,sample_rate,channels",
+            low_latency=False,
+        )
+
+    hls = {"ok": True, "message": "Playlist became ready."}
+    try:
+        playlist = live_hls.start(camera, fps=fps, width=width)
+        hls["bytes"] = playlist.stat().st_size if playlist.exists() else 0
+    except RuntimeError as exc:
+        hls = {"ok": False, "message": redact_camera_text(str(exc), camera)}
+
+    log_tail = redact_camera_text(live_hls.log_tail(camera["id"], line_count=12), camera)
+    parts = [
+        f"Profile: {profile}.",
+        f"Video: {stream_summary(video)}.",
+    ]
+    if audio:
+        parts.append(f"Audio: {stream_summary(audio)}.")
+    parts.append(f"HLS: {hls['message']}")
+    return {
+        "ok": bool(hls.get("ok")),
+        "message": " ".join(parts),
+        "video": video,
+        "audio": audio,
+        "hls": hls,
+        "log": log_tail,
     }
 
 
@@ -1535,6 +1646,20 @@ class NvrHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path == "/api/cameras":
             self.send_json({"cameras": list_cameras()})
+            return
+        match = re.match(r"^/api/cameras/([a-f0-9]+)/live/diagnostics$", parsed.path)
+        if match:
+            camera = get_camera(match.group(1))
+            if not camera:
+                self.send_error_json(HTTPStatus.NOT_FOUND, "Camera not found.")
+                return
+            self.send_json(
+                live_diagnostics(
+                    camera,
+                    fps=query.get("fps", [None])[0],
+                    width=query.get("width", [None])[0],
+                )
+            )
             return
         if parsed.path == "/api/status":
             cameras = list_cameras()

@@ -180,6 +180,24 @@ final class PlainNVRClient {
         urlWithOptionalToken(path: path, streamToken: streamToken)
     }
 
+    func liveDiagnostics(camera: Camera, fps: Int?, width: Int?) async throws -> LiveDiagnosticsResponse {
+        var components = URLComponents()
+        components.path = "/api/cameras/\(camera.id)/live/diagnostics"
+        var items: [URLQueryItem] = []
+        if let fps {
+            items.append(URLQueryItem(name: "fps", value: String(max(1, min(fps, 15)))))
+        }
+        if let width {
+            items.append(URLQueryItem(name: "width", value: String(max(320, min(width, 1920)))))
+        }
+        components.queryItems = items.isEmpty ? nil : items
+
+        guard let path = components.url?.absoluteString else {
+            throw PlainNVRClientError.invalidServerURL
+        }
+        return try await get(path)
+    }
+
     func startRecorder(cameraID: String) async throws {
         try await cameraControl(cameraID: cameraID, target: "recorder", action: "start")
     }

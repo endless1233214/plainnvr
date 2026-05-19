@@ -274,8 +274,29 @@ struct LiveView: View {
             Color.black.ignoresSafeArea()
 
             if let camera = viewModel.selectedCamera, viewModel.livePlaybackEnabled, let url = viewModel.liveURL(for: camera) {
-                LivePlayerView(url: url)
-                    .ignoresSafeArea()
+                LivePlayerView(
+                    url: url,
+                    onStatus: { message in
+                        viewModel.updateLivePlayerStatus(message)
+                    },
+                    onFailure: { message in
+                        viewModel.updateLivePlayerFailure(message)
+                    }
+                )
+                .ignoresSafeArea()
+
+                if let message = viewModel.liveStatusMessage, !message.isEmpty {
+                    VStack {
+                        Spacer()
+                        Text(message)
+                            .font(.caption)
+                            .foregroundStyle(.white)
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 8))
+                            .padding()
+                    }
+                }
             } else if viewModel.selectedCamera != nil {
                 ContentUnavailableView("Live Paused", systemImage: "pause.circle")
                     .foregroundStyle(.white)
@@ -328,8 +349,17 @@ struct LiveControlsView: View {
                 Button {
                     Task { await viewModel.restartLiveStream() }
                 } label: {
-                    Label("Restart", systemImage: "arrow.clockwise")
+                    Image(systemName: "arrow.clockwise")
                 }
+                .accessibilityLabel("Restart Live")
+                .buttonStyle(.bordered)
+
+                Button {
+                    Task { await viewModel.diagnoseLiveStream() }
+                } label: {
+                    Image(systemName: "antenna.radiowaves.left.and.right")
+                }
+                .accessibilityLabel("Check Stream")
                 .buttonStyle(.bordered)
             }
         }
@@ -343,22 +373,44 @@ struct LivePlayerSurface: View {
     let camera: Camera
 
     var body: some View {
-        Group {
+        VStack(spacing: 8) {
             if viewModel.livePlaybackEnabled, let url = viewModel.liveURL(for: camera) {
-                LivePlayerView(url: url)
+                LivePlayerView(
+                    url: url,
+                    onStatus: { message in
+                        viewModel.updateLivePlayerStatus(message)
+                    },
+                    onFailure: { message in
+                        viewModel.updateLivePlayerFailure(message)
+                    }
+                )
+                .frame(maxWidth: .infinity)
+                .aspectRatio(16 / 9, contentMode: .fit)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(.quaternary, lineWidth: 1)
+                }
+
+                if let message = viewModel.liveStatusMessage, !message.isEmpty {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                }
             } else {
                 ContentUnavailableView("Live Paused", systemImage: "pause.circle")
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity)
                     .background(.black)
+                    .aspectRatio(16 / 9, contentMode: .fit)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(.quaternary, lineWidth: 1)
+                    }
             }
-        }
-        .frame(maxWidth: .infinity)
-        .aspectRatio(16 / 9, contentMode: .fit)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(.quaternary, lineWidth: 1)
         }
         .padding(.horizontal)
     }
