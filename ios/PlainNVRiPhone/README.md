@@ -1,25 +1,18 @@
-# PlainNVRCompainion
+# PlainNVR iPhone
 
-Native SwiftUI companion app for PlainNVR. It is meant for personal sideloading through Xcode and talks directly to the PlainNVR server on the local network or over a private tunnel. The same app target builds for iPhone and Mac Catalyst.
+Native SwiftUI companion app for PlainNVR. It is meant for personal sideloading through Xcode and talks directly to the PlainNVR server on the local network or over a private tunnel.
 
 ## Features
 
 - Sign in with the same PlainNVR account used by the web UI.
 - View camera status, recorder state, disk usage, and recent recorder events.
 - Play live camera video with audio through PlainNVR's HLS endpoint.
+- Choose live stream FPS and quality from the Live tab.
+- Start, pause, and restart a camera recorder from its detail screen.
 - Rotate the phone sideways on the Live tab to show the selected camera full screen.
 - Pinch live video to zoom into the image and drag while zoomed to inspect a specific area.
 - Browse saved recording dates and MP4 segments.
 - Play, share, or save selected recording clips to Photos.
-- Build the same app for macOS through Mac Catalyst for quick desktop testing.
-
-## Layout Paths
-
-`PlainNVRCompainion` is one Xcode target, but the SwiftUI root chooses a different layout at runtime:
-
-- iPhone uses `PhoneRootView`, a compact tab layout with landscape live-view fullscreen behavior.
-- iPad uses `PadRootView`, a sidebar/tablet layout.
-- Mac Catalyst uses `MacRootView`, a desktop-style sidebar layout.
 
 ## Server Support
 
@@ -28,7 +21,9 @@ The app uses the existing session cookie API plus these media paths:
 - `GET /api/status` for cameras, recorder state, disk usage, events, and the stream token.
 - `GET /api/coverage?camera_id=<id>` for saved recording dates and storage totals.
 - `GET /api/segments?camera_id=<id>&date=<yyyy-mm-dd>` for MP4 segment metadata.
-- `GET /live/<camera_id>/stream.m3u8?token=<stream_token>` for live iPhone playback with audio.
+- `POST /api/cameras/<id>/recorder/start|stop|restart` for manual recorder controls.
+- `POST /api/cameras/<id>/live/stop|restart` for live HLS recovery.
+- `GET /live/<camera_id>/stream.m3u8?fps=<fps>&width=<width>&token=<stream_token>` for live iPhone playback with audio.
 - `GET /media/<camera_id>/<segment>.mp4?token=<stream_token>` for playback, share, and download.
 
 MJPEG is still available for the web/Home Assistant style preview, but MJPEG is video-only. The iPhone app uses HLS for live playback because `AVPlayer` can play audio and video together.
@@ -38,16 +33,9 @@ Live HLS audio is boosted by default with `NVR_LIVE_AUDIO_GAIN=4.0`. Set it lowe
 ## Run On iPhone
 
 1. Open `PlainNVRiPhone.xcodeproj` in Xcode.
-2. Select the `PlainNVRCompainion` target and set the signing team to your Apple developer account.
+2. Set the target's signing team to your Apple developer account.
 3. Plug in the iPhone 15 and choose it as the run destination.
 4. Press Run.
-5. Enter the PlainNVR server URL, for example `http://192.168.1.172:8787`, and sign in.
-
-## Run On Mac
-
-1. Open `PlainNVRiPhone.xcodeproj` in Xcode.
-2. Select the `PlainNVRCompainion` scheme.
-3. Choose `My Mac (Mac Catalyst)` as the run destination.
-4. Press Run.
+5. Enter the PlainNVR server URL, for example `http://192.168.1.0:8787`, and sign in.
 
 If Xcode says the iOS platform is missing, install it from Xcode Settings > Components, then reopen the project.

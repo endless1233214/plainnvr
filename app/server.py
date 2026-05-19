@@ -658,17 +658,27 @@ def build_snapshot_command(camera):
     return command
 
 
+def bounded_int(value, default, minimum, maximum):
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(minimum, min(parsed, maximum))
+
+
+def optional_bounded_int(value, minimum, maximum):
+    if value in (None, ""):
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return max(minimum, min(parsed, maximum))
+
+
 def build_mjpeg_command(camera, fps=2, width=1280):
-    try:
-        fps = int(fps)
-    except (TypeError, ValueError):
-        fps = 2
-    try:
-        width = int(width)
-    except (TypeError, ValueError):
-        width = 1280
-    fps = max(1, min(fps, 15))
-    width = max(320, min(width, 1920))
+    fps = bounded_int(fps, 2, 1, 15)
+    width = bounded_int(width, 1280, 320, 1920)
     command = [
         FFMPEG_BIN,
         "-hide_banner",
@@ -692,8 +702,10 @@ def build_mjpeg_command(camera, fps=2, width=1280):
     return command
 
 
-def build_live_hls_command(camera, output_dir):
+def build_live_hls_command(camera, output_dir, fps=None, width=None):
     output_dir.mkdir(parents=True, exist_ok=True)
+    fps = optional_bounded_int(fps, 1, 15)
+    width = optional_bounded_int(width, 320, 1920)
     audio_url = str(camera.get("audio_url") or "").strip()
     record_audio = camera.get("record_audio", True)
     command = [
@@ -709,7 +721,32 @@ def build_live_hls_command(camera, output_dir):
     command.extend(["-map", "0:v:0"])
     if record_audio:
         command.extend(["-map", "1:a:0?"] if audio_url else ["-map", "0:a?"])
-    command.extend(["-sn", "-dn", "-c:v", "copy"])
+    command.extend(["-sn", "-dn"])
+    video_filters = []
+    if fps:
+        video_filters.append(f"fps={fps}")
+    if width:
+        video_filters.append(f"scale='min({width},iw)':-2")
+    if video_filters:
+        command.extend(
+            [
+                "-vf",
+                ",".join(video_filters),
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "-tune",
+                "zerolatency",
+                "-pix_fmt",
+                "yuv420p",
+            ]
+        )
+        if fps:
+            keyframe_interval = max(2, fps * max(1, LIVE_HLS_SEGMENT_SECONDS))
+            command.extend(["-g", str(keyframe_interval), "-keyint_min", str(keyframe_interval), "-sc_threshold", "0"])
+    else:
+        command.extend(["-c:v", "copy"])
     if record_audio:
         if LIVE_AUDIO_GAIN not in ("1", "1.0", "1.00"):
             command.extend(["-filter:a", f"volume={LIVE_AUDIO_GAIN}"])
@@ -742,12 +779,16 @@ class LiveHLSManager:
     def stream_dir(self, camera_id):
         return LIVE_DIR / camera_id
 
-    def start(self, camera):
+    def start(self, camera, fps=None, width=None):
         camera_id = camera["id"]
+        profile = (
+            optional_bounded_int(fps, 1, 15),
+            optional_bounded_int(width, 320, 1920),
+        )
         with self.lock:
             self._sweep_idle_locked()
             entry = self.processes.get(camera_id)
-            if entry and entry["process"].poll() is None:
+            if entry and entry["process"].poll() is None and entry.get("profile") == profile:
                 entry["last_seen"] = time.time()
                 return entry["dir"] / "stream.m3u8"
             self._stop_locked(camera_id)
@@ -755,7 +796,7 @@ class LiveHLSManager:
             shutil.rmtree(output_dir, ignore_errors=True)
             output_dir.mkdir(parents=True, exist_ok=True)
             process = subprocess.Popen(
-                build_live_hls_command(camera, output_dir),
+                build_live_hls_command(camera, output_dir, fps=profile[0], width=profile[1]),
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
@@ -763,6 +804,7 @@ class LiveHLSManager:
                 "process": process,
                 "dir": output_dir,
                 "last_seen": time.time(),
+                "profile": profile,
             }
 
         playlist = self.stream_dir(camera_id) / "stream.m3u8"
@@ -781,6 +823,14 @@ class LiveHLSManager:
     def stop(self, camera_id):
         with self.lock:
             self._stop_locked(camera_id)
+
+    def touch(self, camera_id):
+        with self.lock:
+            entry = self.processes.get(camera_id)
+            if entry and entry["process"].poll() is None:
+                entry["last_seen"] = time.time()
+                return True
+            return False
 
     def _sweep_idle_locked(self):
         now = time.time()
@@ -814,6 +864,7 @@ class RecorderSupervisor:
     def __init__(self):
         self.lock = threading.RLock()
         self.processes = {}
+        self.paused_camera_ids = set()
         self.stop_event = threading.Event()
         self.last_retention = 0
         self.thread = threading.Thread(target=self.run, daemon=True)
@@ -839,11 +890,45 @@ class RecorderSupervisor:
                     "pid": process.pid,
                     "started_at": entry["started_at"],
                     "last_error": entry.get("last_error"),
+                    "paused": False,
                 }
+            for camera_id in self.paused_camera_ids:
+                states.setdefault(
+                    camera_id,
+                    {
+                        "running": False,
+                        "pid": None,
+                        "started_at": None,
+                        "last_error": None,
+                        "paused": True,
+                    },
+                )
             return states
 
     def restart(self, camera_id):
         self.stop(camera_id)
+
+    def pause(self, camera_id):
+        with self.lock:
+            self.paused_camera_ids.add(camera_id)
+        self.stop(camera_id)
+        add_event(camera_id, "info", "Recorder paused.")
+
+    def resume(self, camera):
+        with self.lock:
+            self.paused_camera_ids.discard(camera["id"])
+        add_event(camera["id"], "info", "Recorder resumed.")
+        self.ensure_running(camera)
+
+    def restart_now(self, camera):
+        with self.lock:
+            self.paused_camera_ids.discard(camera["id"])
+        self.restart(camera["id"])
+        self.ensure_running(camera)
+
+    def is_paused(self, camera_id):
+        with self.lock:
+            return camera_id in self.paused_camera_ids
 
     def stop(self, camera_id):
         with self.lock:
@@ -915,7 +1000,11 @@ class RecorderSupervisor:
             cameras = list_cameras()
             active_ids = set()
             for camera in cameras:
-                should_record = bool(camera["enabled"]) and schedule_active(camera["schedule"])
+                should_record = (
+                    bool(camera["enabled"])
+                    and schedule_active(camera["schedule"])
+                    and not self.is_paused(camera["id"])
+                )
                 if should_record:
                     active_ids.add(camera["id"])
                     self.ensure_running(camera)
@@ -1294,6 +1383,10 @@ class NvrHandler(SimpleHTTPRequestHandler):
                 return
             self.send_json(camera, HTTPStatus.CREATED)
             return
+        match = re.match(r"^/api/cameras/([a-f0-9]+)/(recorder|live)/(start|stop|restart)$", parsed.path)
+        if match:
+            self.handle_camera_control(match.group(1), match.group(2), match.group(3))
+            return
         if parsed.path == "/api/test-stream":
             try:
                 self.send_json(test_stream(payload))
@@ -1381,6 +1474,38 @@ class NvrHandler(SimpleHTTPRequestHandler):
             return
         session_id = create_session(username)
         self.send_json({"ok": True, "username": username}, headers={"Set-Cookie": self.session_cookie(session_id)})
+
+    def handle_camera_control(self, camera_id, target, action):
+        camera = get_camera(camera_id)
+        if not camera:
+            self.send_error_json(HTTPStatus.NOT_FOUND, "Camera not found.")
+            return
+        if target == "recorder":
+            self.handle_recorder_control(camera, action)
+            return
+        self.handle_live_control(camera, action)
+
+    def handle_recorder_control(self, camera, action):
+        if action == "stop":
+            recorder.pause(camera["id"])
+        elif action == "start":
+            if not camera["enabled"]:
+                self.send_error_json(HTTPStatus.CONFLICT, "Camera is disabled.")
+                return
+            recorder.resume(camera)
+        elif action == "restart":
+            if not camera["enabled"]:
+                self.send_error_json(HTTPStatus.CONFLICT, "Camera is disabled.")
+                return
+            recorder.restart_now(camera)
+        self.send_json({"ok": True, "recorders": recorder.status(), "events": get_recent_events()})
+
+    def handle_live_control(self, camera, action):
+        if action in ("stop", "restart"):
+            live_hls.stop(camera["id"])
+        elif action == "start":
+            pass
+        self.send_json({"ok": True})
 
     def handle_api_get(self, parsed):
         query = parse_qs(parsed.query)
@@ -1480,11 +1605,19 @@ class NvrHandler(SimpleHTTPRequestHandler):
             self.send_error(HTTPStatus.NOT_FOUND)
             return
         filename = match.group(2)
-        try:
-            live_hls.start(camera)
-        except RuntimeError as exc:
-            self.send_error(HTTPStatus.BAD_GATEWAY, str(exc))
-            return
+        if filename == "stream.m3u8":
+            query = parse_qs(parsed.query)
+            try:
+                live_hls.start(
+                    camera,
+                    fps=query.get("fps", [None])[0],
+                    width=query.get("width", [None])[0],
+                )
+            except RuntimeError as exc:
+                self.send_error(HTTPStatus.BAD_GATEWAY, str(exc))
+                return
+        else:
+            live_hls.touch(camera["id"])
         target = (live_hls.stream_dir(camera["id"]) / filename).resolve()
         root = live_hls.stream_dir(camera["id"]).resolve()
         if root not in target.parents or not target.exists():

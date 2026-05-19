@@ -1,19 +1,9 @@
 import Foundation
 import SwiftUI
-#if os(iOS)
 import UIKit
-#elseif os(macOS)
-import AppKit
-#endif
-
-#if os(iOS)
-typealias PlainNVRPlatformImage = UIImage
-#elseif os(macOS)
-typealias PlainNVRPlatformImage = NSImage
-#endif
 
 final class MJPEGStreamModel: NSObject, ObservableObject, URLSessionDataDelegate {
-    @Published var image: PlainNVRPlatformImage?
+    @Published var image: UIImage?
     @Published var isConnected = false
     @Published var errorMessage: String?
 
@@ -98,7 +88,7 @@ final class MJPEGStreamModel: NSObject, ObservableObject, URLSessionDataDelegate
             let jpegData = Data(buffer[frameRange])
             buffer.removeSubrange(frameRange)
 
-            if let image = PlainNVRPlatformImage(data: jpegData) {
+            if let image = UIImage(data: jpegData) {
                 DispatchQueue.main.async {
                     self.image = image
                     self.errorMessage = nil
@@ -124,15 +114,9 @@ struct MJPEGStreamView: View {
                 .fill(.black)
 
             if let image = stream.image {
-                #if os(iOS)
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFit()
-                #elseif os(macOS)
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFit()
-                #endif
             } else {
                 VStack(spacing: 12) {
                     ProgressView()

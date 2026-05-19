@@ -1,11 +1,11 @@
 # PlainNVR
 
-PlainNVR also includes `PlainNVRCompainion`, a small native companion app in
+PlainNVR also includes `PlainNVRiPhone`, a small native companion app in
 [`ios/PlainNVRiPhone`](ios/PlainNVRiPhone). The app signs in with the normal
 PlainNVR account, plays live audio/video through the server's HLS endpoint,
-browses recordings, and can save or share MP4 clips from iPhone. The same app
-target can also run on macOS through Mac Catalyst. Live HLS audio is boosted by
-default with `NVR_LIVE_AUDIO_GAIN=4.0` for quiet camera microphones.
+browses recordings, and can save or share MP4 clips from iPhone. Live HLS audio
+is boosted by default with `NVR_LIVE_AUDIO_GAIN=4.0` for quiet camera
+microphones.
 
 PlainNVR is a small RTSP recorder with a web UI for camera setup, schedules, continuous recording, retention cleanup, and simple timeline playback.
 

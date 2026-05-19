@@ -57,6 +57,7 @@ struct RecorderState: Decodable, Hashable {
     let pid: Int?
     let startedAt: String?
     let lastError: String?
+    let paused: Bool?
 }
 
 struct DiskStatus: Decodable, Hashable {
@@ -122,6 +123,45 @@ struct ServerErrorResponse: Decodable {
     let error: String
 }
 
+enum LiveQuality: String, CaseIterable, Identifiable {
+    case low
+    case balanced
+    case high
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .low:
+            return "Low"
+        case .balanced:
+            return "Balanced"
+        case .high:
+            return "High"
+        }
+    }
+
+    var width: Int {
+        switch self {
+        case .low:
+            return 640
+        case .balanced:
+            return 960
+        case .high:
+            return 1280
+        }
+    }
+}
+
+enum LiveFrameRate: Int, CaseIterable, Identifiable {
+    case five = 5
+    case ten = 10
+    case fifteen = 15
+
+    var id: Int { rawValue }
+    var title: String { "\(rawValue)" }
+}
+
 enum PlainNVRFormat {
     private static let isoWithFractionalSeconds: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
@@ -149,33 +189,6 @@ enum PlainNVRFormat {
         return formatter
     }()
 
-    private static let displayDateFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .none
-        return formatter
-    }()
-
-    private static let displayDateTimeFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .short
-        formatter.timeStyle = .short
-        return formatter
-    }()
-
-    private static let displayTimeFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .none
-        formatter.timeStyle = .short
-        return formatter
-    }()
-
-    private static let byteFormatter: ByteCountFormatter = {
-        let formatter = ByteCountFormatter()
-        formatter.countStyle = .file
-        return formatter
-    }()
-
     static func apiDate(_ date: Date) -> String {
         dayFormatter.string(from: date)
     }
@@ -186,17 +199,17 @@ enum PlainNVRFormat {
 
     static func displayDate(_ value: String) -> String {
         guard let date = date(fromAPI: value) else { return value }
-        return displayDateFormatter.string(from: date)
+        return DateFormatter.localizedString(from: date, dateStyle: .medium, timeStyle: .none)
     }
 
     static func displayDateTime(_ value: String?) -> String {
         guard let value, let date = parseDateTime(value) else { return value ?? "Unknown" }
-        return displayDateTimeFormatter.string(from: date)
+        return DateFormatter.localizedString(from: date, dateStyle: .short, timeStyle: .short)
     }
 
     static func displayTime(_ value: String?) -> String {
         guard let value, let date = parseDateTime(value) else { return value ?? "Unknown" }
-        return displayTimeFormatter.string(from: date)
+        return DateFormatter.localizedString(from: date, dateStyle: .none, timeStyle: .short)
     }
 
     static func parseDateTime(_ value: String) -> Date? {
@@ -206,6 +219,6 @@ enum PlainNVRFormat {
     }
 
     static func bytes(_ value: Int64) -> String {
-        byteFormatter.string(fromByteCount: value)
+        ByteCountFormatter.string(fromByteCount: value, countStyle: .file)
     }
 }

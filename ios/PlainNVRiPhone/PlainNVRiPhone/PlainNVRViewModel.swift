@@ -1,7 +1,5 @@
 import Foundation
-#if os(iOS) && !targetEnvironment(macCatalyst)
 import Photos
-#endif
 import SwiftUI
 
 enum PlainNVRConnectionState: Equatable {
@@ -14,6 +12,8 @@ enum PlainNVRConnectionState: Equatable {
 @MainActor
 final class PlainNVRViewModel: ObservableObject {
     private static let serverDefaultsKey = "PlainNVRServerAddress"
+    private static let liveQualityDefaultsKey = "PlainNVRLiveQuality"
+    private static let liveFrameRateDefaultsKey = "PlainNVRLiveFrameRate"
     private static let defaultServerAddress = "http://192.168.1.0:8787"
 
     @Published var serverAddress: String
@@ -29,13 +29,27 @@ final class PlainNVRViewModel: ObservableObject {
     @Published var selectedCameraID: String?
     @Published var selectedRecordingDate = Date()
     @Published var activeSegment: RecordingSegment?
+    @Published var livePlaybackEnabled = true
+    @Published var liveQuality: LiveQuality {
+        didSet {
+            UserDefaults.standard.set(liveQuality.rawValue, forKey: Self.liveQualityDefaultsKey)
+            bumpLiveReload()
+        }
+    }
+    @Published var liveFrameRate: LiveFrameRate {
+        didSet {
+            UserDefaults.standard.set(liveFrameRate.rawValue, forKey: Self.liveFrameRateDefaultsKey)
+            bumpLiveReload()
+        }
+    }
+    @Published private(set) var liveReloadID = 0
 
     private var client: PlainNVRClient?
-    private var loadedRecordingKey: String?
-    private var loadingRecordingKey: String?
 
     init() {
         serverAddress = UserDefaults.standard.string(forKey: Self.serverDefaultsKey) ?? Self.defaultServerAddress
+        liveQuality = LiveQuality(rawValue: UserDefaults.standard.string(forKey: Self.liveQualityDefaultsKey) ?? "") ?? .balanced
+        liveFrameRate = LiveFrameRate(rawValue: UserDefaults.standard.integer(forKey: Self.liveFrameRateDefaultsKey)) ?? .ten
     }
 
     var cameras: [Camera] {
@@ -130,49 +144,98 @@ final class PlainNVRViewModel: ObservableObject {
     }
 
     func refreshCoverageAndSegments() async {
-        guard let client, let camera = selectedCamera else {
+        do {
+            try await refreshCoverage()
+            try await refreshSegments()
+        } catch {
+            errorMessage = userFacingError(error)
+        }
+    }
+
+    func refreshCoverage() async throws {
+        guard let client = client, let camera = selectedCamera else {
             coverage = nil
-            segments = []
-            loadedRecordingKey = nil
             return
         }
+        coverage = try await client.coverage(cameraID: camera.id)
+    }
 
-        let dateString = selectedDateString
-        let loadKey = recordingLoadKey(cameraID: camera.id, dateString: dateString)
-        guard loadingRecordingKey != loadKey else { return }
-        loadingRecordingKey = loadKey
-        defer {
-            if loadingRecordingKey == loadKey {
-                loadingRecordingKey = nil
-            }
+    func refreshSegments() async throws {
+        guard let client = client, let camera = selectedCamera else {
+            segments = []
+            return
         }
-
-        do {
-            let coverageResponse = try await client.coverage(cameraID: camera.id)
-            let segmentsResponse = try await client.segments(cameraID: camera.id, date: dateString)
-            guard recordingLoadKey == loadKey else { return }
-            coverage = coverageResponse
-            segments = segmentsResponse
-            loadedRecordingKey = loadKey
-        } catch {
-            if recordingLoadKey == loadKey {
-                errorMessage = userFacingError(error)
-            }
-        }
+        segments = try await client.segments(cameraID: camera.id, date: selectedDateString)
     }
 
     func loadRecordingBrowserIfNeeded() async {
-        guard loadedRecordingKey != recordingLoadKey else { return }
+        guard coverage == nil, segments.isEmpty, selectedCamera != nil else { return }
         await refreshCoverageAndSegments()
     }
 
-    func selectCamera(_ cameraID: String, refreshRecordings: Bool = true) async {
+    func selectCamera(_ cameraID: String, loadRecordings: Bool = false) async {
         selectedCameraID = cameraID
-        loadedRecordingKey = nil
         coverage = nil
         segments = []
-        if refreshRecordings {
+        bumpLiveReload()
+        if loadRecordings {
             await refreshCoverageAndSegments()
+        }
+    }
+
+    func setLivePlaybackEnabled(_ enabled: Bool) async {
+        livePlaybackEnabled = enabled
+        if enabled {
+            bumpLiveReload()
+        } else {
+            await stopLiveStream()
+        }
+    }
+
+    func restartLiveStream() async {
+        do {
+            if let client, let camera = selectedCamera {
+                try await client.restartLive(cameraID: camera.id)
+            }
+            livePlaybackEnabled = true
+            bumpLiveReload()
+        } catch {
+            errorMessage = userFacingError(error)
+        }
+    }
+
+    func stopLiveStream() async {
+        do {
+            if let client, let camera = selectedCamera {
+                try await client.stopLive(cameraID: camera.id)
+            }
+            livePlaybackEnabled = false
+        } catch {
+            errorMessage = userFacingError(error)
+        }
+    }
+
+    func setRecorderRunning(_ running: Bool, camera: Camera) async {
+        do {
+            guard let client else { throw PlainNVRClientError.invalidServerURL }
+            if running {
+                try await client.startRecorder(cameraID: camera.id)
+            } else {
+                try await client.stopRecorder(cameraID: camera.id)
+            }
+            try await refreshStatus(using: client)
+        } catch {
+            errorMessage = userFacingError(error)
+        }
+    }
+
+    func restartRecorder(camera: Camera) async {
+        do {
+            guard let client else { throw PlainNVRClientError.invalidServerURL }
+            try await client.restartRecorder(cameraID: camera.id)
+            try await refreshStatus(using: client)
+        } catch {
+            errorMessage = userFacingError(error)
         }
     }
 
@@ -190,15 +253,22 @@ final class PlainNVRViewModel: ObservableObject {
             status = nil
             coverage = nil
             segments = []
-            loadedRecordingKey = nil
             activeSegment = nil
+            livePlaybackEnabled = true
             password = ""
             connectionState = .signedOut
         }
     }
 
     func liveURL(for camera: Camera) -> URL? {
-        client?.liveHLSURL(camera: camera, streamToken: status?.streamToken ?? "")
+        guard livePlaybackEnabled else { return nil }
+        return client?.liveHLSURL(
+            camera: camera,
+            streamToken: status?.streamToken ?? "",
+            fps: liveFrameRate.rawValue,
+            width: liveQuality.width,
+            reloadID: liveReloadID
+        )
     }
 
     func playbackURL(for segment: RecordingSegment) -> URL? {
@@ -212,28 +282,10 @@ final class PlainNVRViewModel: ObservableObject {
         return try await client.downloadSegment(segment, streamToken: status?.streamToken ?? "")
     }
 
-    #if os(iOS) && !targetEnvironment(macCatalyst)
     func saveSegmentToPhotos(_ segment: RecordingSegment) async throws {
         let fileURL = try await downloadSegment(segment)
         try await PhotoLibrarySaver.saveVideo(fileURL)
     }
-    #endif
-
-    #if targetEnvironment(macCatalyst) || os(macOS)
-    func saveSegmentToDownloads(_ segment: RecordingSegment) async throws -> URL {
-        let fileURL = try await downloadSegment(segment)
-        guard let downloadsDirectory = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first else {
-            throw PlainNVRClientError.server("Downloads folder is unavailable.")
-        }
-
-        let destination = uniqueDestination(
-            in: downloadsDirectory,
-            filename: segment.filename
-        )
-        try FileManager.default.copyItem(at: fileURL, to: destination)
-        return destination
-    }
-    #endif
 
     private func configuredClient() throws -> PlainNVRClient {
         let client = try PlainNVRClient(serverAddress: serverAddress)
@@ -241,6 +293,10 @@ final class PlainNVRViewModel: ObservableObject {
         serverAddress = client.serverAddress
         UserDefaults.standard.set(client.serverAddress, forKey: Self.serverDefaultsKey)
         return client
+    }
+
+    private func bumpLiveReload() {
+        liveReloadID &+= 1
     }
 
     private func refreshStatus(using client: PlainNVRClient) async throws {
@@ -267,39 +323,8 @@ final class PlainNVRViewModel: ObservableObject {
         }
         return error.localizedDescription
     }
-
-    private var recordingLoadKey: String? {
-        guard let camera = selectedCamera else { return nil }
-        return recordingLoadKey(cameraID: camera.id, dateString: selectedDateString)
-    }
-
-    private func recordingLoadKey(cameraID: String, dateString: String) -> String {
-        "\(cameraID)|\(dateString)"
-    }
-
-    #if targetEnvironment(macCatalyst) || os(macOS)
-    private func uniqueDestination(in directory: URL, filename: String) -> URL {
-        let original = directory.appendingPathComponent(filename, conformingTo: .mpeg4Movie)
-        guard FileManager.default.fileExists(atPath: original.path) else {
-            return original
-        }
-
-        let base = original.deletingPathExtension().lastPathComponent
-        let pathExtension = original.pathExtension
-        for index in 1...999 {
-            let candidate = directory
-                .appendingPathComponent("\(base)-\(index)")
-                .appendingPathExtension(pathExtension)
-            if !FileManager.default.fileExists(atPath: candidate.path) {
-                return candidate
-            }
-        }
-        return directory.appendingPathComponent("\(base)-\(UUID().uuidString)").appendingPathExtension(pathExtension)
-    }
-    #endif
 }
 
-#if os(iOS) && !targetEnvironment(macCatalyst)
 enum PhotoLibrarySaver {
     static func saveVideo(_ fileURL: URL) async throws {
         let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
@@ -322,4 +347,3 @@ enum PhotoLibrarySaver {
         }
     }
 }
-#endif

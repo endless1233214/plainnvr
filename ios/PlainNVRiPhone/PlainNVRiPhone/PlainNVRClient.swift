@@ -143,12 +143,55 @@ final class PlainNVRClient {
         return components.url
     }
 
-    func liveHLSURL(camera: Camera, streamToken: String) -> URL? {
-        urlWithOptionalToken(path: "/live/\(camera.id)/stream.m3u8", streamToken: streamToken)
+    func liveHLSURL(
+        camera: Camera,
+        streamToken: String,
+        fps: Int,
+        width: Int,
+        reloadID: Int
+    ) -> URL? {
+        guard let rootURL = absoluteURL(for: "/live/\(camera.id)/stream.m3u8"),
+              var components = URLComponents(url: rootURL, resolvingAgainstBaseURL: false)
+        else {
+            return nil
+        }
+
+        var items = [
+            URLQueryItem(name: "fps", value: String(max(1, min(fps, 15)))),
+            URLQueryItem(name: "width", value: String(max(320, min(width, 1920)))),
+            URLQueryItem(name: "reload", value: String(reloadID))
+        ]
+
+        if !streamToken.isEmpty {
+            items.append(URLQueryItem(name: "token", value: streamToken))
+        }
+
+        components.queryItems = items
+        return components.url
     }
 
     func mediaURL(path: String, streamToken: String) -> URL? {
         urlWithOptionalToken(path: path, streamToken: streamToken)
+    }
+
+    func startRecorder(cameraID: String) async throws {
+        try await cameraControl(cameraID: cameraID, target: "recorder", action: "start")
+    }
+
+    func stopRecorder(cameraID: String) async throws {
+        try await cameraControl(cameraID: cameraID, target: "recorder", action: "stop")
+    }
+
+    func restartRecorder(cameraID: String) async throws {
+        try await cameraControl(cameraID: cameraID, target: "recorder", action: "restart")
+    }
+
+    func stopLive(cameraID: String) async throws {
+        try await cameraControl(cameraID: cameraID, target: "live", action: "stop")
+    }
+
+    func restartLive(cameraID: String) async throws {
+        try await cameraControl(cameraID: cameraID, target: "live", action: "restart")
     }
 
     func downloadSegment(_ segment: RecordingSegment, streamToken: String) async throws -> URL {
@@ -184,6 +227,13 @@ final class PlainNVRClient {
             components.queryItems = items
         }
         return components.url
+    }
+
+    private func cameraControl(cameraID: String, target: String, action: String) async throws {
+        let _: OKResponse = try await post(
+            "/api/cameras/\(cameraID)/\(target)/\(action)",
+            body: [String: String]()
+        )
     }
 
     private func get<T: Decodable>(_ path: String) async throws -> T {
