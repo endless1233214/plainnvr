@@ -146,8 +146,8 @@ final class PlainNVRClient {
     func liveHLSURL(
         camera: Camera,
         streamToken: String,
-        fps: Int,
-        width: Int,
+        fps: Int?,
+        width: Int?,
         reloadID: Int
     ) -> URL? {
         guard let rootURL = absoluteURL(for: "/live/\(camera.id)/stream.m3u8"),
@@ -157,10 +157,16 @@ final class PlainNVRClient {
         }
 
         var items = [
-            URLQueryItem(name: "fps", value: String(max(1, min(fps, 15)))),
-            URLQueryItem(name: "width", value: String(max(320, min(width, 1920)))),
             URLQueryItem(name: "reload", value: String(reloadID))
         ]
+
+        if let fps {
+            items.append(URLQueryItem(name: "fps", value: String(max(1, min(fps, 15)))))
+        }
+
+        if let width {
+            items.append(URLQueryItem(name: "width", value: String(max(320, min(width, 1920)))))
+        }
 
         if !streamToken.isEmpty {
             items.append(URLQueryItem(name: "token", value: streamToken))

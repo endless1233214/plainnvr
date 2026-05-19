@@ -48,7 +48,7 @@ final class PlainNVRViewModel: ObservableObject {
 
     init() {
         serverAddress = UserDefaults.standard.string(forKey: Self.serverDefaultsKey) ?? Self.defaultServerAddress
-        liveQuality = LiveQuality(rawValue: UserDefaults.standard.string(forKey: Self.liveQualityDefaultsKey) ?? "") ?? .balanced
+        liveQuality = LiveQuality(rawValue: UserDefaults.standard.string(forKey: Self.liveQualityDefaultsKey) ?? "") ?? .source
         liveFrameRate = LiveFrameRate(rawValue: UserDefaults.standard.integer(forKey: Self.liveFrameRateDefaultsKey)) ?? .ten
     }
 
@@ -265,7 +265,7 @@ final class PlainNVRViewModel: ObservableObject {
         return client?.liveHLSURL(
             camera: camera,
             streamToken: status?.streamToken ?? "",
-            fps: liveFrameRate.rawValue,
+            fps: liveQuality.width == nil ? nil : liveFrameRate.rawValue,
             width: liveQuality.width,
             reloadID: liveReloadID
         )

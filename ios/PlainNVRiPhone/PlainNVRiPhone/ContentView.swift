@@ -323,6 +323,7 @@ struct LiveControlsView: View {
                     }
                 }
                 .pickerStyle(.segmented)
+                .disabled(viewModel.liveQuality.width == nil)
 
                 Button {
                     Task { await viewModel.restartLiveStream() }

@@ -124,6 +124,7 @@ struct ServerErrorResponse: Decodable {
 }
 
 enum LiveQuality: String, CaseIterable, Identifiable {
+    case source
     case low
     case balanced
     case high
@@ -132,6 +133,8 @@ enum LiveQuality: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
+        case .source:
+            return "Source"
         case .low:
             return "Low"
         case .balanced:
@@ -141,8 +144,10 @@ enum LiveQuality: String, CaseIterable, Identifiable {
         }
     }
 
-    var width: Int {
+    var width: Int? {
         switch self {
+        case .source:
+            return nil
         case .low:
             return 640
         case .balanced:

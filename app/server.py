@@ -32,6 +32,8 @@ FFMPEG_BIN = os.environ.get("FFMPEG_BIN", "ffmpeg")
 FFPROBE_BIN = os.environ.get("FFPROBE_BIN", "ffprobe")
 RTSP_PROBESIZE = os.environ.get("NVR_RTSP_PROBESIZE", "32768")
 RTSP_ANALYZE_DURATION = os.environ.get("NVR_RTSP_ANALYZE_DURATION", "0")
+RTSP_LIVE_PROBESIZE = os.environ.get("NVR_RTSP_LIVE_PROBESIZE", "1048576")
+RTSP_LIVE_ANALYZE_DURATION = os.environ.get("NVR_RTSP_LIVE_ANALYZE_DURATION", "1000000")
 SCAN_INTERVAL_SECONDS = int(os.environ.get("NVR_SCAN_INTERVAL_SECONDS", "10"))
 RETENTION_INTERVAL_SECONDS = int(os.environ.get("NVR_RETENTION_INTERVAL_SECONDS", "3600"))
 DEFAULT_SEGMENT_SECONDS = int(os.environ.get("NVR_DEFAULT_SEGMENT_SECONDS", "60"))
@@ -622,25 +624,27 @@ def build_ffmpeg_command(camera):
     return command
 
 
-def ffmpeg_input_args(camera_or_payload, url_key="rtsp_url"):
+def ffmpeg_input_args(camera_or_payload, url_key="rtsp_url", low_latency=True):
     url = str(camera_or_payload[url_key]).strip()
     transport = camera_or_payload.get("rtsp_transport", "tcp")
     args = []
     if url.startswith(("rtsp://", "rtsps://")):
+        probesize = RTSP_PROBESIZE if low_latency else RTSP_LIVE_PROBESIZE
+        analyze_duration = RTSP_ANALYZE_DURATION if low_latency else RTSP_LIVE_ANALYZE_DURATION
         args.extend(
             [
                 "-rtsp_transport",
                 transport if transport in ("tcp", "udp") else "tcp",
                 "-probesize",
-                RTSP_PROBESIZE,
+                probesize,
                 "-analyzeduration",
-                RTSP_ANALYZE_DURATION,
-                "-fflags",
-                "nobuffer",
-                "-flags",
-                "low_delay",
+                analyze_duration,
             ]
         )
+        if low_latency:
+            args.extend(["-fflags", "nobuffer", "-flags", "low_delay"])
+        else:
+            args.extend(["-fflags", "+genpts", "-use_wallclock_as_timestamps", "1"])
     args.extend(["-i", url])
     return args
 
@@ -715,9 +719,9 @@ def build_live_hls_command(camera, output_dir, fps=None, width=None):
         "-loglevel",
         "warning",
     ]
-    command.extend(ffmpeg_input_args(camera))
+    command.extend(ffmpeg_input_args(camera, low_latency=False))
     if record_audio and audio_url:
-        command.extend(ffmpeg_input_args(camera, "audio_url"))
+        command.extend(ffmpeg_input_args(camera, "audio_url", low_latency=False))
     command.extend(["-map", "0:v:0"])
     if record_audio:
         command.extend(["-map", "1:a:0?"] if audio_url else ["-map", "0:a?"])
@@ -755,6 +759,16 @@ def build_live_hls_command(camera, output_dir, fps=None, width=None):
         command.append("-an")
     command.extend(
         [
+            "-max_interleave_delta",
+            "0",
+            "-muxdelay",
+            "0",
+            "-muxpreload",
+            "0",
+            "-avoid_negative_ts",
+            "make_zero",
+            "-flush_packets",
+            "1",
             "-f",
             "hls",
             "-hls_time",
