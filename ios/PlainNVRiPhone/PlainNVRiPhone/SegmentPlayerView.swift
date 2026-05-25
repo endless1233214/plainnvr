@@ -124,6 +124,8 @@ struct SegmentPlayerView: View {
 
 struct LivePlayerView: View {
     let url: URL
+    var isMuted = false
+    var volume: Float = 0.85
     var onStatus: (String?) -> Void = { _ in }
     var onFailure: (String) -> Void = { _ in }
 
@@ -174,6 +176,12 @@ struct LivePlayerView: View {
             resetZoom()
             startPlayback(newURL)
         }
+        .onChange(of: isMuted) { _, _ in
+            applyAudioSettings()
+        }
+        .onChange(of: volume) { _, _ in
+            applyAudioSettings()
+        }
         .onDisappear {
             stopPlayback()
         }
@@ -207,6 +215,7 @@ struct LivePlayerView: View {
             onFailure("Player error \(event.errorStatusCode): \(details)")
         }
         player.replaceCurrentItem(with: item)
+        applyAudioSettings()
         player.play()
     }
 
@@ -223,6 +232,11 @@ struct LivePlayerView: View {
             NotificationCenter.default.removeObserver(errorLogObserver)
             self.errorLogObserver = nil
         }
+    }
+
+    private func applyAudioSettings() {
+        player.isMuted = isMuted
+        player.volume = min(max(volume, 0), 1)
     }
 
     private func magnificationGesture(size: CGSize) -> some Gesture {

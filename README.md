@@ -72,16 +72,19 @@ with real datasets on your TrueNAS box.
 Each saved camera exposes two local HTTP endpoints for Home Assistant:
 
 ```text
+http://PLAINNVR-HOST:8787/live/CAMERA_ID/stream.m3u8
 http://PLAINNVR-HOST:8787/ha/CAMERA_ID/stream.mjpeg?fps=2&width=1280
 http://PLAINNVR-HOST:8787/ha/CAMERA_ID/snapshot.jpg
 ```
 
-In Home Assistant, add the MJPEG IP Camera integration and use the first URL as the MJPEG URL and the second URL as the Still Image URL. The Generic Camera integration can also use PlainNVR's snapshot URL, but MJPEG IP Camera is the simplest bridge when RTSP is unreliable in Home Assistant.
+For audio/video, try the HLS URL first in integrations or clients that accept
+HLS. If an integration only accepts MJPEG, add the MJPEG IP Camera integration
+and use the MJPEG URL plus the Still Image URL. MJPEG is video-only.
 
 The PlainNVR camera editor shows the exact URLs after a camera is saved.
 
 Those Home Assistant URLs include a generated stream token after login. Keep
-that token private; it lets Home Assistant read the snapshot and MJPEG bridge
+that token private; it lets Home Assistant read the HLS, snapshot, and MJPEG bridge
 without using your browser session cookie.
 
 PlainNVR also accepts HTTP Basic auth on those bridge URLs, so the MJPEG IP
@@ -92,8 +95,9 @@ YAML.
 ## Live View
 
 PlainNVR also has a Live View panel for quick in-browser monitoring without Home
-Assistant. It uses the same protected MJPEG bridge as the Home Assistant
-integration, so Home Assistant support stays available.
+Assistant. HLS mode uses the same live audio/video path as the iPhone app when
+the browser supports native HLS, while MJPEG mode stays available as a
+video-only fallback.
 
 ## Camera URL Examples
 

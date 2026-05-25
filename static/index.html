@@ -130,6 +130,11 @@
             </label>
             <button id="copyHaMjpegUrl" type="button">Copy MJPEG URL</button>
             <label>
+              HLS URL
+              <input id="haHlsUrl" readonly />
+            </label>
+            <button id="copyHaHlsUrl" type="button">Copy HLS URL</button>
+            <label>
               Snapshot URL
               <input id="haSnapshotUrl" readonly />
             </label>
@@ -171,10 +176,26 @@
                 <option value="1920">1920</option>
               </select>
             </label>
+            <label>
+              Mode
+              <select id="liveMode">
+                <option value="hls" selected>HLS</option>
+                <option value="mjpeg">MJPEG</option>
+              </select>
+            </label>
+            <label class="live-audio-toggle">
+              <input id="liveAudio" type="checkbox" checked />
+              Audio
+            </label>
+            <label>
+              Volume
+              <input id="liveVolume" type="range" min="0" max="100" value="80" />
+            </label>
             <button id="startLive" type="button">Start</button>
             <button id="stopLive" type="button">Stop</button>
           </div>
           <div class="live-frame">
+            <video id="liveVideo" controls playsinline preload="none" hidden></video>
             <img id="liveImage" alt="" />
             <div id="liveEmpty" class="empty">No live stream selected.</div>
           </div>

@@ -14,6 +14,8 @@ final class PlainNVRViewModel: ObservableObject {
     private static let serverDefaultsKey = "PlainNVRServerAddress"
     private static let liveQualityDefaultsKey = "PlainNVRLiveQuality"
     private static let liveFrameRateDefaultsKey = "PlainNVRLiveFrameRate"
+    private static let liveAudioEnabledDefaultsKey = "PlainNVRLiveAudioEnabled"
+    private static let liveVolumeDefaultsKey = "PlainNVRLiveVolume"
     private static let defaultServerAddress = "http://192.168.1.0:8787"
 
     @Published var serverAddress: String
@@ -45,6 +47,17 @@ final class PlainNVRViewModel: ObservableObject {
             bumpLiveReload()
         }
     }
+    @Published var liveAudioEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(liveAudioEnabled, forKey: Self.liveAudioEnabledDefaultsKey)
+        }
+    }
+    @Published var liveVolume: Double {
+        didSet {
+            liveVolume = min(max(liveVolume, 0), 1)
+            UserDefaults.standard.set(liveVolume, forKey: Self.liveVolumeDefaultsKey)
+        }
+    }
     @Published private(set) var liveReloadID = 0
 
     private var client: PlainNVRClient?
@@ -53,6 +66,16 @@ final class PlainNVRViewModel: ObservableObject {
         serverAddress = UserDefaults.standard.string(forKey: Self.serverDefaultsKey) ?? Self.defaultServerAddress
         liveQuality = LiveQuality(rawValue: UserDefaults.standard.string(forKey: Self.liveQualityDefaultsKey) ?? "") ?? .source
         liveFrameRate = LiveFrameRate(rawValue: UserDefaults.standard.integer(forKey: Self.liveFrameRateDefaultsKey)) ?? .ten
+        if UserDefaults.standard.object(forKey: Self.liveAudioEnabledDefaultsKey) == nil {
+            liveAudioEnabled = true
+        } else {
+            liveAudioEnabled = UserDefaults.standard.bool(forKey: Self.liveAudioEnabledDefaultsKey)
+        }
+        if UserDefaults.standard.object(forKey: Self.liveVolumeDefaultsKey) == nil {
+            liveVolume = 0.85
+        } else {
+            liveVolume = min(max(UserDefaults.standard.double(forKey: Self.liveVolumeDefaultsKey), 0), 1)
+        }
     }
 
     var cameras: [Camera] {

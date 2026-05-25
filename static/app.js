@@ -10,6 +10,9 @@ const state = {
 };
 
 const dayKeys = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+const liveModeStorageKey = "plainnvr-live-mode";
+const liveAudioStorageKey = "plainnvr-live-audio";
+const liveVolumeStorageKey = "plainnvr-live-volume";
 
 const $ = (id) => document.getElementById(id);
 const themeStorageKey = "plainnvr-theme";
@@ -131,13 +134,15 @@ function cameraHaUrls(camera) {
   const base = window.location.origin;
   const token = state.streamToken ? `token=${encodeURIComponent(state.streamToken)}` : "";
   const tokenSuffix = token ? `&${token}` : "";
+  const hlsSuffix = token ? `?${token}` : "";
   return {
     mjpeg: `${base}/ha/${camera.id}/stream.mjpeg?fps=2&width=1280${tokenSuffix}`,
+    hls: `${base}/live/${camera.id}/stream.m3u8${hlsSuffix}`,
     snapshot: `${base}/ha/${camera.id}/snapshot.jpg${token ? `?${token}` : ""}`,
   };
 }
 
-function cameraLiveUrl(camera) {
+function cameraLiveMjpegUrl(camera) {
   const fps = Number($("liveFps").value) || 2;
   const width = Number($("liveWidth").value) || 1280;
   const token = state.streamToken || "";
@@ -151,12 +156,49 @@ function cameraLiveUrl(camera) {
   return `/ha/${camera.id}/stream.mjpeg?${params.toString()}`;
 }
 
+function cameraLiveHlsUrl(camera) {
+  const params = new URLSearchParams();
+  if (state.streamToken) {
+    params.set("token", state.streamToken);
+  }
+  const query = params.toString();
+  return `/live/${camera.id}/stream.m3u8${query ? `?${query}` : ""}`;
+}
+
+function browserCanPlayHls(video) {
+  return Boolean(
+    video.canPlayType("application/vnd.apple.mpegurl") ||
+      video.canPlayType("application/x-mpegURL")
+  );
+}
+
+function applyLiveAudioSettings() {
+  const video = $("liveVideo");
+  const audioEnabled = $("liveAudio").checked;
+  const volume = Math.max(0, Math.min(Number($("liveVolume").value) || 0, 100)) / 100;
+  video.muted = !audioEnabled;
+  video.volume = volume;
+  try {
+    localStorage.setItem(liveAudioStorageKey, audioEnabled ? "1" : "0");
+    localStorage.setItem(liveVolumeStorageKey, String(Math.round(volume * 100)));
+  } catch (_error) {
+    // The live player still works when local storage is unavailable.
+  }
+}
+
+function syncLiveControls() {
+  const hlsMode = $("liveMode").value === "hls";
+  $("liveAudio").disabled = !hlsMode;
+  $("liveVolume").disabled = !hlsMode || !$("liveAudio").checked;
+}
+
 function renderHaPanel(camera) {
   const panel = $("haPanel");
-  const copyButtons = ["copyHaMjpegUrl", "copyHaSnapshotUrl", "copyHaYaml"];
+  const copyButtons = ["copyHaMjpegUrl", "copyHaHlsUrl", "copyHaSnapshotUrl", "copyHaYaml"];
   if (!camera?.id) {
     panel.hidden = true;
     $("haMjpegUrl").value = "";
+    $("haHlsUrl").value = "";
     $("haSnapshotUrl").value = "";
     $("haYaml").value = "";
     copyButtons.forEach((id) => {
@@ -167,6 +209,7 @@ function renderHaPanel(camera) {
   const urls = cameraHaUrls(camera);
   panel.hidden = false;
   $("haMjpegUrl").value = urls.mjpeg;
+  $("haHlsUrl").value = urls.hls;
   $("haSnapshotUrl").value = urls.snapshot;
   $("haYaml").value = [
     "camera:",
@@ -532,16 +575,45 @@ function startLive() {
     return;
   }
   state.liveCameraId = camera.id;
+  const requestedMode = $("liveMode").value;
+  const video = $("liveVideo");
+  const image = $("liveImage");
+  video.pause();
+  video.removeAttribute("src");
+  video.load();
+  image.removeAttribute("src");
   $("liveEmpty").hidden = true;
-  $("liveImage").hidden = false;
-  $("liveImage").src = cameraLiveUrl(camera);
-  $("liveState").textContent = camera.name;
+  image.hidden = true;
+  video.hidden = true;
+
+  if (requestedMode === "hls" && browserCanPlayHls(video)) {
+    applyLiveAudioSettings();
+    video.src = cameraLiveHlsUrl(camera);
+    video.hidden = false;
+    video.play().catch((error) => {
+      $("liveState").textContent = error.message || "Playback blocked";
+    });
+    $("liveState").textContent = `${camera.name} HLS`;
+  } else {
+    if (requestedMode === "hls") {
+      $("liveMode").value = "mjpeg";
+    }
+    image.src = cameraLiveMjpegUrl(camera);
+    image.hidden = false;
+    $("liveState").textContent = `${camera.name} MJPEG`;
+  }
+  syncLiveControls();
   $("stopLive").disabled = false;
 }
 
 function stopLive() {
+  const video = $("liveVideo");
+  video.pause();
+  video.removeAttribute("src");
+  video.load();
   $("liveImage").removeAttribute("src");
   $("liveImage").hidden = true;
+  video.hidden = true;
   $("liveEmpty").hidden = false;
   $("liveState").textContent = "";
   $("stopLive").disabled = state.cameras.length === 0;
@@ -587,6 +659,7 @@ document.addEventListener("DOMContentLoaded", () => {
   $("loadSegments").addEventListener("click", loadSegments);
   $("userForm").addEventListener("submit", saveUser);
   $("copyHaMjpegUrl").addEventListener("click", () => copyValue("haMjpegUrl"));
+  $("copyHaHlsUrl").addEventListener("click", () => copyValue("haHlsUrl"));
   $("copyHaSnapshotUrl").addEventListener("click", () => copyValue("haSnapshotUrl"));
   $("copyHaYaml").addEventListener("click", () => copyValue("haYaml"));
   $("startLive").addEventListener("click", startLive);
@@ -595,10 +668,26 @@ document.addEventListener("DOMContentLoaded", () => {
     state.liveCameraId = event.target.value;
   });
   $("liveFps").addEventListener("change", () => {
-    if ($("liveImage").src) startLive();
+    if ($("liveImage").src || $("liveVideo").src) startLive();
   });
   $("liveWidth").addEventListener("change", () => {
-    if ($("liveImage").src) startLive();
+    if ($("liveImage").src || $("liveVideo").src) startLive();
+  });
+  $("liveMode").addEventListener("change", () => {
+    try {
+      localStorage.setItem(liveModeStorageKey, $("liveMode").value);
+    } catch (_error) {
+      // Mode persistence is optional.
+    }
+    syncLiveControls();
+    if ($("liveImage").src || $("liveVideo").src) startLive();
+  });
+  $("liveAudio").addEventListener("change", () => {
+    applyLiveAudioSettings();
+    syncLiveControls();
+  });
+  $("liveVolume").addEventListener("input", () => {
+    applyLiveAudioSettings();
   });
   $("playbackCamera").addEventListener("change", () => {
     loadCoverage().catch((error) => {
@@ -612,6 +701,20 @@ document.addEventListener("DOMContentLoaded", () => {
       $("weeklySchedule").classList.toggle("disabled", radio.value !== "weekly" || !radio.checked);
     });
   });
+  try {
+    const savedMode = localStorage.getItem(liveModeStorageKey);
+    if (savedMode === "hls" || savedMode === "mjpeg") $("liveMode").value = savedMode;
+    const savedAudio = localStorage.getItem(liveAudioStorageKey);
+    if (savedAudio === "0" || savedAudio === "1") $("liveAudio").checked = savedAudio === "1";
+    const savedVolume = Number(localStorage.getItem(liveVolumeStorageKey));
+    if (Number.isFinite(savedVolume)) {
+      $("liveVolume").value = String(Math.max(0, Math.min(savedVolume, 100)));
+    }
+  } catch (_error) {
+    // Defaults are fine.
+  }
+  applyLiveAudioSettings();
+  syncLiveControls();
   loadStatus().then(loadCoverage).catch((error) => {
     $("diskLine").textContent = error.message;
   });

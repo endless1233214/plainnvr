@@ -456,6 +456,22 @@ fieldset {
   flex: 0 1 96px;
 }
 
+.live-controls .live-audio-toggle {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.live-audio-toggle input {
+  width: auto;
+  min-height: 0;
+}
+
+#liveVolume {
+  padding-inline: 0;
+}
+
 .live-frame {
   position: relative;
   display: grid;
@@ -473,7 +489,8 @@ fieldset {
   color: #c0c7c3;
 }
 
-#liveImage {
+#liveImage,
+#liveVideo {
   display: block;
   width: 100%;
   height: 100%;
@@ -481,11 +498,17 @@ fieldset {
   object-fit: contain;
 }
 
-#liveImage[hidden] {
+#liveVideo {
+  border: 0;
+  background: var(--video-bg);
+}
+
+#liveImage[hidden],
+#liveVideo[hidden] {
   display: none;
 }
 
-video {
+#player {
   width: calc(100% - 32px);
   min-height: 260px;
   max-height: 52vh;

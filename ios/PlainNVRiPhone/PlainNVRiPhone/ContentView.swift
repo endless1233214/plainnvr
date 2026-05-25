@@ -276,6 +276,8 @@ struct LiveView: View {
             if let camera = viewModel.selectedCamera, viewModel.livePlaybackEnabled, let url = viewModel.liveURL(for: camera) {
                 LivePlayerView(
                     url: url,
+                    isMuted: !viewModel.liveAudioEnabled,
+                    volume: Float(viewModel.liveVolume),
                     onStatus: { message in
                         viewModel.updateLivePlayerStatus(message)
                     },
@@ -362,6 +364,15 @@ struct LiveControlsView: View {
                 .accessibilityLabel("Check Stream")
                 .buttonStyle(.bordered)
             }
+
+            HStack(spacing: 12) {
+                Toggle("Audio", isOn: $viewModel.liveAudioEnabled)
+                    .toggleStyle(.switch)
+
+                Slider(value: $viewModel.liveVolume, in: 0...1)
+                    .disabled(!viewModel.liveAudioEnabled)
+                    .accessibilityLabel("Live Volume")
+            }
         }
         .padding(12)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
@@ -377,6 +388,8 @@ struct LivePlayerSurface: View {
             if viewModel.livePlaybackEnabled, let url = viewModel.liveURL(for: camera) {
                 LivePlayerView(
                     url: url,
+                    isMuted: !viewModel.liveAudioEnabled,
+                    volume: Float(viewModel.liveVolume),
                     onStatus: { message in
                         viewModel.updateLivePlayerStatus(message)
                     },

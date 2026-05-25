@@ -8,6 +8,7 @@ Native SwiftUI companion app for PlainNVR. It is meant for personal sideloading 
 - View camera status, recorder state, disk usage, and recent recorder events.
 - Play live camera video with audio through PlainNVR's HLS endpoint.
 - Choose live stream FPS and quality from the Live tab. Source quality copies the camera stream and is the default for stability.
+- Toggle live audio and set live volume from the Live tab.
 - Check a selected live stream from the Live tab and show player/server diagnostics in the app.
 - Start, pause, and restart a camera recorder from its detail screen.
 - Rotate the phone sideways on the Live tab to show the selected camera full screen.
