@@ -33,8 +33,8 @@ FFMPEG_BIN = os.environ.get("FFMPEG_BIN", "ffmpeg")
 FFPROBE_BIN = os.environ.get("FFPROBE_BIN", "ffprobe")
 RTSP_PROBESIZE = os.environ.get("NVR_RTSP_PROBESIZE", "32768")
 RTSP_ANALYZE_DURATION = os.environ.get("NVR_RTSP_ANALYZE_DURATION", "0")
-RTSP_LIVE_PROBESIZE = os.environ.get("NVR_RTSP_LIVE_PROBESIZE", "1048576")
-RTSP_LIVE_ANALYZE_DURATION = os.environ.get("NVR_RTSP_LIVE_ANALYZE_DURATION", "1000000")
+RTSP_LIVE_PROBESIZE = os.environ.get("NVR_RTSP_LIVE_PROBESIZE", "5000000")
+RTSP_LIVE_ANALYZE_DURATION = os.environ.get("NVR_RTSP_LIVE_ANALYZE_DURATION", "5000000")
 RTSP_THREAD_QUEUE_SIZE = os.environ.get("NVR_RTSP_THREAD_QUEUE_SIZE", "2048")
 SCAN_INTERVAL_SECONDS = int(os.environ.get("NVR_SCAN_INTERVAL_SECONDS", "10"))
 RETENTION_INTERVAL_SECONDS = int(os.environ.get("NVR_RETENTION_INTERVAL_SECONDS", "3600"))
@@ -606,10 +606,12 @@ def build_ffmpeg_command(camera):
             command.extend(["-map", "1:a:0?"])
         else:
             command.extend(["-map", "0:a?"])
+    if record_audio:
+        command.extend(["-c:v", "copy", "-c:a", "aac", "-b:a", "128k", "-ac", "2"])
+    else:
+        command.extend(["-c", "copy"])
     command.extend(
         [
-            "-c",
-            "copy",
             "-f",
             "segment",
             "-segment_time",

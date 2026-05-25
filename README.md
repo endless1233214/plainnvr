@@ -104,6 +104,9 @@ raise `NVR_RTSP_THREAD_QUEUE_SIZE` from the default `2048`.
 Some cameras need extra startup time before FFmpeg can identify the first video
 frame and write the HLS playlist; tune `NVR_LIVE_HLS_READY_TIMEOUT_SECONDS`
 from the default `25` seconds if the live view is still too impatient.
+PlainNVR uses a more patient RTSP probe for live HLS and audio recording by
+default so cameras that expose audio a moment after video still record both
+tracks.
 
 ## Camera URL Examples
 
