@@ -11,6 +11,7 @@ import shutil
 import signal
 import sqlite3
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -42,6 +43,7 @@ LIVE_HLS_SEGMENT_SECONDS = int(os.environ.get("NVR_LIVE_HLS_SEGMENT_SECONDS", "2
 LIVE_HLS_LIST_SIZE = int(os.environ.get("NVR_LIVE_HLS_LIST_SIZE", "8"))
 LIVE_HLS_DELETE_THRESHOLD = int(os.environ.get("NVR_LIVE_HLS_DELETE_THRESHOLD", "10"))
 LIVE_HLS_IDLE_SECONDS = int(os.environ.get("NVR_LIVE_HLS_IDLE_SECONDS", "90"))
+LIVE_HLS_READY_TIMEOUT_SECONDS = int(os.environ.get("NVR_LIVE_HLS_READY_TIMEOUT_SECONDS", "25"))
 LIVE_AUDIO_GAIN = os.environ.get("NVR_LIVE_AUDIO_GAIN", "4.0").strip() or "4.0"
 if not re.match(r"^\d+(\.\d+)?$", LIVE_AUDIO_GAIN):
     LIVE_AUDIO_GAIN = "4.0"
@@ -836,7 +838,7 @@ class LiveHLSManager:
             }
 
         playlist = self.stream_dir(camera_id) / "stream.m3u8"
-        deadline = time.time() + 10
+        deadline = time.time() + max(5, LIVE_HLS_READY_TIMEOUT_SECONDS)
         while time.time() < deadline:
             with self.lock:
                 entry = self.processes.get(camera_id)
@@ -1761,7 +1763,11 @@ class NvrHandler(SimpleHTTPRequestHandler):
                     width=query.get("width", [None])[0],
                 )
             except RuntimeError as exc:
-                self.send_error(HTTPStatus.BAD_GATEWAY, str(exc))
+                print(f"Live HLS startup failed for {camera['id']}: {exc}", file=sys.stderr)
+                self.send_error(
+                    HTTPStatus.BAD_GATEWAY,
+                    "Live stream did not become ready. Check the PlainNVR logs for details.",
+                )
                 return
         else:
             live_hls.touch(camera["id"])
