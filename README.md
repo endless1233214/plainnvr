@@ -108,6 +108,20 @@ PlainNVR uses a more patient RTSP probe for live HLS and audio recording by
 default so cameras that expose audio a moment after video still record both
 tracks.
 
+Each camera can optionally use Night Grayscale in the editor:
+
+- `Off` leaves live output unchanged.
+- `Always` applies grayscale to live HLS, MJPEG, and snapshots.
+- `Auto` samples unmodified camera frames in the background and applies
+  grayscale only after the raw stream looks dark or low-color long enough to
+  avoid quick flapping.
+
+Auto mode intentionally detects from the original camera stream, not from the
+already-filtered viewer output. This prevents the grayscale filter from keeping
+itself turned on. The thresholds can be tuned with `NVR_NIGHT_*` environment
+variables, including `NVR_NIGHT_ON_SECONDS`, `NVR_NIGHT_OFF_SECONDS`,
+`NVR_NIGHT_ON_BRIGHTNESS`, and `NVR_NIGHT_ON_SATURATION`.
+
 ## Camera URL Examples
 
 Common RTSP shapes look like:

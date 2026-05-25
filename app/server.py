@@ -47,6 +47,14 @@ LIVE_HLS_READY_TIMEOUT_SECONDS = int(os.environ.get("NVR_LIVE_HLS_READY_TIMEOUT_
 LIVE_AUDIO_GAIN = os.environ.get("NVR_LIVE_AUDIO_GAIN", "4.0").strip() or "4.0"
 if not re.match(r"^\d+(\.\d+)?$", LIVE_AUDIO_GAIN):
     LIVE_AUDIO_GAIN = "4.0"
+NIGHT_SAMPLE_INTERVAL_SECONDS = int(os.environ.get("NVR_NIGHT_SAMPLE_INTERVAL_SECONDS", "20"))
+NIGHT_ON_SECONDS = int(os.environ.get("NVR_NIGHT_ON_SECONDS", "45"))
+NIGHT_OFF_SECONDS = int(os.environ.get("NVR_NIGHT_OFF_SECONDS", "180"))
+NIGHT_ON_BRIGHTNESS = float(os.environ.get("NVR_NIGHT_ON_BRIGHTNESS", "120"))
+NIGHT_ON_SATURATION = float(os.environ.get("NVR_NIGHT_ON_SATURATION", "18"))
+NIGHT_DARK_BRIGHTNESS = float(os.environ.get("NVR_NIGHT_DARK_BRIGHTNESS", "35"))
+NIGHT_OFF_BRIGHTNESS = float(os.environ.get("NVR_NIGHT_OFF_BRIGHTNESS", "155"))
+NIGHT_OFF_SATURATION = float(os.environ.get("NVR_NIGHT_OFF_SATURATION", "35"))
 DB_PATH = DATA_DIR / "nvr.sqlite3"
 AUTH_COOKIE_NAME = "plainnvr_session"
 AUTH_SESSION_TTL_SECONDS = int(os.environ.get("NVR_SESSION_TTL_SECONDS", str(7 * 24 * 60 * 60)))
@@ -216,6 +224,7 @@ def init_db():
                 retention_days INTEGER NOT NULL DEFAULT 14,
                 schedule_json TEXT NOT NULL,
                 record_audio INTEGER NOT NULL DEFAULT 1,
+                grayscale_mode TEXT NOT NULL DEFAULT 'off',
                 rtsp_transport TEXT NOT NULL DEFAULT 'tcp',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
@@ -275,6 +284,8 @@ def ensure_camera_schema(conn):
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(cameras)").fetchall()}
     if "audio_url" not in columns:
         conn.execute("ALTER TABLE cameras ADD COLUMN audio_url TEXT NOT NULL DEFAULT ''")
+    if "grayscale_mode" not in columns:
+        conn.execute("ALTER TABLE cameras ADD COLUMN grayscale_mode TEXT NOT NULL DEFAULT 'off'")
 
 
 def bootstrap_auth_from_env(conn):
@@ -424,6 +435,7 @@ def camera_from_row(row):
     data["enabled"] = bool(data["enabled"])
     data["record_audio"] = bool(data["record_audio"])
     data["audio_url"] = data.get("audio_url") or ""
+    data["grayscale_mode"] = normalize_grayscale_mode(data.get("grayscale_mode"))
     data["schedule"] = normalize_schedule(json.loads(data.pop("schedule_json")))
     return data
 
@@ -467,8 +479,15 @@ def validate_camera_payload(payload, partial=False):
             errors["rtsp_url"] = "Use an rtsp://, rtsps://, http://, or https:// stream URL."
     if audio_url and not audio_url.startswith(STREAM_URL_PREFIXES):
         errors["audio_url"] = "Use an rtsp://, rtsps://, http://, or https:// audio URL."
+    if "grayscale_mode" in payload and normalize_grayscale_mode(payload.get("grayscale_mode")) != str(payload.get("grayscale_mode") or "").strip().lower():
+        errors["grayscale_mode"] = "Use off, always, or auto."
     if errors:
         raise ValueError(json.dumps(errors))
+
+
+def normalize_grayscale_mode(value):
+    value = str(value or "off").strip().lower()
+    return value if value in ("off", "always", "auto") else "off"
 
 
 def create_camera(payload):
@@ -484,9 +503,9 @@ def create_camera(payload):
             """
             INSERT INTO cameras (
                 id, name, slug, rtsp_url, audio_url, enabled, segment_seconds, retention_days,
-                schedule_json, record_audio, rtsp_transport, created_at, updated_at
+                schedule_json, record_audio, grayscale_mode, rtsp_transport, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 camera_id,
@@ -499,6 +518,7 @@ def create_camera(payload):
                 retention_days,
                 json.dumps(schedule),
                 normalize_bool(payload.get("record_audio", True)),
+                normalize_grayscale_mode(payload.get("grayscale_mode")),
                 payload.get("rtsp_transport", "tcp") if payload.get("rtsp_transport") in ("tcp", "udp") else "tcp",
                 now,
                 now,
@@ -522,7 +542,7 @@ def update_camera(camera_id, payload):
             """
             UPDATE cameras
             SET name = ?, slug = ?, rtsp_url = ?, audio_url = ?, enabled = ?, segment_seconds = ?,
-                retention_days = ?, schedule_json = ?, record_audio = ?,
+                retention_days = ?, schedule_json = ?, record_audio = ?, grayscale_mode = ?,
                 rtsp_transport = ?, updated_at = ?
             WHERE id = ?
             """,
@@ -536,6 +556,7 @@ def update_camera(camera_id, payload):
                 retention_days,
                 json.dumps(schedule),
                 normalize_bool(merged.get("record_audio")),
+                normalize_grayscale_mode(merged.get("grayscale_mode")),
                 merged.get("rtsp_transport") if merged.get("rtsp_transport") in ("tcp", "udp") else "tcp",
                 iso_now(),
                 camera_id,
@@ -656,6 +677,20 @@ def ffmpeg_input_args(camera_or_payload, url_key="rtsp_url", low_latency=True):
     return args
 
 
+def grayscale_enabled(camera):
+    mode = normalize_grayscale_mode(camera.get("grayscale_mode"))
+    if mode == "always":
+        return True
+    if mode == "auto":
+        return night_modes.is_night(camera["id"])
+    return False
+
+
+def add_video_filters(command, filters):
+    if filters:
+        command.extend(["-vf", ",".join(filters)])
+
+
 def build_snapshot_command(camera):
     command = [
         FFMPEG_BIN,
@@ -665,6 +700,10 @@ def build_snapshot_command(camera):
         "error",
     ]
     command.extend(ffmpeg_input_args(camera))
+    video_filters = []
+    if grayscale_enabled(camera):
+        video_filters.append("hue=s=0")
+    add_video_filters(command, video_filters)
     command.extend(["-frames:v", "1", "-q:v", "4", "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1"])
     return command
 
@@ -698,11 +737,17 @@ def build_mjpeg_command(camera, fps=2, width=1280):
         "error",
     ]
     command.extend(ffmpeg_input_args(camera))
+    video_filters = [
+        f"fps={fps}",
+        f"scale='min({width},iw)':-2",
+    ]
+    if grayscale_enabled(camera):
+        video_filters.append("hue=s=0")
     command.extend(
         [
             "-an",
             "-vf",
-            f"fps={fps},scale='min({width},iw)':-2",
+            ",".join(video_filters),
             "-q:v",
             "6",
             "-f",
@@ -713,7 +758,7 @@ def build_mjpeg_command(camera, fps=2, width=1280):
     return command
 
 
-def build_live_hls_command(camera, output_dir, fps=None, width=None):
+def build_live_hls_command(camera, output_dir, fps=None, width=None, grayscale=False):
     output_dir.mkdir(parents=True, exist_ok=True)
     fps = optional_bounded_int(fps, 1, 15)
     width = optional_bounded_int(width, 320, 1920)
@@ -738,6 +783,8 @@ def build_live_hls_command(camera, output_dir, fps=None, width=None):
         video_filters.append(f"fps={fps}")
     if width:
         video_filters.append(f"scale='min({width},iw)':-2")
+    if grayscale:
+        video_filters.append("hue=s=0")
     if video_filters:
         command.extend(
             [
@@ -797,6 +844,150 @@ def build_live_hls_command(camera, output_dir, fps=None, width=None):
     return command
 
 
+class NightModeManager:
+    def __init__(self):
+        self.lock = threading.RLock()
+        self.states = {}
+        self.stop_event = threading.Event()
+        self.thread = threading.Thread(target=self.run, daemon=True)
+
+    def start(self):
+        self.thread.start()
+
+    def shutdown(self):
+        self.stop_event.set()
+        self.thread.join(timeout=5)
+
+    def is_night(self, camera_id):
+        with self.lock:
+            return bool(self.states.get(camera_id, {}).get("night"))
+
+    def status(self):
+        with self.lock:
+            return {camera_id: dict(state) for camera_id, state in self.states.items()}
+
+    def sample_camera(self, camera):
+        command = [
+            FFMPEG_BIN,
+            "-hide_banner",
+            "-nostdin",
+            "-loglevel",
+            "error",
+        ]
+        command.extend(ffmpeg_input_args(camera, low_latency=True))
+        command.extend(
+            [
+                "-frames:v",
+                "1",
+                "-vf",
+                "scale=64:36",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "rgb24",
+                "pipe:1",
+            ]
+        )
+        try:
+            result = subprocess.run(command, capture_output=True, timeout=12)
+        except subprocess.TimeoutExpired:
+            return None, "Night sample timed out."
+        if result.returncode != 0 or not result.stdout:
+            message = result.stderr.decode("utf-8", "replace").strip().splitlines()
+            return None, message[-1] if message else "Night sample failed."
+        return analyze_rgb_frame(result.stdout), None
+
+    def update_state(self, camera, metrics, error=None):
+        camera_id = camera["id"]
+        now = time.time()
+        with self.lock:
+            state = self.states.setdefault(
+                camera_id,
+                {
+                    "night": False,
+                    "first_on_at": None,
+                    "first_off_at": None,
+                    "updated_at": None,
+                    "brightness": None,
+                    "saturation": None,
+                    "error": None,
+                },
+            )
+            if error:
+                state["error"] = error
+                state["updated_at"] = iso_now()
+                return
+
+            brightness = metrics["brightness"]
+            saturation = metrics["saturation"]
+            wants_on = (saturation <= NIGHT_ON_SATURATION and brightness <= NIGHT_ON_BRIGHTNESS) or (
+                brightness <= NIGHT_DARK_BRIGHTNESS
+            )
+            wants_off = saturation >= NIGHT_OFF_SATURATION or brightness >= NIGHT_OFF_BRIGHTNESS
+            if state["night"]:
+                state["first_on_at"] = None
+                if wants_off:
+                    state["first_off_at"] = state["first_off_at"] or now
+                    if now - state["first_off_at"] >= NIGHT_OFF_SECONDS:
+                        state["night"] = False
+                        state["first_off_at"] = None
+                else:
+                    state["first_off_at"] = None
+            else:
+                state["first_off_at"] = None
+                if wants_on:
+                    state["first_on_at"] = state["first_on_at"] or now
+                    if now - state["first_on_at"] >= NIGHT_ON_SECONDS:
+                        state["night"] = True
+                        state["first_on_at"] = None
+                else:
+                    state["first_on_at"] = None
+
+            state.update(
+                {
+                    "updated_at": iso_now(),
+                    "brightness": round(brightness, 2),
+                    "saturation": round(saturation, 2),
+                    "error": None,
+                }
+            )
+
+    def run(self):
+        while not self.stop_event.is_set():
+            cameras = [camera for camera in list_cameras() if camera.get("enabled") and camera.get("grayscale_mode") == "auto"]
+            active_ids = {camera["id"] for camera in cameras}
+            with self.lock:
+                for camera_id in list(self.states.keys()):
+                    if camera_id not in active_ids:
+                        self.states.pop(camera_id, None)
+            for camera in cameras:
+                metrics, error = self.sample_camera(camera)
+                self.update_state(camera, metrics, error=error)
+                if self.stop_event.wait(0.1):
+                    return
+            self.stop_event.wait(max(5, NIGHT_SAMPLE_INTERVAL_SECONDS))
+
+
+def analyze_rgb_frame(data):
+    if not data:
+        return {"brightness": 0.0, "saturation": 0.0}
+    total_luma = 0.0
+    total_saturation = 0.0
+    pixels = len(data) // 3
+    for index in range(0, pixels * 3, 3):
+        red = data[index]
+        green = data[index + 1]
+        blue = data[index + 2]
+        maximum = max(red, green, blue)
+        minimum = min(red, green, blue)
+        total_luma += 0.2126 * red + 0.7152 * green + 0.0722 * blue
+        total_saturation += 0.0 if maximum == 0 else ((maximum - minimum) / maximum) * 100
+    return {"brightness": total_luma / pixels, "saturation": total_saturation / pixels}
+
+
+night_modes = NightModeManager()
+
+
 class LiveHLSManager:
     def __init__(self):
         self.lock = threading.RLock()
@@ -807,9 +998,11 @@ class LiveHLSManager:
 
     def start(self, camera, fps=None, width=None):
         camera_id = camera["id"]
+        grayscale = grayscale_enabled(camera)
         profile = (
             optional_bounded_int(fps, 1, 15),
             optional_bounded_int(width, 320, 1920),
+            grayscale,
         )
         with self.lock:
             self._sweep_idle_locked()
@@ -825,7 +1018,7 @@ class LiveHLSManager:
             log_handle = log_file.open("w", encoding="utf-8", errors="replace")
             try:
                 process = subprocess.Popen(
-                    build_live_hls_command(camera, output_dir, fps=profile[0], width=profile[1]),
+                    build_live_hls_command(camera, output_dir, fps=profile[0], width=profile[1], grayscale=grayscale),
                     stdout=subprocess.DEVNULL,
                     stderr=log_handle,
                 )
@@ -1683,6 +1876,7 @@ class NvrHandler(SimpleHTTPRequestHandler):
                     "disk": disk_status(),
                     "events": get_recent_events(),
                     "stream_token": get_stream_token(),
+                    "night_modes": night_modes.status(),
                     "users": list_users(),
                     "username": self.auth_user(),
                     "now": iso_now(),
@@ -1964,6 +2158,7 @@ def main():
     RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
     LIVE_DIR.mkdir(parents=True, exist_ok=True)
     init_db()
+    night_modes.start()
     recorder.start()
     server = ThreadingHTTPServer((APP_HOST, APP_PORT), NvrHandler)
 
@@ -1979,6 +2174,7 @@ def main():
     finally:
         live_hls.shutdown()
         recorder.shutdown()
+        night_modes.shutdown()
         server.server_close()
 
 
