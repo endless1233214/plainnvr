@@ -64,7 +64,7 @@ final class PlainNVRViewModel: ObservableObject {
 
     init() {
         serverAddress = UserDefaults.standard.string(forKey: Self.serverDefaultsKey) ?? Self.defaultServerAddress
-        liveQuality = LiveQuality(rawValue: UserDefaults.standard.string(forKey: Self.liveQualityDefaultsKey) ?? "") ?? .source
+        liveQuality = LiveQuality(rawValue: UserDefaults.standard.string(forKey: Self.liveQualityDefaultsKey) ?? "") ?? .high
         liveFrameRate = LiveFrameRate(rawValue: UserDefaults.standard.integer(forKey: Self.liveFrameRateDefaultsKey)) ?? .ten
         if UserDefaults.standard.object(forKey: Self.liveAudioEnabledDefaultsKey) == nil {
             liveAudioEnabled = true

@@ -134,10 +134,13 @@ function cameraHaUrls(camera) {
   const base = window.location.origin;
   const token = state.streamToken ? `token=${encodeURIComponent(state.streamToken)}` : "";
   const tokenSuffix = token ? `&${token}` : "";
-  const hlsSuffix = token ? `?${token}` : "";
+  const hlsParams = new URLSearchParams({ fps: "10", width: "1280" });
+  if (state.streamToken) {
+    hlsParams.set("token", state.streamToken);
+  }
   return {
     mjpeg: `${base}/ha/${camera.id}/stream.mjpeg?fps=2&width=1280${tokenSuffix}`,
-    hls: `${base}/live/${camera.id}/stream.m3u8${hlsSuffix}`,
+    hls: `${base}/live/${camera.id}/stream.m3u8?${hlsParams.toString()}`,
     snapshot: `${base}/ha/${camera.id}/snapshot.jpg${token ? `?${token}` : ""}`,
   };
 }
@@ -157,7 +160,12 @@ function cameraLiveMjpegUrl(camera) {
 }
 
 function cameraLiveHlsUrl(camera) {
-  const params = new URLSearchParams();
+  const fps = Number($("liveFps").value) || 10;
+  const width = Number($("liveWidth").value) || 1280;
+  const params = new URLSearchParams({
+    fps: String(Math.max(1, Math.min(fps, 15))),
+    width: String(Math.max(320, Math.min(width, 1920))),
+  });
   if (state.streamToken) {
     params.set("token", state.streamToken);
   }

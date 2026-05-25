@@ -72,7 +72,7 @@ with real datasets on your TrueNAS box.
 Each saved camera exposes two local HTTP endpoints for Home Assistant:
 
 ```text
-http://PLAINNVR-HOST:8787/live/CAMERA_ID/stream.m3u8
+http://PLAINNVR-HOST:8787/live/CAMERA_ID/stream.m3u8?fps=10&width=1280
 http://PLAINNVR-HOST:8787/ha/CAMERA_ID/stream.mjpeg?fps=2&width=1280
 http://PLAINNVR-HOST:8787/ha/CAMERA_ID/snapshot.jpg
 ```
