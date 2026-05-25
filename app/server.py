@@ -592,9 +592,9 @@ def build_ffmpeg_command(camera):
         "-loglevel",
         "warning",
     ]
-    command.extend(ffmpeg_input_args(camera))
+    command.extend(ffmpeg_input_args(camera, low_latency=not record_audio))
     if record_audio and audio_url:
-        command.extend(ffmpeg_input_args(camera, "audio_url"))
+        command.extend(ffmpeg_input_args(camera, "audio_url", low_latency=False))
     command.extend(
         [
             "-map",
