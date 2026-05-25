@@ -99,6 +99,9 @@ Assistant. HLS mode uses the same live audio/video path as the iPhone app when
 the browser supports native HLS, while MJPEG mode stays available as a
 video-only fallback.
 
+If a split video/audio camera reports slow RTSP readers while live HLS is open,
+raise `NVR_RTSP_THREAD_QUEUE_SIZE` from the default `2048`.
+
 ## Camera URL Examples
 
 Common RTSP shapes look like:

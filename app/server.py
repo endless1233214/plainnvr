@@ -34,6 +34,7 @@ RTSP_PROBESIZE = os.environ.get("NVR_RTSP_PROBESIZE", "32768")
 RTSP_ANALYZE_DURATION = os.environ.get("NVR_RTSP_ANALYZE_DURATION", "0")
 RTSP_LIVE_PROBESIZE = os.environ.get("NVR_RTSP_LIVE_PROBESIZE", "1048576")
 RTSP_LIVE_ANALYZE_DURATION = os.environ.get("NVR_RTSP_LIVE_ANALYZE_DURATION", "1000000")
+RTSP_THREAD_QUEUE_SIZE = os.environ.get("NVR_RTSP_THREAD_QUEUE_SIZE", "2048")
 SCAN_INTERVAL_SECONDS = int(os.environ.get("NVR_SCAN_INTERVAL_SECONDS", "10"))
 RETENTION_INTERVAL_SECONDS = int(os.environ.get("NVR_RETENTION_INTERVAL_SECONDS", "3600"))
 DEFAULT_SEGMENT_SECONDS = int(os.environ.get("NVR_DEFAULT_SEGMENT_SECONDS", "60"))
@@ -646,6 +647,7 @@ def ffmpeg_input_args(camera_or_payload, url_key="rtsp_url", low_latency=True):
             args.extend(["-fflags", "nobuffer", "-flags", "low_delay"])
         else:
             args.extend(["-fflags", "+genpts", "-use_wallclock_as_timestamps", "1"])
+        args.extend(["-thread_queue_size", RTSP_THREAD_QUEUE_SIZE])
     args.extend(["-i", url])
     return args
 
