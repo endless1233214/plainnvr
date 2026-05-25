@@ -590,7 +590,7 @@ def build_ffmpeg_command(camera):
         "-hide_banner",
         "-nostdin",
         "-loglevel",
-        "warning",
+        "error",
     ]
     command.extend(ffmpeg_input_args(camera, low_latency=not record_audio))
     if record_audio and audio_url:
