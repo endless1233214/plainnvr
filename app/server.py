@@ -1569,7 +1569,9 @@ class NvrHandler(SimpleHTTPRequestHandler):
     server_version = "PlainNVR/0.1"
 
     def log_message(self, fmt, *args):
-        print(f"{self.address_string()} - {fmt % args}")
+        message = fmt % args
+        message = re.sub(r"([?&]token=)[^\s&]+", r"\1<redacted>", message)
+        print(f"{self.address_string()} - {message}")
 
     def send_json(self, value, status=HTTPStatus.OK, headers=None):
         data = json.dumps(value).encode("utf-8")
