@@ -646,7 +646,7 @@ def ffmpeg_input_args(camera_or_payload, url_key="rtsp_url", low_latency=True):
         if low_latency:
             args.extend(["-fflags", "nobuffer", "-flags", "low_delay"])
         else:
-            args.extend(["-fflags", "+genpts", "-use_wallclock_as_timestamps", "1"])
+            args.extend(["-fflags", "+genpts+igndts", "-use_wallclock_as_timestamps", "1"])
         args.extend(["-thread_queue_size", RTSP_THREAD_QUEUE_SIZE])
     args.extend(["-i", url])
     return args
@@ -755,8 +755,11 @@ def build_live_hls_command(camera, output_dir, fps=None, width=None):
     else:
         command.extend(["-c:v", "copy"])
     if record_audio:
+        audio_filters = []
         if LIVE_AUDIO_GAIN not in ("1", "1.0", "1.00"):
-            command.extend(["-filter:a", f"volume={LIVE_AUDIO_GAIN}"])
+            audio_filters.append(f"volume={LIVE_AUDIO_GAIN}")
+        audio_filters.append("aresample=async=1:first_pts=0")
+        command.extend(["-filter:a", ",".join(audio_filters)])
         command.extend(["-c:a", "aac", "-b:a", "128k", "-ac", "2"])
     else:
         command.append("-an")
