@@ -16,6 +16,7 @@ final class PlainNVRViewModel: ObservableObject {
     private static let liveFrameRateDefaultsKey = "PlainNVRLiveFrameRate"
     private static let liveAudioEnabledDefaultsKey = "PlainNVRLiveAudioEnabled"
     private static let liveVolumeDefaultsKey = "PlainNVRLiveVolume"
+    private static let liveGrayscaleEnabledDefaultsKey = "PlainNVRLiveGrayscaleEnabled"
     private static let defaultServerAddress = "http://192.168.1.0:8787"
 
     @Published var serverAddress: String
@@ -58,6 +59,13 @@ final class PlainNVRViewModel: ObservableObject {
             UserDefaults.standard.set(liveVolume, forKey: Self.liveVolumeDefaultsKey)
         }
     }
+    @Published var liveGrayscaleEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(liveGrayscaleEnabled, forKey: Self.liveGrayscaleEnabledDefaultsKey)
+            liveStatusMessage = nil
+            bumpLiveReload()
+        }
+    }
     @Published private(set) var liveReloadID = 0
 
     private var client: PlainNVRClient?
@@ -76,6 +84,7 @@ final class PlainNVRViewModel: ObservableObject {
         } else {
             liveVolume = min(max(UserDefaults.standard.double(forKey: Self.liveVolumeDefaultsKey), 0), 1)
         }
+        liveGrayscaleEnabled = UserDefaults.standard.bool(forKey: Self.liveGrayscaleEnabledDefaultsKey)
     }
 
     var cameras: [Camera] {
@@ -328,6 +337,7 @@ final class PlainNVRViewModel: ObservableObject {
             streamToken: status?.streamToken ?? "",
             fps: liveQuality.width == nil ? nil : liveFrameRate.rawValue,
             width: liveQuality.width,
+            grayscale: liveGrayscaleEnabled,
             reloadID: liveReloadID
         )
     }

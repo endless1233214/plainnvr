@@ -148,6 +148,7 @@ final class PlainNVRClient {
         streamToken: String,
         fps: Int?,
         width: Int?,
+        grayscale: Bool,
         reloadID: Int
     ) -> URL? {
         guard let rootURL = absoluteURL(for: "/live/\(camera.id)/stream.m3u8"),
@@ -166,6 +167,10 @@ final class PlainNVRClient {
 
         if let width {
             items.append(URLQueryItem(name: "width", value: String(max(320, min(width, 1920)))))
+        }
+
+        if grayscale {
+            items.append(URLQueryItem(name: "grayscale", value: "1"))
         }
 
         if !streamToken.isEmpty {

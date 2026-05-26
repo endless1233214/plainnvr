@@ -104,6 +104,13 @@ def normalize_bool(value):
     return 0
 
 
+def query_bool(query, key, default=False):
+    values = query.get(key)
+    if not values:
+        return default
+    return normalize_bool(values[0])
+
+
 def password_hash(password, salt=None, iterations=AUTH_HASH_ITERATIONS):
     salt = salt or secrets.token_hex(16)
     digest = hashlib.pbkdf2_hmac(
@@ -691,7 +698,7 @@ def add_video_filters(command, filters):
         command.extend(["-vf", ",".join(filters)])
 
 
-def build_snapshot_command(camera):
+def build_snapshot_command(camera, grayscale=False):
     command = [
         FFMPEG_BIN,
         "-hide_banner",
@@ -701,7 +708,7 @@ def build_snapshot_command(camera):
     ]
     command.extend(ffmpeg_input_args(camera))
     video_filters = []
-    if grayscale_enabled(camera):
+    if grayscale or grayscale_enabled(camera):
         video_filters.append("hue=s=0")
     add_video_filters(command, video_filters)
     command.extend(["-frames:v", "1", "-q:v", "4", "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1"])
@@ -726,7 +733,7 @@ def optional_bounded_int(value, minimum, maximum):
     return max(minimum, min(parsed, maximum))
 
 
-def build_mjpeg_command(camera, fps=2, width=1280):
+def build_mjpeg_command(camera, fps=2, width=1280, grayscale=False):
     fps = bounded_int(fps, 2, 1, 15)
     width = bounded_int(width, 1280, 320, 1920)
     command = [
@@ -741,7 +748,7 @@ def build_mjpeg_command(camera, fps=2, width=1280):
         f"fps={fps}",
         f"scale='min({width},iw)':-2",
     ]
-    if grayscale_enabled(camera):
+    if grayscale or grayscale_enabled(camera):
         video_filters.append("hue=s=0")
     command.extend(
         [
@@ -996,9 +1003,9 @@ class LiveHLSManager:
     def stream_dir(self, camera_id):
         return LIVE_DIR / camera_id
 
-    def start(self, camera, fps=None, width=None):
+    def start(self, camera, fps=None, width=None, grayscale=None):
         camera_id = camera["id"]
-        grayscale = grayscale_enabled(camera)
+        grayscale = grayscale_enabled(camera) if grayscale is None else bool(grayscale)
         profile = (
             optional_bounded_int(fps, 1, 15),
             optional_bounded_int(width, 320, 1920),
@@ -1913,13 +1920,13 @@ class NvrHandler(SimpleHTTPRequestHandler):
         if not camera:
             self.send_error(HTTPStatus.NOT_FOUND)
             return
-        if match.group(2) == "snapshot.jpg":
-            self.handle_snapshot(camera)
-            return
         query = parse_qs(parsed.query)
+        if match.group(2) == "snapshot.jpg":
+            self.handle_snapshot(camera, grayscale=query_bool(query, "grayscale"))
+            return
         fps = query.get("fps", ["2"])[0]
         width = query.get("width", ["1280"])[0]
-        self.handle_mjpeg(camera, fps, width)
+        self.handle_mjpeg(camera, fps, width, grayscale=query_bool(query, "grayscale"))
 
     def handle_home_assistant_head(self, parsed):
         match = re.match(r"^/ha/([a-f0-9]+)/(snapshot\.jpg|stream\.mjpeg)$", parsed.path)
@@ -1959,6 +1966,7 @@ class NvrHandler(SimpleHTTPRequestHandler):
                     camera,
                     fps=query.get("fps", [None])[0],
                     width=query.get("width", [None])[0],
+                    grayscale=query_bool(query, "grayscale"),
                 )
             except RuntimeError as exc:
                 print(f"Live HLS startup failed for {camera['id']}: {exc}", file=sys.stderr)
@@ -2031,9 +2039,9 @@ class NvrHandler(SimpleHTTPRequestHandler):
         with target.open("rb") as src:
             shutil.copyfileobj(src, self.wfile)
 
-    def handle_snapshot(self, camera):
+    def handle_snapshot(self, camera, grayscale=False):
         try:
-            result = subprocess.run(build_snapshot_command(camera), capture_output=True, timeout=20)
+            result = subprocess.run(build_snapshot_command(camera, grayscale=grayscale), capture_output=True, timeout=20)
         except subprocess.TimeoutExpired:
             self.send_error(HTTPStatus.GATEWAY_TIMEOUT, "Snapshot timed out.")
             return
@@ -2048,10 +2056,10 @@ class NvrHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(result.stdout)
 
-    def handle_mjpeg(self, camera, fps, width):
+    def handle_mjpeg(self, camera, fps, width, grayscale=False):
         try:
             process = subprocess.Popen(
-                build_mjpeg_command(camera, fps, width),
+                build_mjpeg_command(camera, fps, width, grayscale=grayscale),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
@@ -2160,7 +2168,6 @@ def main():
     RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
     LIVE_DIR.mkdir(parents=True, exist_ok=True)
     init_db()
-    night_modes.start()
     recorder.start()
     server = ThreadingHTTPServer((APP_HOST, APP_PORT), NvrHandler)
 
@@ -2176,7 +2183,6 @@ def main():
     finally:
         live_hls.shutdown()
         recorder.shutdown()
-        night_modes.shutdown()
         server.server_close()
 
 

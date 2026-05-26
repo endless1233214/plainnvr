@@ -82,14 +82,6 @@
               <option value="udp">UDP</option>
             </select>
           </label>
-          <label>
-            Night Grayscale
-            <select id="grayscaleMode">
-              <option value="off" selected>Off</option>
-              <option value="auto">Auto</option>
-              <option value="always">Always</option>
-            </select>
-          </label>
           <div class="toggles">
             <label><input id="enabled" type="checkbox" checked /> Enabled</label>
             <label><input id="recordAudio" type="checkbox" checked /> Audio</label>
@@ -194,6 +186,10 @@
             <label class="live-audio-toggle">
               <input id="liveAudio" type="checkbox" checked />
               Audio
+            </label>
+            <label class="live-audio-toggle">
+              <input id="liveGrayscale" type="checkbox" />
+              Grayscale
             </label>
             <label>
               Volume

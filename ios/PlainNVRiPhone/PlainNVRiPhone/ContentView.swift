@@ -373,6 +373,9 @@ struct LiveControlsView: View {
                     .disabled(!viewModel.liveAudioEnabled)
                     .accessibilityLabel("Live Volume")
             }
+
+            Toggle("Grayscale", isOn: $viewModel.liveGrayscaleEnabled)
+                .toggleStyle(.switch)
         }
         .padding(12)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
