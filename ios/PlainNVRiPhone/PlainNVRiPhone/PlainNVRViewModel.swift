@@ -17,7 +17,7 @@ final class PlainNVRViewModel: ObservableObject {
     private static let liveAudioEnabledDefaultsKey = "PlainNVRLiveAudioEnabled"
     private static let liveVolumeDefaultsKey = "PlainNVRLiveVolume"
     private static let liveGrayscaleEnabledDefaultsKey = "PlainNVRLiveGrayscaleEnabled"
-    private static let defaultServerAddress = "http://192.168.1.0:8787"
+    private static let defaultServerAddress = "http://192.168.1.172:8787"
 
     @Published var serverAddress: String
     @Published var username = ""
@@ -71,7 +71,13 @@ final class PlainNVRViewModel: ObservableObject {
     private var client: PlainNVRClient?
 
     init() {
-        serverAddress = UserDefaults.standard.string(forKey: Self.serverDefaultsKey) ?? Self.defaultServerAddress
+        let savedServerAddress = UserDefaults.standard.string(forKey: Self.serverDefaultsKey)
+        if savedServerAddress == nil || savedServerAddress?.contains("192.168.1.0") == true {
+            serverAddress = Self.defaultServerAddress
+            UserDefaults.standard.set(Self.defaultServerAddress, forKey: Self.serverDefaultsKey)
+        } else {
+            serverAddress = savedServerAddress ?? Self.defaultServerAddress
+        }
         liveQuality = LiveQuality(rawValue: UserDefaults.standard.string(forKey: Self.liveQualityDefaultsKey) ?? "") ?? .high
         liveFrameRate = LiveFrameRate(rawValue: UserDefaults.standard.integer(forKey: Self.liveFrameRateDefaultsKey)) ?? .ten
         if UserDefaults.standard.object(forKey: Self.liveAudioEnabledDefaultsKey) == nil {

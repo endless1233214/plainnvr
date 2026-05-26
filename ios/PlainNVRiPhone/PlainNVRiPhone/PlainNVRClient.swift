@@ -42,9 +42,9 @@ final class PlainNVRClient {
         self.serverAddress = normalized
 
         let configuration = URLSessionConfiguration.default
-        configuration.waitsForConnectivity = true
-        configuration.timeoutIntervalForRequest = 20
-        configuration.timeoutIntervalForResource = 60
+        configuration.waitsForConnectivity = false
+        configuration.timeoutIntervalForRequest = 6
+        configuration.timeoutIntervalForResource = 120
         configuration.httpShouldSetCookies = true
         configuration.httpCookieAcceptPolicy = .always
         configuration.httpCookieStorage = .shared
@@ -66,9 +66,16 @@ final class PlainNVRClient {
         guard var components = URLComponents(string: trimmed),
               let scheme = components.scheme?.lowercased(),
               ["http", "https"].contains(scheme),
-              components.host?.isEmpty == false
+              let host = components.host,
+              !host.isEmpty
         else {
             throw PlainNVRClientError.invalidServerURL
+        }
+
+        if let lastOctet = host.split(separator: ".").last,
+           host.split(separator: ".").count == 4,
+           lastOctet == "0" || lastOctet == "255" {
+            throw PlainNVRClientError.server("\(host) looks like a network or broadcast address. Use the PlainNVR server IP, usually 192.168.1.172.")
         }
 
         components.scheme = scheme
@@ -288,7 +295,13 @@ final class PlainNVRClient {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
 
-        let (data, response) = try await session.data(for: request)
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch let error as URLError {
+            throw PlainNVRClientError.server(Self.userFacingNetworkMessage(error, serverAddress: serverAddress))
+        }
         guard let httpResponse = response as? HTTPURLResponse else {
             throw PlainNVRClientError.invalidResponse
         }
@@ -305,5 +318,18 @@ final class PlainNVRClient {
         }
 
         return try decoder.decode(T.self, from: data)
+    }
+
+    private static func userFacingNetworkMessage(_ error: URLError, serverAddress: String) -> String {
+        switch error.code {
+        case .timedOut:
+            return "PlainNVR did not answer at \(serverAddress). Check the server IP and Wi-Fi, then try again."
+        case .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed:
+            return "Could not reach PlainNVR at \(serverAddress)."
+        case .notConnectedToInternet, .networkConnectionLost:
+            return "The network connection dropped while talking to PlainNVR."
+        default:
+            return error.localizedDescription
+        }
     }
 }

@@ -45,6 +45,9 @@ LIVE_HLS_LIST_SIZE = int(os.environ.get("NVR_LIVE_HLS_LIST_SIZE", "8"))
 LIVE_HLS_DELETE_THRESHOLD = int(os.environ.get("NVR_LIVE_HLS_DELETE_THRESHOLD", "10"))
 LIVE_HLS_IDLE_SECONDS = int(os.environ.get("NVR_LIVE_HLS_IDLE_SECONDS", "90"))
 LIVE_HLS_READY_TIMEOUT_SECONDS = int(os.environ.get("NVR_LIVE_HLS_READY_TIMEOUT_SECONDS", "25"))
+LIVE_HLS_STALE_SECONDS = int(
+    os.environ.get("NVR_LIVE_HLS_STALE_SECONDS", str(max(6, LIVE_HLS_SEGMENT_SECONDS * 4)))
+)
 LIVE_HLS_SEGMENT_TYPE = os.environ.get("NVR_LIVE_HLS_SEGMENT_TYPE", "fmp4").strip().lower()
 if LIVE_HLS_SEGMENT_TYPE not in ("fmp4", "mpegts"):
     LIVE_HLS_SEGMENT_TYPE = "fmp4"
@@ -1234,8 +1237,10 @@ class LiveHLSManager:
             self._sweep_idle_locked()
             entry = self.processes.get(camera_id)
             if entry and entry["process"].poll() is None and entry.get("profile") == profile:
-                entry["last_seen"] = time.time()
-                return entry["dir"] / "stream.m3u8"
+                playlist = entry["dir"] / "stream.m3u8"
+                if self._playlist_is_fresh(playlist):
+                    entry["last_seen"] = time.time()
+                    return playlist
             self._stop_locked(camera_id)
             output_dir = self.stream_dir(camera_id)
             shutil.rmtree(output_dir, ignore_errors=True)
@@ -1304,10 +1309,32 @@ class LiveHLSManager:
             return ""
         return "\n".join(lines[-line_count:]).strip()
 
+    def _playlist_is_fresh(self, playlist):
+        try:
+            stat = playlist.stat()
+        except OSError:
+            return False
+        return stat.st_size > 0 and time.time() - stat.st_mtime <= max(4, LIVE_HLS_STALE_SECONDS)
+
+    def _playlist_age(self, playlist, now):
+        try:
+            return now - playlist.stat().st_mtime
+        except OSError:
+            return None
+
     def _sweep_idle_locked(self):
         now = time.time()
         for camera_id, entry in list(self.processes.items()):
-            if entry["process"].poll() is not None or now - entry["last_seen"] > LIVE_HLS_IDLE_SECONDS:
+            playlist = entry["dir"] / "stream.m3u8"
+            playlist_age = self._playlist_age(playlist, now)
+            if (
+                entry["process"].poll() is not None
+                or now - entry["last_seen"] > LIVE_HLS_IDLE_SECONDS
+                or (
+                    playlist_age is not None
+                    and playlist_age > max(LIVE_HLS_IDLE_SECONDS, LIVE_HLS_STALE_SECONDS)
+                )
+            ):
                 self._stop_locked(camera_id)
 
     def _stop_locked(self, camera_id):

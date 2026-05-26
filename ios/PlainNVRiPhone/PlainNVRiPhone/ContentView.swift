@@ -41,7 +41,7 @@ struct SignInView: View {
         NavigationStack {
             Form {
                 Section("Server") {
-                    TextField("http://192.168.1.0:8787", text: $viewModel.serverAddress)
+                    TextField("http://192.168.1.172:8787", text: $viewModel.serverAddress)
                         .keyboardType(.URL)
                         .textContentType(.URL)
                         .textInputAutocapitalization(.never)

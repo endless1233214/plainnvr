@@ -112,6 +112,8 @@ Set `NVR_LIVE_HLS_SEGMENT_TYPE=mpegts` to return to classic `.ts` HLS segments.
 Some cameras need extra startup time before FFmpeg can identify the first video
 frame and write the HLS playlist; tune `NVR_LIVE_HLS_READY_TIMEOUT_SECONDS`
 from the default `25` seconds if the live view is still too impatient.
+If an HLS worker is still running but stops updating its playlist, PlainNVR
+restarts it after `NVR_LIVE_HLS_STALE_SECONDS` seconds.
 PlainNVR uses a more patient RTSP probe for the internal relay so cameras that
 expose audio a moment after video still record both tracks. The relay can be
 tuned with `NVR_RELAY_HLS_SEGMENT_SECONDS`, `NVR_RELAY_HLS_LIST_SIZE`,
