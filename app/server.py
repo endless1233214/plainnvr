@@ -620,7 +620,7 @@ def build_ffmpeg_command(camera):
         "-loglevel",
         "error",
     ]
-    command.extend(ffmpeg_input_args(camera, low_latency=not record_audio))
+    command.extend(ffmpeg_input_args(camera, low_latency=(not record_audio or bool(audio_url))))
     if record_audio and audio_url:
         command.extend(ffmpeg_input_args(camera, "audio_url", low_latency=False))
     command.extend(
