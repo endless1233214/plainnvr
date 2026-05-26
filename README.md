@@ -9,7 +9,15 @@ microphones.
 
 PlainNVR is a small RTSP recorder with a web UI for camera setup, schedules, continuous recording, retention cleanup, and simple timeline playback.
 
-It is intentionally boring: FFmpeg copies camera streams straight to disk instead of re-encoding them. Use H.264 camera streams for the smoothest browser playback.
+It is intentionally boring: FFmpeg copies camera video where it can instead of
+re-encoding it. Use H.264 camera streams for the smoothest browser and iPhone
+playback.
+
+PlainNVR runs an internal relay for each enabled camera. The relay pulls the
+camera once, merges the optional secondary audio stream, and exposes a local HLS
+source that recording, browser live view, iPhone live view, snapshots, and Home
+Assistant can share. This keeps small camera nodes from serving a new RTSP reader
+for every viewer.
 
 ## Run Locally
 
@@ -99,14 +107,15 @@ Assistant. HLS mode uses the same live audio/video path as the iPhone app when
 the browser supports native HLS, while MJPEG mode stays available as a
 video-only fallback.
 
-If a split video/audio camera reports slow RTSP readers while live HLS is open,
-raise `NVR_RTSP_THREAD_QUEUE_SIZE` from the default `2048`.
+Live HLS uses fragmented MP4 segments by default for iPhone-friendly playback.
+Set `NVR_LIVE_HLS_SEGMENT_TYPE=mpegts` to return to classic `.ts` HLS segments.
 Some cameras need extra startup time before FFmpeg can identify the first video
 frame and write the HLS playlist; tune `NVR_LIVE_HLS_READY_TIMEOUT_SECONDS`
 from the default `25` seconds if the live view is still too impatient.
-PlainNVR uses a more patient RTSP probe for live HLS and audio recording by
-default so cameras that expose audio a moment after video still record both
-tracks.
+PlainNVR uses a more patient RTSP probe for the internal relay so cameras that
+expose audio a moment after video still record both tracks. The relay can be
+tuned with `NVR_RELAY_HLS_SEGMENT_SECONDS`, `NVR_RELAY_HLS_LIST_SIZE`,
+`NVR_RELAY_HLS_DELETE_THRESHOLD`, and `NVR_RELAY_READY_TIMEOUT_SECONDS`.
 
 The live viewer includes a Grayscale toggle. It applies only to the live HLS,
 MJPEG, or snapshot output requested by that viewer; recordings stay as the

@@ -29,6 +29,7 @@ DATA_DIR = Path(os.environ.get("NVR_DATA_DIR", "/data")).expanduser()
 RECORDINGS_DIR = Path(os.environ.get("NVR_RECORDINGS_DIR", "/recordings")).expanduser()
 STATIC_DIR = Path(os.environ.get("NVR_STATIC_DIR", "/app/static")).expanduser()
 LIVE_DIR = Path(os.environ.get("NVR_LIVE_DIR", str(DATA_DIR / "live"))).expanduser()
+RELAY_DIR = Path(os.environ.get("NVR_RELAY_DIR", str(DATA_DIR / "relay"))).expanduser()
 FFMPEG_BIN = os.environ.get("FFMPEG_BIN", "ffmpeg")
 FFPROBE_BIN = os.environ.get("FFPROBE_BIN", "ffprobe")
 RTSP_PROBESIZE = os.environ.get("NVR_RTSP_PROBESIZE", "32768")
@@ -44,6 +45,13 @@ LIVE_HLS_LIST_SIZE = int(os.environ.get("NVR_LIVE_HLS_LIST_SIZE", "8"))
 LIVE_HLS_DELETE_THRESHOLD = int(os.environ.get("NVR_LIVE_HLS_DELETE_THRESHOLD", "10"))
 LIVE_HLS_IDLE_SECONDS = int(os.environ.get("NVR_LIVE_HLS_IDLE_SECONDS", "90"))
 LIVE_HLS_READY_TIMEOUT_SECONDS = int(os.environ.get("NVR_LIVE_HLS_READY_TIMEOUT_SECONDS", "25"))
+LIVE_HLS_SEGMENT_TYPE = os.environ.get("NVR_LIVE_HLS_SEGMENT_TYPE", "fmp4").strip().lower()
+if LIVE_HLS_SEGMENT_TYPE not in ("fmp4", "mpegts"):
+    LIVE_HLS_SEGMENT_TYPE = "fmp4"
+RELAY_HLS_SEGMENT_SECONDS = int(os.environ.get("NVR_RELAY_HLS_SEGMENT_SECONDS", "2"))
+RELAY_HLS_LIST_SIZE = int(os.environ.get("NVR_RELAY_HLS_LIST_SIZE", "12"))
+RELAY_HLS_DELETE_THRESHOLD = int(os.environ.get("NVR_RELAY_HLS_DELETE_THRESHOLD", "18"))
+RELAY_READY_TIMEOUT_SECONDS = int(os.environ.get("NVR_RELAY_READY_TIMEOUT_SECONDS", "20"))
 LIVE_AUDIO_GAIN = os.environ.get("NVR_LIVE_AUDIO_GAIN", "4.0").strip() or "4.0"
 if not re.match(r"^\d+(\.\d+)?$", LIVE_AUDIO_GAIN):
     LIVE_AUDIO_GAIN = "4.0"
@@ -570,11 +578,13 @@ def update_camera(camera_id, payload):
             ),
         )
     recorder.restart(camera_id)
+    relay.stop(camera_id)
     return get_camera(camera_id)
 
 
 def delete_camera(camera_id):
     recorder.stop(camera_id)
+    relay.stop(camera_id)
     with db_conn() as conn:
         cur = conn.execute("DELETE FROM cameras WHERE id = ?", (camera_id,))
     return cur.rowcount > 0
@@ -607,7 +617,202 @@ def camera_dir(camera):
     return RECORDINGS_DIR / camera["slug"]
 
 
+class RelayManager:
+    def __init__(self):
+        self.lock = threading.RLock()
+        self.processes = {}
+
+    def stream_dir(self, camera_id):
+        return RELAY_DIR / camera_id
+
+    def playlist_path(self, camera_id):
+        return self.stream_dir(camera_id) / "source.m3u8"
+
+    def source_camera(self, camera):
+        self.ensure_running(camera)
+        cloned = dict(camera)
+        cloned["rtsp_url"] = str(self.playlist_path(camera["id"]))
+        cloned["audio_url"] = ""
+        cloned["record_audio"] = bool(camera.get("record_audio", True))
+        cloned["rtsp_transport"] = "tcp"
+        return cloned
+
+    def status(self):
+        with self.lock:
+            states = {}
+            for camera_id, entry in self.processes.items():
+                process = entry["process"]
+                states[camera_id] = {
+                    "running": process.poll() is None,
+                    "pid": process.pid,
+                    "started_at": entry["started_at"],
+                    "last_error": entry.get("last_error"),
+                    "source": str(self.playlist_path(camera_id)),
+                }
+            return states
+
+    def ensure_running(self, camera):
+        camera_id = camera["id"]
+        with self.lock:
+            entry = self.processes.get(camera_id)
+            if entry and entry["process"].poll() is None and entry.get("source_key") == self.source_key(camera):
+                entry["last_seen"] = time.time()
+                if self.wait_ready(camera_id, locked=True):
+                    return
+            self._stop_locked(camera_id)
+            output_dir = self.stream_dir(camera_id)
+            shutil.rmtree(output_dir, ignore_errors=True)
+            output_dir.mkdir(parents=True, exist_ok=True)
+            log_file = output_dir / "ffmpeg.log"
+            log_handle = log_file.open("w", encoding="utf-8", errors="replace")
+            try:
+                process = subprocess.Popen(
+                    self.build_command(camera, output_dir),
+                    stdout=subprocess.DEVNULL,
+                    stderr=log_handle,
+                )
+            finally:
+                log_handle.close()
+            self.processes[camera_id] = {
+                "process": process,
+                "started_at": iso_now(),
+                "last_seen": time.time(),
+                "source_key": self.source_key(camera),
+                "log": log_file,
+            }
+
+        if not self.wait_ready(camera_id):
+            raise RuntimeError(f"Relay did not become ready for {camera.get('name') or camera_id}. {self.log_tail(camera_id)}")
+
+    def source_key(self, camera):
+        return (
+            str(camera.get("rtsp_url") or "").strip(),
+            str(camera.get("audio_url") or "").strip(),
+            bool(camera.get("record_audio", True)),
+            str(camera.get("rtsp_transport") or "tcp"),
+        )
+
+    def build_command(self, camera, output_dir):
+        audio_url = str(camera.get("audio_url") or "").strip()
+        record_audio = bool(camera.get("record_audio", True))
+        command = [
+            FFMPEG_BIN,
+            "-hide_banner",
+            "-nostdin",
+            "-loglevel",
+            "warning",
+        ]
+        command.extend(ffmpeg_input_args(camera, low_latency=False))
+        if record_audio and audio_url:
+            command.extend(ffmpeg_input_args(camera, "audio_url", low_latency=False))
+        command.extend(["-map", "0:v:0"])
+        if record_audio:
+            command.extend(["-map", "1:a:0?"] if audio_url else ["-map", "0:a?"])
+        command.extend(["-sn", "-dn", "-c:v", "copy"])
+        if record_audio:
+            command.extend(["-c:a", "aac", "-b:a", "128k", "-ac", "2"])
+        else:
+            command.append("-an")
+        command.extend(
+            [
+                "-max_interleave_delta",
+                "0",
+                "-muxdelay",
+                "0",
+                "-muxpreload",
+                "0",
+                "-avoid_negative_ts",
+                "make_zero",
+                "-flush_packets",
+                "1",
+                "-f",
+                "hls",
+                "-hls_time",
+                str(max(1, RELAY_HLS_SEGMENT_SECONDS)),
+                "-hls_list_size",
+                str(max(3, RELAY_HLS_LIST_SIZE)),
+                "-hls_delete_threshold",
+                str(max(1, RELAY_HLS_DELETE_THRESHOLD)),
+                "-hls_flags",
+                "delete_segments+omit_endlist+program_date_time+independent_segments",
+                "-hls_segment_filename",
+                str(output_dir / "source_%05d.ts"),
+                str(output_dir / "source.m3u8"),
+            ]
+        )
+        return command
+
+    def wait_ready(self, camera_id, locked=False):
+        deadline = time.time() + max(5, RELAY_READY_TIMEOUT_SECONDS)
+        playlist = self.playlist_path(camera_id)
+        while time.time() < deadline:
+            if not locked:
+                with self.lock:
+                    entry = self.processes.get(camera_id)
+                    process = entry["process"] if entry else None
+            else:
+                entry = self.processes.get(camera_id)
+                process = entry["process"] if entry else None
+            if process is None or process.poll() is not None:
+                return False
+            if playlist.exists() and playlist.stat().st_size > 0:
+                return True
+            if locked:
+                return False
+            time.sleep(0.2)
+        return False
+
+    def log_tail(self, camera_id, line_count=20):
+        with self.lock:
+            entry = self.processes.get(camera_id)
+            log_file = entry.get("log") if entry else self.stream_dir(camera_id) / "ffmpeg.log"
+        try:
+            lines = Path(log_file).read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            return ""
+        return "\n".join(lines[-line_count:]).strip()
+
+    def stop(self, camera_id):
+        with self.lock:
+            self._stop_locked(camera_id)
+
+    def _stop_locked(self, camera_id):
+        entry = self.processes.pop(camera_id, None)
+        if not entry:
+            return
+        process = entry["process"]
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+
+    def reconcile(self, cameras):
+        enabled = {camera["id"] for camera in cameras if camera.get("enabled")}
+        with self.lock:
+            for camera_id in list(self.processes.keys()):
+                if camera_id not in enabled:
+                    self._stop_locked(camera_id)
+        for camera in cameras:
+            if camera.get("enabled"):
+                try:
+                    self.ensure_running(camera)
+                except Exception as exc:
+                    add_event(camera["id"], "error", f"Relay failed: {redact_camera_text(str(exc), camera)}")
+
+    def shutdown(self):
+        with self.lock:
+            camera_ids = list(self.processes.keys())
+        for camera_id in camera_ids:
+            self.stop(camera_id)
+
+
+relay = RelayManager()
+
+
 def build_ffmpeg_command(camera):
+    camera = relay.source_camera(camera)
     target_dir = camera_dir(camera)
     target_dir.mkdir(parents=True, exist_ok=True)
     output_pattern = str(target_dir / "%Y%m%dT%H%M%S.mp4")
@@ -699,6 +904,7 @@ def add_video_filters(command, filters):
 
 
 def build_snapshot_command(camera, grayscale=False):
+    camera = relay.source_camera(camera)
     command = [
         FFMPEG_BIN,
         "-hide_banner",
@@ -734,6 +940,7 @@ def optional_bounded_int(value, minimum, maximum):
 
 
 def build_mjpeg_command(camera, fps=2, width=1280, grayscale=False):
+    camera = relay.source_camera(camera)
     fps = bounded_int(fps, 2, 1, 15)
     width = bounded_int(width, 1280, 320, 1920)
     command = [
@@ -766,6 +973,7 @@ def build_mjpeg_command(camera, fps=2, width=1280, grayscale=False):
 
 
 def build_live_hls_command(camera, output_dir, fps=None, width=None, grayscale=False):
+    camera = relay.source_camera(camera)
     output_dir.mkdir(parents=True, exist_ok=True)
     fps = optional_bounded_int(fps, 1, 15)
     width = optional_bounded_int(width, 320, 1920)
@@ -843,11 +1051,22 @@ def build_live_hls_command(camera, output_dir, fps=None, width=None, grayscale=F
             str(max(1, LIVE_HLS_DELETE_THRESHOLD)),
             "-hls_flags",
             "delete_segments+omit_endlist+program_date_time+independent_segments",
-            "-hls_segment_filename",
-            str(output_dir / "segment_%05d.ts"),
-            str(output_dir / "stream.m3u8"),
         ]
     )
+    if LIVE_HLS_SEGMENT_TYPE == "fmp4":
+        command.extend(
+            [
+                "-hls_segment_type",
+                "fmp4",
+                "-hls_fmp4_init_filename",
+                "init.mp4",
+                "-hls_segment_filename",
+                str(output_dir / "segment_%05d.m4s"),
+            ]
+        )
+    else:
+        command.extend(["-hls_segment_filename", str(output_dir / "segment_%05d.ts")])
+    command.append(str(output_dir / "stream.m3u8"))
     return command
 
 
@@ -1212,8 +1431,8 @@ class RecorderSupervisor:
                 add_event(camera["id"], "warn", message)
                 self.processes.pop(camera["id"], None)
 
-            command = build_ffmpeg_command(camera)
             try:
+                command = build_ffmpeg_command(camera)
                 process = subprocess.Popen(
                     command,
                     stdout=subprocess.DEVNULL,
@@ -1221,7 +1440,7 @@ class RecorderSupervisor:
                     text=True,
                     preexec_fn=os.setsid if hasattr(os, "setsid") else None,
                 )
-            except OSError as exc:
+            except (OSError, RuntimeError) as exc:
                 add_event(camera["id"], "error", f"Could not start FFmpeg: {exc}")
                 return
             self.processes[camera["id"]] = {
@@ -1251,6 +1470,7 @@ class RecorderSupervisor:
     def run(self):
         while not self.stop_event.is_set():
             cameras = list_cameras()
+            relay.reconcile(cameras)
             active_ids = set()
             for camera in cameras:
                 should_record = (
@@ -1885,6 +2105,7 @@ class NvrHandler(SimpleHTTPRequestHandler):
                     "disk": disk_status(),
                     "events": get_recent_events(),
                     "stream_token": get_stream_token(),
+                    "relays": relay.status(),
                     "night_modes": night_modes.status(),
                     "users": list_users(),
                     "username": self.auth_user(),
@@ -1950,7 +2171,7 @@ class NvrHandler(SimpleHTTPRequestHandler):
         self.end_headers()
 
     def handle_live_hls(self, parsed):
-        match = re.match(r"^/live/([a-f0-9]+)/(stream\.m3u8|segment_\d+\.ts)$", parsed.path)
+        match = re.match(r"^/live/([a-f0-9]+)/(stream\.m3u8|init\.mp4|segment_\d+\.(?:ts|m4s))$", parsed.path)
         if not match:
             self.send_error(HTTPStatus.NOT_FOUND)
             return
@@ -1992,16 +2213,29 @@ class NvrHandler(SimpleHTTPRequestHandler):
         if filename == "stream.m3u8":
             self.send_live_playlist(target, parsed)
             return
-        self.send_live_file(target, "video/mp2t")
+        if filename.endswith(".m4s"):
+            self.send_live_file(target, "video/iso.segment")
+        elif filename == "init.mp4":
+            self.send_live_file(target, "video/mp4")
+        else:
+            self.send_live_file(target, "video/mp2t")
 
     def handle_live_hls_head(self, parsed):
-        match = re.match(r"^/live/([a-f0-9]+)/(stream\.m3u8|segment_\d+\.ts)$", parsed.path)
+        match = re.match(r"^/live/([a-f0-9]+)/(stream\.m3u8|init\.mp4|segment_\d+\.(?:ts|m4s))$", parsed.path)
         if not match or not get_camera(match.group(1)):
             self.send_response(HTTPStatus.NOT_FOUND)
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
-        content_type = "application/vnd.apple.mpegurl" if match.group(2) == "stream.m3u8" else "video/mp2t"
+        filename = match.group(2)
+        if filename == "stream.m3u8":
+            content_type = "application/vnd.apple.mpegurl"
+        elif filename == "init.mp4":
+            content_type = "video/mp4"
+        elif filename.endswith(".m4s"):
+            content_type = "video/iso.segment"
+        else:
+            content_type = "video/mp2t"
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", content_type)
         self.send_header("Cache-Control", "no-store")
@@ -2014,6 +2248,16 @@ class NvrHandler(SimpleHTTPRequestHandler):
         playlist_path = parsed.path.rsplit("/", 1)[0]
         lines = []
         for line in text.splitlines():
+            if line.startswith("#EXT-X-MAP:"):
+                match = re.search(r'URI="([^"]+)"', line)
+                if match:
+                    uri = match.group(1)
+                    if not re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", uri) and not uri.startswith("/"):
+                        uri = f"{playlist_path}/{uri}"
+                    if token:
+                        separator = "&" if "?" in uri else "?"
+                        uri = f"{uri}{separator}token={quote(token)}"
+                    line = line[: match.start(1)] + uri + line[match.end(1) :]
             if line and not line.startswith("#"):
                 if not re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", line) and not line.startswith("/"):
                     line = f"{playlist_path}/{line}"
@@ -2042,6 +2286,9 @@ class NvrHandler(SimpleHTTPRequestHandler):
     def handle_snapshot(self, camera, grayscale=False):
         try:
             result = subprocess.run(build_snapshot_command(camera, grayscale=grayscale), capture_output=True, timeout=20)
+        except RuntimeError as exc:
+            self.send_error(HTTPStatus.BAD_GATEWAY, redact_camera_text(str(exc), camera))
+            return
         except subprocess.TimeoutExpired:
             self.send_error(HTTPStatus.GATEWAY_TIMEOUT, "Snapshot timed out.")
             return
@@ -2063,8 +2310,8 @@ class NvrHandler(SimpleHTTPRequestHandler):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
-        except OSError as exc:
-            self.send_error(HTTPStatus.BAD_GATEWAY, f"Could not start FFmpeg: {exc}")
+        except (OSError, RuntimeError) as exc:
+            self.send_error(HTTPStatus.BAD_GATEWAY, f"Could not start FFmpeg: {redact_camera_text(str(exc), camera)}")
             return
 
         self.send_response(HTTPStatus.OK)
@@ -2167,6 +2414,7 @@ def main():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
     LIVE_DIR.mkdir(parents=True, exist_ok=True)
+    RELAY_DIR.mkdir(parents=True, exist_ok=True)
     init_db()
     recorder.start()
     server = ThreadingHTTPServer((APP_HOST, APP_PORT), NvrHandler)
@@ -2183,6 +2431,7 @@ def main():
     finally:
         live_hls.shutdown()
         recorder.shutdown()
+        relay.shutdown()
         server.server_close()
 
 
