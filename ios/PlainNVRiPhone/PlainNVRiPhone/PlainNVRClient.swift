@@ -133,9 +133,6 @@ final class PlainNVRClient {
     func liveStreamURL(
         camera: Camera,
         streamToken: String,
-        fps: Int = 10,
-        width: Int = 1280,
-        grayscale: Bool,
         reloadID: Int
     ) -> URL? {
         guard let rootURL = absoluteURL(for: "/ha/\(camera.id)/stream.mjpeg"),
@@ -145,57 +142,8 @@ final class PlainNVRClient {
         }
 
         var items = [
-            URLQueryItem(name: "fps", value: String(max(1, min(fps, 10)))),
-            URLQueryItem(name: "width", value: String(max(320, min(width, 1920)))),
             URLQueryItem(name: "reload", value: String(reloadID))
         ]
-
-        if grayscale {
-            items.append(URLQueryItem(name: "grayscale", value: "1"))
-        }
-
-        if !streamToken.isEmpty {
-            items.append(URLQueryItem(name: "token", value: streamToken))
-        }
-
-        components.queryItems = items
-        return components.url
-    }
-
-    func liveHLSURL(
-        camera: Camera,
-        streamToken: String,
-        fps: Int?,
-        width: Int?,
-        grayscale: Bool,
-        includeAudio: Bool,
-        reloadID: Int
-    ) -> URL? {
-        guard let rootURL = absoluteURL(for: "/live/\(camera.id)/stream.m3u8"),
-              var components = URLComponents(url: rootURL, resolvingAgainstBaseURL: false)
-        else {
-            return nil
-        }
-
-        var items = [
-            URLQueryItem(name: "reload", value: String(reloadID))
-        ]
-
-        if let fps {
-            items.append(URLQueryItem(name: "fps", value: String(max(1, min(fps, 15)))))
-        }
-
-        if let width {
-            items.append(URLQueryItem(name: "width", value: String(max(320, min(width, 1920)))))
-        }
-
-        if grayscale {
-            items.append(URLQueryItem(name: "grayscale", value: "1"))
-        }
-
-        if !includeAudio {
-            items.append(URLQueryItem(name: "audio", value: "0"))
-        }
 
         if !streamToken.isEmpty {
             items.append(URLQueryItem(name: "token", value: streamToken))
@@ -207,27 +155,6 @@ final class PlainNVRClient {
 
     func mediaURL(path: String, streamToken: String) -> URL? {
         urlWithOptionalToken(path: path, streamToken: streamToken)
-    }
-
-    func liveDiagnostics(camera: Camera, fps: Int?, width: Int?, includeAudio: Bool) async throws -> LiveDiagnosticsResponse {
-        var components = URLComponents()
-        components.path = "/api/cameras/\(camera.id)/live/diagnostics"
-        var items: [URLQueryItem] = []
-        if let fps {
-            items.append(URLQueryItem(name: "fps", value: String(max(1, min(fps, 15)))))
-        }
-        if let width {
-            items.append(URLQueryItem(name: "width", value: String(max(320, min(width, 1920)))))
-        }
-        if !includeAudio {
-            items.append(URLQueryItem(name: "audio", value: "0"))
-        }
-        components.queryItems = items.isEmpty ? nil : items
-
-        guard let path = components.url?.absoluteString else {
-            throw PlainNVRClientError.invalidServerURL
-        }
-        return try await get(path)
     }
 
     func startRecorder(cameraID: String) async throws {

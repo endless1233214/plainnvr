@@ -452,10 +452,6 @@ fieldset {
   flex: 1 1 180px;
 }
 
-.live-controls label:not(:first-child) {
-  flex: 0 1 96px;
-}
-
 .live-controls .live-audio-toggle {
   display: inline-flex;
   flex: 0 0 auto;
@@ -468,8 +464,9 @@ fieldset {
   min-height: 0;
 }
 
-#liveVolume {
-  padding-inline: 0;
+.live-source-label {
+  color: var(--muted);
+  font-weight: 700;
 }
 
 .live-frame {
@@ -489,8 +486,7 @@ fieldset {
   color: #c0c7c3;
 }
 
-#liveImage,
-#liveVideo {
+#liveImage {
   display: block;
   width: 100%;
   height: 100%;
@@ -498,13 +494,7 @@ fieldset {
   object-fit: contain;
 }
 
-#liveVideo {
-  border: 0;
-  background: var(--video-bg);
-}
-
-#liveImage[hidden],
-#liveVideo[hidden] {
+#liveImage[hidden] {
   display: none;
 }
 

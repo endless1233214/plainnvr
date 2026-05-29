@@ -106,6 +106,7 @@ final class MJPEGStreamModel: NSObject, ObservableObject, URLSessionDataDelegate
 
 struct MJPEGStreamView: View {
     let url: URL
+    var grayscale = false
     @StateObject private var stream = MJPEGStreamModel()
     @State private var baseScale: CGFloat = 1
     @GestureState private var gestureScale: CGFloat = 1
@@ -134,6 +135,7 @@ struct MJPEGStreamView: View {
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFit()
+                        .saturation(grayscale ? 0 : 1)
                         .scaleEffect(scale)
                         .offset(offset)
                 } else {

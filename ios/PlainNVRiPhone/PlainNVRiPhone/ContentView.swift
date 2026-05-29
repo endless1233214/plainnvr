@@ -274,7 +274,7 @@ struct LiveView: View {
             Color.black.ignoresSafeArea()
 
             if let camera = viewModel.selectedCamera, viewModel.livePlaybackEnabled, let url = viewModel.liveURL(for: camera) {
-                MJPEGStreamView(url: url)
+                MJPEGStreamView(url: url, grayscale: viewModel.liveGrayscaleEnabled)
                 .ignoresSafeArea()
 
                 if let message = viewModel.liveStatusMessage, !message.isEmpty {
@@ -322,20 +322,10 @@ struct LiveControlsView: View {
                 )
             }
 
-            Picker("Quality", selection: $viewModel.liveQuality) {
-                ForEach(LiveQuality.allCases) { quality in
-                    Text(quality.title).tag(quality)
-                }
-            }
-            .pickerStyle(.segmented)
-
             HStack(spacing: 12) {
-                Picker("FPS", selection: $viewModel.liveFrameRate) {
-                    ForEach(LiveFrameRate.allCases) { frameRate in
-                        Text(frameRate.title).tag(frameRate)
-                    }
-                }
-                .pickerStyle(.segmented)
+                Text("Source MJPEG")
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
 
                 Button {
                     Task { await viewModel.restartLiveStream() }
@@ -361,7 +351,7 @@ struct LivePlayerSurface: View {
     var body: some View {
         VStack(spacing: 8) {
             if viewModel.livePlaybackEnabled, let url = viewModel.liveURL(for: camera) {
-                MJPEGStreamView(url: url)
+                MJPEGStreamView(url: url, grayscale: viewModel.liveGrayscaleEnabled)
                 .frame(maxWidth: .infinity)
                 .aspectRatio(16 / 9, contentMode: .fit)
                 .clipShape(RoundedRectangle(cornerRadius: 8))

@@ -123,60 +123,6 @@ struct ServerErrorResponse: Decodable {
     let error: String
 }
 
-struct LiveDiagnosticsResponse: Decodable {
-    let ok: Bool
-    let message: String
-    let log: String?
-}
-
-enum LiveQuality: String, CaseIterable, Identifiable {
-    case source
-    case low
-    case balanced
-    case high
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .source:
-            return "Source"
-        case .low:
-            return "Low"
-        case .balanced:
-            return "Balanced"
-        case .high:
-            return "High"
-        }
-    }
-
-    var width: Int? {
-        switch self {
-        case .source:
-            return nil
-        case .low:
-            return 640
-        case .balanced:
-            return 960
-        case .high:
-            return 1280
-        }
-    }
-
-    var mjpegWidth: Int {
-        width ?? 1920
-    }
-}
-
-enum LiveFrameRate: Int, CaseIterable, Identifiable {
-    case five = 5
-    case ten = 10
-    case fifteen = 15
-
-    var id: Int { rawValue }
-    var title: String { "\(rawValue)" }
-}
-
 enum PlainNVRFormat {
     private static let isoWithFractionalSeconds: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()

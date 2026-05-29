@@ -159,47 +159,11 @@
               Camera
               <select id="liveCamera"></select>
             </label>
-            <label>
-              FPS
-              <select id="liveFps">
-                <option value="2">2</option>
-                <option value="5">5</option>
-                <option value="10" selected>10</option>
-                <option value="15">15</option>
-              </select>
-            </label>
-            <label>
-              Width
-              <select id="liveWidth">
-                <option value="640">640</option>
-                <option value="1280" selected>1280</option>
-                <option value="1920">1920</option>
-              </select>
-            </label>
-            <label>
-              Mode
-              <select id="liveMode">
-                <option value="hls" selected>HLS</option>
-                <option value="mjpeg">MJPEG</option>
-              </select>
-            </label>
-            <label class="live-audio-toggle">
-              <input id="liveAudio" type="checkbox" checked />
-              Audio
-            </label>
-            <label class="live-audio-toggle">
-              <input id="liveGrayscale" type="checkbox" />
-              Grayscale
-            </label>
-            <label>
-              Volume
-              <input id="liveVolume" type="range" min="0" max="100" value="80" />
-            </label>
+            <span class="live-source-label">Source MJPEG</span>
             <button id="startLive" type="button">Start</button>
             <button id="stopLive" type="button">Stop</button>
           </div>
           <div class="live-frame">
-            <video id="liveVideo" controls playsinline preload="none" hidden></video>
             <img id="liveImage" alt="" />
             <div id="liveEmpty" class="empty">No live stream selected.</div>
           </div>

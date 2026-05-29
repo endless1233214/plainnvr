@@ -10,10 +10,6 @@ const state = {
 };
 
 const dayKeys = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
-const liveModeStorageKey = "plainnvr-live-mode";
-const liveAudioStorageKey = "plainnvr-live-audio";
-const liveVolumeStorageKey = "plainnvr-live-volume";
-const liveGrayscaleStorageKey = "plainnvr-live-grayscale";
 
 const $ = (id) => document.getElementById(id);
 const themeStorageKey = "plainnvr-theme";
@@ -134,85 +130,26 @@ function applyScheduleToForm(schedule) {
 function cameraHaUrls(camera) {
   const base = window.location.origin;
   const token = state.streamToken ? `token=${encodeURIComponent(state.streamToken)}` : "";
-  const tokenSuffix = token ? `&${token}` : "";
-  const hlsParams = new URLSearchParams({ fps: "10", width: "1280" });
+  const hlsParams = new URLSearchParams();
   if (state.streamToken) {
     hlsParams.set("token", state.streamToken);
   }
+  const hlsQuery = hlsParams.toString();
   return {
-    mjpeg: `${base}/ha/${camera.id}/stream.mjpeg?fps=2&width=1280${tokenSuffix}`,
-    hls: `${base}/live/${camera.id}/stream.m3u8?${hlsParams.toString()}`,
+    mjpeg: `${base}/ha/${camera.id}/stream.mjpeg${token ? `?${token}` : ""}`,
+    hls: `${base}/live/${camera.id}/stream.m3u8${hlsQuery ? `?${hlsQuery}` : ""}`,
     snapshot: `${base}/ha/${camera.id}/snapshot.jpg${token ? `?${token}` : ""}`,
   };
 }
 
 function cameraLiveMjpegUrl(camera) {
-  const fps = Number($("liveFps").value) || 2;
-  const width = Number($("liveWidth").value) || 1280;
   const token = state.streamToken || "";
-  const params = new URLSearchParams({
-    fps: String(Math.max(1, Math.min(fps, 15))),
-    width: String(Math.max(320, Math.min(width, 1920))),
-  });
+  const params = new URLSearchParams();
   if (token) {
     params.set("token", token);
   }
-  if ($("liveGrayscale").checked) {
-    params.set("grayscale", "1");
-  }
-  return `/ha/${camera.id}/stream.mjpeg?${params.toString()}`;
-}
-
-function cameraLiveHlsUrl(camera) {
-  const fps = Number($("liveFps").value) || 10;
-  const width = Number($("liveWidth").value) || 1280;
-  const params = new URLSearchParams({
-    fps: String(Math.max(1, Math.min(fps, 15))),
-    width: String(Math.max(320, Math.min(width, 1920))),
-  });
-  if (state.streamToken) {
-    params.set("token", state.streamToken);
-  }
-  if ($("liveGrayscale").checked) {
-    params.set("grayscale", "1");
-  }
   const query = params.toString();
-  return `/live/${camera.id}/stream.m3u8${query ? `?${query}` : ""}`;
-}
-
-function browserCanPlayHls(video) {
-  return Boolean(
-    video.canPlayType("application/vnd.apple.mpegurl") ||
-      video.canPlayType("application/x-mpegURL")
-  );
-}
-
-function applyLiveAudioSettings() {
-  const video = $("liveVideo");
-  const audioEnabled = $("liveAudio").checked;
-  const volume = Math.max(0, Math.min(Number($("liveVolume").value) || 0, 100)) / 100;
-  video.muted = !audioEnabled;
-  video.volume = volume;
-  try {
-    localStorage.setItem(liveAudioStorageKey, audioEnabled ? "1" : "0");
-    localStorage.setItem(liveVolumeStorageKey, String(Math.round(volume * 100)));
-  } catch (_error) {
-    // The live player still works when local storage is unavailable.
-  }
-}
-
-function applyLiveGrayscaleSetting() {
-  try {
-    localStorage.setItem(liveGrayscaleStorageKey, $("liveGrayscale").checked ? "1" : "0");
-  } catch (_error) {
-    // Viewer preferences are optional.
-  }
-}
-
-function syncLiveControls() {
-  const hlsMode = $("liveMode").value === "hls";
-  $("liveAudio").disabled = !hlsMode;
-  $("liveVolume").disabled = !hlsMode || !$("liveAudio").checked;
+  return `/ha/${camera.id}/stream.mjpeg${query ? `?${query}` : ""}`;
 }
 
 function renderHaPanel(camera) {
@@ -598,45 +535,20 @@ function startLive() {
     return;
   }
   state.liveCameraId = camera.id;
-  const requestedMode = $("liveMode").value;
-  const video = $("liveVideo");
   const image = $("liveImage");
-  video.pause();
-  video.removeAttribute("src");
-  video.load();
   image.removeAttribute("src");
   $("liveEmpty").hidden = true;
   image.hidden = true;
-  video.hidden = true;
 
-  if (requestedMode === "hls" && browserCanPlayHls(video)) {
-    applyLiveAudioSettings();
-    video.src = cameraLiveHlsUrl(camera);
-    video.hidden = false;
-    video.play().catch((error) => {
-      $("liveState").textContent = error.message || "Playback blocked";
-    });
-    $("liveState").textContent = `${camera.name} HLS`;
-  } else {
-    if (requestedMode === "hls") {
-      $("liveMode").value = "mjpeg";
-    }
-    image.src = cameraLiveMjpegUrl(camera);
-    image.hidden = false;
-    $("liveState").textContent = `${camera.name} MJPEG`;
-  }
-  syncLiveControls();
+  image.src = cameraLiveMjpegUrl(camera);
+  image.hidden = false;
+  $("liveState").textContent = `${camera.name} Source MJPEG`;
   $("stopLive").disabled = false;
 }
 
 function stopLive() {
-  const video = $("liveVideo");
-  video.pause();
-  video.removeAttribute("src");
-  video.load();
   $("liveImage").removeAttribute("src");
   $("liveImage").hidden = true;
-  video.hidden = true;
   $("liveEmpty").hidden = false;
   $("liveState").textContent = "";
   $("stopLive").disabled = state.cameras.length === 0;
@@ -690,32 +602,6 @@ document.addEventListener("DOMContentLoaded", () => {
   $("liveCamera").addEventListener("change", (event) => {
     state.liveCameraId = event.target.value;
   });
-  $("liveFps").addEventListener("change", () => {
-    if ($("liveImage").src || $("liveVideo").src) startLive();
-  });
-  $("liveWidth").addEventListener("change", () => {
-    if ($("liveImage").src || $("liveVideo").src) startLive();
-  });
-  $("liveMode").addEventListener("change", () => {
-    try {
-      localStorage.setItem(liveModeStorageKey, $("liveMode").value);
-    } catch (_error) {
-      // Mode persistence is optional.
-    }
-    syncLiveControls();
-    if ($("liveImage").src || $("liveVideo").src) startLive();
-  });
-  $("liveAudio").addEventListener("change", () => {
-    applyLiveAudioSettings();
-    syncLiveControls();
-  });
-  $("liveGrayscale").addEventListener("change", () => {
-    applyLiveGrayscaleSetting();
-    if ($("liveImage").src || $("liveVideo").src) startLive();
-  });
-  $("liveVolume").addEventListener("input", () => {
-    applyLiveAudioSettings();
-  });
   $("playbackCamera").addEventListener("change", () => {
     loadCoverage().catch((error) => {
       $("coverageSummary").textContent = error.message;
@@ -728,22 +614,6 @@ document.addEventListener("DOMContentLoaded", () => {
       $("weeklySchedule").classList.toggle("disabled", radio.value !== "weekly" || !radio.checked);
     });
   });
-  try {
-    const savedMode = localStorage.getItem(liveModeStorageKey);
-    if (savedMode === "hls" || savedMode === "mjpeg") $("liveMode").value = savedMode;
-    const savedAudio = localStorage.getItem(liveAudioStorageKey);
-    if (savedAudio === "0" || savedAudio === "1") $("liveAudio").checked = savedAudio === "1";
-    const savedGrayscale = localStorage.getItem(liveGrayscaleStorageKey);
-    if (savedGrayscale === "0" || savedGrayscale === "1") $("liveGrayscale").checked = savedGrayscale === "1";
-    const savedVolume = Number(localStorage.getItem(liveVolumeStorageKey));
-    if (Number.isFinite(savedVolume)) {
-      $("liveVolume").value = String(Math.max(0, Math.min(savedVolume, 100)));
-    }
-  } catch (_error) {
-    // Defaults are fine.
-  }
-  applyLiveAudioSettings();
-  syncLiveControls();
   loadStatus().then(loadCoverage).catch((error) => {
     $("diskLine").textContent = error.message;
   });

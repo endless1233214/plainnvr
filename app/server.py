@@ -943,10 +943,8 @@ def optional_bounded_int(value, minimum, maximum):
     return max(minimum, min(parsed, maximum))
 
 
-def build_mjpeg_command(camera, fps=2, width=1280, grayscale=False):
+def build_mjpeg_command(camera, grayscale=False):
     camera = relay.source_camera(camera)
-    fps = bounded_int(fps, 2, 1, 15)
-    width = bounded_int(width, 1280, 320, 1920)
     command = [
         FFMPEG_BIN,
         "-hide_banner",
@@ -955,32 +953,18 @@ def build_mjpeg_command(camera, fps=2, width=1280, grayscale=False):
         "error",
     ]
     command.extend(ffmpeg_input_args(camera))
-    video_filters = [
-        f"fps={fps}",
-        f"scale='min({width},iw)':-2",
-    ]
-    if grayscale or grayscale_enabled(camera):
+    video_filters = []
+    if grayscale:
         video_filters.append("hue=s=0")
-    command.extend(
-        [
-            "-an",
-            "-vf",
-            ",".join(video_filters),
-            "-q:v",
-            "6",
-            "-f",
-            "mpjpeg",
-            "pipe:1",
-        ]
-    )
+    command.append("-an")
+    add_video_filters(command, video_filters)
+    command.extend(["-q:v", "6", "-f", "mpjpeg", "pipe:1"])
     return command
 
 
-def build_live_hls_command(camera, output_dir, fps=None, width=None, grayscale=False, include_audio=True):
+def build_live_hls_command(camera, output_dir, grayscale=False, include_audio=True):
     camera = relay.source_camera(camera)
     output_dir.mkdir(parents=True, exist_ok=True)
-    fps = optional_bounded_int(fps, 1, 15) or max(1, min(LIVE_HLS_DEFAULT_FPS, 15))
-    width = optional_bounded_int(width, 320, 1920)
     audio_url = str(camera.get("audio_url") or "").strip()
     rtsp_url = str(camera.get("rtsp_url") or "").strip()
     record_audio = bool(camera.get("record_audio", True)) and bool(include_audio)
@@ -1000,10 +984,6 @@ def build_live_hls_command(camera, output_dir, fps=None, width=None, grayscale=F
         command.extend(["-map", "1:a:0?"] if separate_audio else ["-map", "0:a?"])
     command.extend(["-sn", "-dn"])
     video_filters = []
-    if fps:
-        video_filters.append(f"fps={fps}")
-    if width:
-        video_filters.append(f"scale='min({width},iw)':-2")
     if grayscale:
         video_filters.append("hue=s=0")
     if video_filters:
@@ -1023,22 +1003,6 @@ def build_live_hls_command(camera, output_dir, fps=None, width=None, grayscale=F
                 "0",
             ]
         )
-        if fps:
-            keyframe_interval = max(2, fps * max(1, LIVE_HLS_SEGMENT_SECONDS))
-            command.extend(
-                [
-                    "-g",
-                    str(keyframe_interval),
-                    "-keyint_min",
-                    str(keyframe_interval),
-                    "-sc_threshold",
-                    "0",
-                    "-force_key_frames",
-                    f"expr:gte(t,n_forced*{max(1, LIVE_HLS_SEGMENT_SECONDS)})",
-                    "-x264-params",
-                    f"keyint={keyframe_interval}:min-keyint={keyframe_interval}:scenecut=0",
-                ]
-            )
     else:
         command.extend(["-c:v", "copy"])
     if record_audio:
@@ -1243,13 +1207,11 @@ class LiveHLSManager:
     def stream_dir(self, camera_id):
         return LIVE_DIR / camera_id
 
-    def start(self, camera, fps=None, width=None, grayscale=None, include_audio=True):
+    def start(self, camera, grayscale=None, include_audio=True):
         camera_id = camera["id"]
         grayscale = grayscale_enabled(camera) if grayscale is None else bool(grayscale)
         include_audio = bool(include_audio)
         profile = (
-            optional_bounded_int(fps, 1, 15) or max(1, min(LIVE_HLS_DEFAULT_FPS, 15)),
-            optional_bounded_int(width, 320, 1920),
             grayscale,
             include_audio,
         )
@@ -1272,8 +1234,6 @@ class LiveHLSManager:
                     build_live_hls_command(
                         camera,
                         output_dir,
-                        fps=profile[0],
-                        width=profile[1],
                         grayscale=grayscale,
                         include_audio=include_audio,
                     ),
@@ -1738,11 +1698,9 @@ def stream_summary(probe):
     return " ".join(part for part in [codec + size + audio, suffix] if part)
 
 
-def live_diagnostics(camera, fps=None, width=None, include_audio=True):
-    fps = optional_bounded_int(fps, 1, 15) or max(1, min(LIVE_HLS_DEFAULT_FPS, 15))
-    width = optional_bounded_int(width, 320, 1920)
+def live_diagnostics(camera, include_audio=True):
     include_audio = bool(include_audio)
-    profile = f"{width or 'source'}px / {fps}fps / {'audio' if include_audio else 'video only'}"
+    profile = f"source / {'audio' if include_audio else 'video only'}"
     video = probe_stream_url(
         camera["rtsp_url"],
         camera,
@@ -1763,7 +1721,7 @@ def live_diagnostics(camera, fps=None, width=None, include_audio=True):
 
     hls = {"ok": True, "message": "Playlist became ready."}
     try:
-        playlist = live_hls.start(camera, fps=fps, width=width, include_audio=include_audio)
+        playlist = live_hls.start(camera, include_audio=include_audio)
         hls["bytes"] = playlist.stat().st_size if playlist.exists() else 0
     except RuntimeError as exc:
         hls = {"ok": False, "message": redact_camera_text(str(exc), camera)}
@@ -2145,8 +2103,6 @@ class NvrHandler(SimpleHTTPRequestHandler):
             self.send_json(
                 live_diagnostics(
                     camera,
-                    fps=query.get("fps", [None])[0],
-                    width=query.get("width", [None])[0],
                     include_audio=query_bool(query, "audio", default=True),
                 )
             )
@@ -2201,9 +2157,7 @@ class NvrHandler(SimpleHTTPRequestHandler):
         if match.group(2) == "snapshot.jpg":
             self.handle_snapshot(camera, grayscale=query_bool(query, "grayscale"))
             return
-        fps = query.get("fps", ["2"])[0]
-        width = query.get("width", ["1280"])[0]
-        self.handle_mjpeg(camera, fps, width, grayscale=query_bool(query, "grayscale"))
+        self.handle_mjpeg(camera, grayscale=query_bool(query, "grayscale"))
 
     def handle_home_assistant_head(self, parsed):
         match = re.match(r"^/ha/([a-f0-9]+)/(snapshot\.jpg|stream\.mjpeg)$", parsed.path)
@@ -2241,9 +2195,6 @@ class NvrHandler(SimpleHTTPRequestHandler):
             try:
                 live_hls.start(
                     camera,
-                    fps=query.get("fps", [None])[0],
-                    width=query.get("width", [None])[0],
-                    grayscale=query_bool(query, "grayscale"),
                     include_audio=query_bool(query, "audio", default=True),
                 )
             except RuntimeError as exc:
@@ -2360,10 +2311,10 @@ class NvrHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(result.stdout)
 
-    def handle_mjpeg(self, camera, fps, width, grayscale=False):
+    def handle_mjpeg(self, camera, grayscale=False):
         try:
             process = subprocess.Popen(
-                build_mjpeg_command(camera, fps, width, grayscale=grayscale),
+                build_mjpeg_command(camera, grayscale=grayscale),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )

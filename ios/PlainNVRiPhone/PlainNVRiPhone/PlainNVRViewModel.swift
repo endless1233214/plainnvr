@@ -12,10 +12,6 @@ enum PlainNVRConnectionState: Equatable {
 @MainActor
 final class PlainNVRViewModel: ObservableObject {
     private static let serverDefaultsKey = "PlainNVRServerAddress"
-    private static let liveQualityDefaultsKey = "PlainNVRLiveQuality"
-    private static let liveFrameRateDefaultsKey = "PlainNVRLiveFrameRate"
-    private static let liveAudioEnabledDefaultsKey = "PlainNVRLiveAudioEnabled"
-    private static let liveVolumeDefaultsKey = "PlainNVRLiveVolume"
     private static let liveGrayscaleEnabledDefaultsKey = "PlainNVRLiveGrayscaleEnabled"
     private static let defaultServerAddress = "http://192.168.1.172:8787"
 
@@ -34,38 +30,9 @@ final class PlainNVRViewModel: ObservableObject {
     @Published var activeSegment: RecordingSegment?
     @Published var livePlaybackEnabled = true
     @Published var liveStatusMessage: String?
-    @Published var liveQuality: LiveQuality {
-        didSet {
-            UserDefaults.standard.set(liveQuality.rawValue, forKey: Self.liveQualityDefaultsKey)
-            liveStatusMessage = nil
-            bumpLiveReload()
-        }
-    }
-    @Published var liveFrameRate: LiveFrameRate {
-        didSet {
-            UserDefaults.standard.set(liveFrameRate.rawValue, forKey: Self.liveFrameRateDefaultsKey)
-            liveStatusMessage = nil
-            bumpLiveReload()
-        }
-    }
-    @Published var liveAudioEnabled: Bool {
-        didSet {
-            UserDefaults.standard.set(liveAudioEnabled, forKey: Self.liveAudioEnabledDefaultsKey)
-            liveStatusMessage = nil
-            bumpLiveReload()
-        }
-    }
-    @Published var liveVolume: Double {
-        didSet {
-            liveVolume = min(max(liveVolume, 0), 1)
-            UserDefaults.standard.set(liveVolume, forKey: Self.liveVolumeDefaultsKey)
-        }
-    }
     @Published var liveGrayscaleEnabled: Bool {
         didSet {
             UserDefaults.standard.set(liveGrayscaleEnabled, forKey: Self.liveGrayscaleEnabledDefaultsKey)
-            liveStatusMessage = nil
-            bumpLiveReload()
         }
     }
     @Published private(set) var liveReloadID = 0
@@ -79,18 +46,6 @@ final class PlainNVRViewModel: ObservableObject {
             UserDefaults.standard.set(Self.defaultServerAddress, forKey: Self.serverDefaultsKey)
         } else {
             serverAddress = savedServerAddress ?? Self.defaultServerAddress
-        }
-        liveQuality = LiveQuality(rawValue: UserDefaults.standard.string(forKey: Self.liveQualityDefaultsKey) ?? "") ?? .high
-        liveFrameRate = LiveFrameRate(rawValue: UserDefaults.standard.integer(forKey: Self.liveFrameRateDefaultsKey)) ?? .ten
-        if UserDefaults.standard.object(forKey: Self.liveAudioEnabledDefaultsKey) == nil {
-            liveAudioEnabled = true
-        } else {
-            liveAudioEnabled = UserDefaults.standard.bool(forKey: Self.liveAudioEnabledDefaultsKey)
-        }
-        if UserDefaults.standard.object(forKey: Self.liveVolumeDefaultsKey) == nil {
-            liveVolume = 0.85
-        } else {
-            liveVolume = min(max(UserDefaults.standard.double(forKey: Self.liveVolumeDefaultsKey), 0), 1)
         }
         liveGrayscaleEnabled = UserDefaults.standard.bool(forKey: Self.liveGrayscaleEnabledDefaultsKey)
     }
@@ -269,11 +224,7 @@ final class PlainNVRViewModel: ObservableObject {
     }
 
     func updateLivePlayerFailure(_ message: String) {
-        if liveQuality == .source {
-            liveStatusMessage = "\(message)\nTry Low or Balanced if Source is not playable. Tap Check for server details."
-        } else {
-            liveStatusMessage = "\(message)\nTap Check for server details."
-        }
+        liveStatusMessage = "\(message)\nUsing source MJPEG from PlainNVR."
     }
 
     func setRecorderRunning(_ running: Bool, camera: Camera) async {
@@ -326,9 +277,6 @@ final class PlainNVRViewModel: ObservableObject {
         return client?.liveStreamURL(
             camera: camera,
             streamToken: status?.streamToken ?? "",
-            fps: liveFrameRate.rawValue,
-            width: liveQuality.mjpegWidth,
-            grayscale: liveGrayscaleEnabled,
             reloadID: liveReloadID
         )
     }
