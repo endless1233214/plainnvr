@@ -132,6 +132,7 @@ struct LivePlayerView: View {
     @State private var player = AVPlayer()
     @State private var statusObservation: NSKeyValueObservation?
     @State private var errorLogObserver: NSObjectProtocol?
+    @State private var liveEdgeTimer: Timer?
     @State private var baseScale: CGFloat = 1
     @GestureState private var gestureScale: CGFloat = 1
     @State private var baseOffset: CGSize = .zero
@@ -189,8 +190,11 @@ struct LivePlayerView: View {
 
     private func startPlayback(_ url: URL) {
         clearObservers()
+        stopLiveEdgeTimer()
         onStatus("Opening live stream...")
         let item = AVPlayerItem(url: url)
+        item.preferredForwardBufferDuration = 1
+        item.canUseNetworkResourcesForLiveStreamingWhilePaused = true
         statusObservation = item.observe(\.status, options: [.new]) { item, _ in
             DispatchQueue.main.async {
                 switch item.status {
@@ -214,13 +218,16 @@ struct LivePlayerView: View {
             let details = event.errorComment ?? event.errorStatusCode.description
             onFailure("Player error \(event.errorStatusCode): \(details)")
         }
+        player.automaticallyWaitsToMinimizeStalling = false
         player.replaceCurrentItem(with: item)
         applyAudioSettings()
         player.play()
+        startLiveEdgeTimer()
     }
 
     private func stopPlayback() {
         clearObservers()
+        stopLiveEdgeTimer()
         player.pause()
         player.replaceCurrentItem(with: nil)
     }
@@ -232,6 +239,35 @@ struct LivePlayerView: View {
             NotificationCenter.default.removeObserver(errorLogObserver)
             self.errorLogObserver = nil
         }
+    }
+
+    private func startLiveEdgeTimer() {
+        stopLiveEdgeTimer()
+        liveEdgeTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { _ in
+            seekTowardLiveEdgeIfNeeded()
+        }
+    }
+
+    private func stopLiveEdgeTimer() {
+        liveEdgeTimer?.invalidate()
+        liveEdgeTimer = nil
+    }
+
+    private func seekTowardLiveEdgeIfNeeded() {
+        guard let item = player.currentItem,
+              item.status == .readyToPlay,
+              let range = item.seekableTimeRanges.last?.timeRangeValue
+        else {
+            return
+        }
+
+        let liveEdge = range.start + range.duration
+        let current = player.currentTime()
+        let lag = CMTimeGetSeconds(liveEdge - current)
+        guard lag.isFinite, lag > 8 else { return }
+
+        let target = liveEdge - CMTime(seconds: 2, preferredTimescale: 600)
+        player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero)
     }
 
     private func applyAudioSettings() {

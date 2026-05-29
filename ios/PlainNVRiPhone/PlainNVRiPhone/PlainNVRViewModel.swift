@@ -51,6 +51,8 @@ final class PlainNVRViewModel: ObservableObject {
     @Published var liveAudioEnabled: Bool {
         didSet {
             UserDefaults.standard.set(liveAudioEnabled, forKey: Self.liveAudioEnabledDefaultsKey)
+            liveStatusMessage = nil
+            bumpLiveReload()
         }
     }
     @Published var liveVolume: Double {
@@ -266,8 +268,9 @@ final class PlainNVRViewModel: ObservableObject {
             liveStatusMessage = "Checking live stream..."
             let diagnostics = try await client.liveDiagnostics(
                 camera: camera,
-                fps: liveQuality.width == nil ? nil : liveFrameRate.rawValue,
-                width: liveQuality.width
+                fps: liveFrameRate.rawValue,
+                width: liveQuality.width,
+                includeAudio: liveAudioEnabled
             )
             if let log = diagnostics.log, !log.isEmpty {
                 liveStatusMessage = "\(diagnostics.message)\n\nFFmpeg: \(log)"
@@ -341,9 +344,10 @@ final class PlainNVRViewModel: ObservableObject {
         return client?.liveHLSURL(
             camera: camera,
             streamToken: status?.streamToken ?? "",
-            fps: liveQuality.width == nil ? nil : liveFrameRate.rawValue,
+            fps: liveFrameRate.rawValue,
             width: liveQuality.width,
             grayscale: liveGrayscaleEnabled,
+            includeAudio: liveAudioEnabled,
             reloadID: liveReloadID
         )
     }

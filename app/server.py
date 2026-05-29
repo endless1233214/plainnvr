@@ -44,9 +44,10 @@ LIVE_HLS_SEGMENT_SECONDS = int(os.environ.get("NVR_LIVE_HLS_SEGMENT_SECONDS", "2
 LIVE_HLS_LIST_SIZE = int(os.environ.get("NVR_LIVE_HLS_LIST_SIZE", "8"))
 LIVE_HLS_DELETE_THRESHOLD = int(os.environ.get("NVR_LIVE_HLS_DELETE_THRESHOLD", "10"))
 LIVE_HLS_IDLE_SECONDS = int(os.environ.get("NVR_LIVE_HLS_IDLE_SECONDS", "90"))
+LIVE_HLS_DEFAULT_FPS = int(os.environ.get("NVR_LIVE_HLS_DEFAULT_FPS", "10"))
 LIVE_HLS_READY_TIMEOUT_SECONDS = int(os.environ.get("NVR_LIVE_HLS_READY_TIMEOUT_SECONDS", "25"))
 LIVE_HLS_STALE_SECONDS = int(
-    os.environ.get("NVR_LIVE_HLS_STALE_SECONDS", str(max(6, LIVE_HLS_SEGMENT_SECONDS * 4)))
+    os.environ.get("NVR_LIVE_HLS_STALE_SECONDS", str(max(4, LIVE_HLS_SEGMENT_SECONDS * 2)))
 )
 LIVE_HLS_SEGMENT_TYPE = os.environ.get("NVR_LIVE_HLS_SEGMENT_TYPE", "fmp4").strip().lower()
 if LIVE_HLS_SEGMENT_TYPE not in ("fmp4", "mpegts"):
@@ -975,13 +976,14 @@ def build_mjpeg_command(camera, fps=2, width=1280, grayscale=False):
     return command
 
 
-def build_live_hls_command(camera, output_dir, fps=None, width=None, grayscale=False):
-    camera = relay.source_camera(camera)
+def build_live_hls_command(camera, output_dir, fps=None, width=None, grayscale=False, include_audio=True):
     output_dir.mkdir(parents=True, exist_ok=True)
-    fps = optional_bounded_int(fps, 1, 15)
+    fps = optional_bounded_int(fps, 1, 15) or max(1, min(LIVE_HLS_DEFAULT_FPS, 15))
     width = optional_bounded_int(width, 320, 1920)
     audio_url = str(camera.get("audio_url") or "").strip()
-    record_audio = camera.get("record_audio", True)
+    rtsp_url = str(camera.get("rtsp_url") or "").strip()
+    record_audio = bool(camera.get("record_audio", True)) and bool(include_audio)
+    separate_audio = record_audio and audio_url and audio_url != rtsp_url
     command = [
         FFMPEG_BIN,
         "-hide_banner",
@@ -989,12 +991,12 @@ def build_live_hls_command(camera, output_dir, fps=None, width=None, grayscale=F
         "-loglevel",
         "warning",
     ]
-    command.extend(ffmpeg_input_args(camera, low_latency=False))
-    if record_audio and audio_url:
-        command.extend(ffmpeg_input_args(camera, "audio_url", low_latency=False))
+    command.extend(ffmpeg_input_args(camera, low_latency=True))
+    if separate_audio:
+        command.extend(ffmpeg_input_args(camera, "audio_url", low_latency=True))
     command.extend(["-map", "0:v:0"])
     if record_audio:
-        command.extend(["-map", "1:a:0?"] if audio_url else ["-map", "0:a?"])
+        command.extend(["-map", "1:a:0?"] if separate_audio else ["-map", "0:a?"])
     command.extend(["-sn", "-dn"])
     video_filters = []
     if fps:
@@ -1016,11 +1018,26 @@ def build_live_hls_command(camera, output_dir, fps=None, width=None, grayscale=F
                 "zerolatency",
                 "-pix_fmt",
                 "yuv420p",
+                "-bf",
+                "0",
             ]
         )
         if fps:
             keyframe_interval = max(2, fps * max(1, LIVE_HLS_SEGMENT_SECONDS))
-            command.extend(["-g", str(keyframe_interval), "-keyint_min", str(keyframe_interval), "-sc_threshold", "0"])
+            command.extend(
+                [
+                    "-g",
+                    str(keyframe_interval),
+                    "-keyint_min",
+                    str(keyframe_interval),
+                    "-sc_threshold",
+                    "0",
+                    "-force_key_frames",
+                    f"expr:gte(t,n_forced*{max(1, LIVE_HLS_SEGMENT_SECONDS)})",
+                    "-x264-params",
+                    f"keyint={keyframe_interval}:min-keyint={keyframe_interval}:scenecut=0",
+                ]
+            )
     else:
         command.extend(["-c:v", "copy"])
     if record_audio:
@@ -1053,7 +1070,7 @@ def build_live_hls_command(camera, output_dir, fps=None, width=None, grayscale=F
             "-hls_delete_threshold",
             str(max(1, LIVE_HLS_DELETE_THRESHOLD)),
             "-hls_flags",
-            "delete_segments+omit_endlist+program_date_time+independent_segments",
+            "delete_segments+omit_endlist+program_date_time+independent_segments+temp_file",
         ]
     )
     if LIVE_HLS_SEGMENT_TYPE == "fmp4":
@@ -1225,13 +1242,15 @@ class LiveHLSManager:
     def stream_dir(self, camera_id):
         return LIVE_DIR / camera_id
 
-    def start(self, camera, fps=None, width=None, grayscale=None):
+    def start(self, camera, fps=None, width=None, grayscale=None, include_audio=True):
         camera_id = camera["id"]
         grayscale = grayscale_enabled(camera) if grayscale is None else bool(grayscale)
+        include_audio = bool(include_audio)
         profile = (
-            optional_bounded_int(fps, 1, 15),
+            optional_bounded_int(fps, 1, 15) or max(1, min(LIVE_HLS_DEFAULT_FPS, 15)),
             optional_bounded_int(width, 320, 1920),
             grayscale,
+            include_audio,
         )
         with self.lock:
             self._sweep_idle_locked()
@@ -1249,7 +1268,14 @@ class LiveHLSManager:
             log_handle = log_file.open("w", encoding="utf-8", errors="replace")
             try:
                 process = subprocess.Popen(
-                    build_live_hls_command(camera, output_dir, fps=profile[0], width=profile[1], grayscale=grayscale),
+                    build_live_hls_command(
+                        camera,
+                        output_dir,
+                        fps=profile[0],
+                        width=profile[1],
+                        grayscale=grayscale,
+                        include_audio=include_audio,
+                    ),
                     stdout=subprocess.DEVNULL,
                     stderr=log_handle,
                 )
@@ -1711,10 +1737,11 @@ def stream_summary(probe):
     return " ".join(part for part in [codec + size + audio, suffix] if part)
 
 
-def live_diagnostics(camera, fps=None, width=None):
-    fps = optional_bounded_int(fps, 1, 15)
+def live_diagnostics(camera, fps=None, width=None, include_audio=True):
+    fps = optional_bounded_int(fps, 1, 15) or max(1, min(LIVE_HLS_DEFAULT_FPS, 15))
     width = optional_bounded_int(width, 320, 1920)
-    profile = "Source" if fps is None and width is None else f"{width or 'source'}px / {fps or 'source'}fps"
+    include_audio = bool(include_audio)
+    profile = f"{width or 'source'}px / {fps}fps / {'audio' if include_audio else 'video only'}"
     video = probe_stream_url(
         camera["rtsp_url"],
         camera,
@@ -1723,7 +1750,7 @@ def live_diagnostics(camera, fps=None, width=None):
         low_latency=False,
     )
     audio = None
-    if camera.get("record_audio", True):
+    if include_audio and camera.get("record_audio", True):
         audio_url = str(camera.get("audio_url") or "").strip() or camera["rtsp_url"]
         audio = probe_stream_url(
             audio_url,
@@ -1735,7 +1762,7 @@ def live_diagnostics(camera, fps=None, width=None):
 
     hls = {"ok": True, "message": "Playlist became ready."}
     try:
-        playlist = live_hls.start(camera, fps=fps, width=width)
+        playlist = live_hls.start(camera, fps=fps, width=width, include_audio=include_audio)
         hls["bytes"] = playlist.stat().st_size if playlist.exists() else 0
     except RuntimeError as exc:
         hls = {"ok": False, "message": redact_camera_text(str(exc), camera)}
@@ -2119,6 +2146,7 @@ class NvrHandler(SimpleHTTPRequestHandler):
                     camera,
                     fps=query.get("fps", [None])[0],
                     width=query.get("width", [None])[0],
+                    include_audio=query_bool(query, "audio", default=True),
                 )
             )
             return
@@ -2215,6 +2243,7 @@ class NvrHandler(SimpleHTTPRequestHandler):
                     fps=query.get("fps", [None])[0],
                     width=query.get("width", [None])[0],
                     grayscale=query_bool(query, "grayscale"),
+                    include_audio=query_bool(query, "audio", default=True),
                 )
             except RuntimeError as exc:
                 print(f"Live HLS startup failed for {camera['id']}: {exc}", file=sys.stderr)

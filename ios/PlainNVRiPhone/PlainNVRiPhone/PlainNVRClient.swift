@@ -156,6 +156,7 @@ final class PlainNVRClient {
         fps: Int?,
         width: Int?,
         grayscale: Bool,
+        includeAudio: Bool,
         reloadID: Int
     ) -> URL? {
         guard let rootURL = absoluteURL(for: "/live/\(camera.id)/stream.m3u8"),
@@ -180,6 +181,10 @@ final class PlainNVRClient {
             items.append(URLQueryItem(name: "grayscale", value: "1"))
         }
 
+        if !includeAudio {
+            items.append(URLQueryItem(name: "audio", value: "0"))
+        }
+
         if !streamToken.isEmpty {
             items.append(URLQueryItem(name: "token", value: streamToken))
         }
@@ -192,7 +197,7 @@ final class PlainNVRClient {
         urlWithOptionalToken(path: path, streamToken: streamToken)
     }
 
-    func liveDiagnostics(camera: Camera, fps: Int?, width: Int?) async throws -> LiveDiagnosticsResponse {
+    func liveDiagnostics(camera: Camera, fps: Int?, width: Int?, includeAudio: Bool) async throws -> LiveDiagnosticsResponse {
         var components = URLComponents()
         components.path = "/api/cameras/\(camera.id)/live/diagnostics"
         var items: [URLQueryItem] = []
@@ -201,6 +206,9 @@ final class PlainNVRClient {
         }
         if let width {
             items.append(URLQueryItem(name: "width", value: String(max(320, min(width, 1920)))))
+        }
+        if !includeAudio {
+            items.append(URLQueryItem(name: "audio", value: "0"))
         }
         components.queryItems = items.isEmpty ? nil : items
 
