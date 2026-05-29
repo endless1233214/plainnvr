@@ -162,6 +162,10 @@ enum LiveQuality: String, CaseIterable, Identifiable {
             return 1280
         }
     }
+
+    var mjpegWidth: Int {
+        width ?? 1920
+    }
 }
 
 enum LiveFrameRate: Int, CaseIterable, Identifiable {

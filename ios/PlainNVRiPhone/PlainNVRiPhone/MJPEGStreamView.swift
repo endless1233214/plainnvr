@@ -107,35 +107,64 @@ final class MJPEGStreamModel: NSObject, ObservableObject, URLSessionDataDelegate
 struct MJPEGStreamView: View {
     let url: URL
     @StateObject private var stream = MJPEGStreamModel()
+    @State private var baseScale: CGFloat = 1
+    @GestureState private var gestureScale: CGFloat = 1
+    @State private var baseOffset: CGSize = .zero
+    @GestureState private var dragOffset: CGSize = .zero
+
+    private let maximumScale: CGFloat = 6
 
     var body: some View {
-        ZStack {
-            Rectangle()
-                .fill(.black)
+        GeometryReader { proxy in
+            let scale = clampedScale(baseScale * gestureScale)
+            let offset = clampedOffset(
+                CGSize(
+                    width: baseOffset.width + dragOffset.width,
+                    height: baseOffset.height + dragOffset.height
+                ),
+                scale: scale,
+                size: proxy.size
+            )
 
-            if let image = stream.image {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFit()
-            } else {
-                VStack(spacing: 12) {
-                    ProgressView()
-                        .tint(.white)
-                    Image(systemName: "video")
-                        .font(.largeTitle)
-                        .foregroundStyle(.white.opacity(0.7))
+            ZStack {
+                Rectangle()
+                    .fill(.black)
+
+                if let image = stream.image {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .scaleEffect(scale)
+                        .offset(offset)
+                } else {
+                    VStack(spacing: 12) {
+                        ProgressView()
+                            .tint(.white)
+                        Image(systemName: "video")
+                            .font(.largeTitle)
+                            .foregroundStyle(.white.opacity(0.7))
+                    }
+                }
+
+                if let errorMessage = stream.errorMessage {
+                    VStack {
+                        Spacer()
+                        Label(errorMessage, systemImage: "wifi.exclamationmark")
+                            .font(.caption)
+                            .padding(10)
+                            .foregroundStyle(.white)
+                            .background(.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 8))
+                            .padding(10)
+                    }
                 }
             }
-
-            if let errorMessage = stream.errorMessage {
-                VStack {
-                    Spacer()
-                    Label(errorMessage, systemImage: "wifi.exclamationmark")
-                        .font(.caption)
-                        .padding(10)
-                        .foregroundStyle(.white)
-                        .background(.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 8))
-                        .padding(10)
+            .clipped()
+            .contentShape(Rectangle())
+            .gesture(magnificationGesture(size: proxy.size))
+            .simultaneousGesture(dragGesture(size: proxy.size))
+            .onTapGesture(count: 2) {
+                withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
+                    resetZoom()
                 }
             }
         }
@@ -143,10 +172,70 @@ struct MJPEGStreamView: View {
             stream.start(url: url)
         }
         .onChange(of: url) { _, newURL in
+            resetZoom()
             stream.start(url: newURL)
         }
         .onDisappear {
             stream.stop()
         }
+    }
+
+    private func magnificationGesture(size: CGSize) -> some Gesture {
+        MagnificationGesture()
+            .updating($gestureScale) { value, state, _ in
+                state = value
+            }
+            .onEnded { value in
+                baseScale = clampedScale(baseScale * value)
+                if baseScale == 1 {
+                    baseOffset = .zero
+                } else {
+                    baseOffset = clampedOffset(baseOffset, scale: baseScale, size: size)
+                }
+            }
+    }
+
+    private func dragGesture(size: CGSize) -> some Gesture {
+        DragGesture(minimumDistance: 0)
+            .updating($dragOffset) { value, state, _ in
+                guard baseScale * gestureScale > 1 else {
+                    state = .zero
+                    return
+                }
+                state = value.translation
+            }
+            .onEnded { value in
+                guard baseScale > 1 else {
+                    baseOffset = .zero
+                    return
+                }
+                baseOffset = clampedOffset(
+                    CGSize(
+                        width: baseOffset.width + value.translation.width,
+                        height: baseOffset.height + value.translation.height
+                    ),
+                    scale: baseScale,
+                    size: size
+                )
+            }
+    }
+
+    private func clampedScale(_ value: CGFloat) -> CGFloat {
+        min(max(value, 1), maximumScale)
+    }
+
+    private func clampedOffset(_ value: CGSize, scale: CGFloat, size: CGSize) -> CGSize {
+        guard scale > 1 else { return .zero }
+        let maxX = max(0, (size.width * scale - size.width) / 2)
+        let maxY = max(0, (size.height * scale - size.height) / 2)
+        return CGSize(
+            width: min(max(value.width, -maxX), maxX),
+            height: min(max(value.height, -maxY), maxY)
+        )
+    }
+
+    private func resetZoom() {
+        baseScale = 1
+        baseOffset = .zero
     }
 }

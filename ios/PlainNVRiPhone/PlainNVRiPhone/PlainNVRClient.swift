@@ -130,7 +130,14 @@ final class PlainNVRClient {
         URL(string: serverPath, relativeTo: baseURL)?.absoluteURL
     }
 
-    func liveStreamURL(camera: Camera, streamToken: String, fps: Int = 2, width: Int = 1280) -> URL? {
+    func liveStreamURL(
+        camera: Camera,
+        streamToken: String,
+        fps: Int = 10,
+        width: Int = 1280,
+        grayscale: Bool,
+        reloadID: Int
+    ) -> URL? {
         guard let rootURL = absoluteURL(for: "/ha/\(camera.id)/stream.mjpeg"),
               var components = URLComponents(url: rootURL, resolvingAgainstBaseURL: false)
         else {
@@ -139,8 +146,13 @@ final class PlainNVRClient {
 
         var items = [
             URLQueryItem(name: "fps", value: String(max(1, min(fps, 10)))),
-            URLQueryItem(name: "width", value: String(max(320, min(width, 1920))))
+            URLQueryItem(name: "width", value: String(max(320, min(width, 1920)))),
+            URLQueryItem(name: "reload", value: String(reloadID))
         ]
+
+        if grayscale {
+            items.append(URLQueryItem(name: "grayscale", value: "1"))
+        }
 
         if !streamToken.isEmpty {
             items.append(URLQueryItem(name: "token", value: streamToken))

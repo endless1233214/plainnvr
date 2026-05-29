@@ -261,25 +261,7 @@ final class PlainNVRViewModel: ObservableObject {
     }
 
     func diagnoseLiveStream() async {
-        do {
-            guard let client, let camera = selectedCamera else {
-                throw PlainNVRClientError.invalidServerURL
-            }
-            liveStatusMessage = "Checking live stream..."
-            let diagnostics = try await client.liveDiagnostics(
-                camera: camera,
-                fps: liveFrameRate.rawValue,
-                width: liveQuality.width,
-                includeAudio: liveAudioEnabled
-            )
-            if let log = diagnostics.log, !log.isEmpty {
-                liveStatusMessage = "\(diagnostics.message)\n\nFFmpeg: \(log)"
-            } else {
-                liveStatusMessage = diagnostics.message
-            }
-        } catch {
-            liveStatusMessage = userFacingError(error)
-        }
+        liveStatusMessage = "Using MJPEG video from PlainNVR. MJPEG does not carry audio."
     }
 
     func updateLivePlayerStatus(_ message: String?) {
@@ -341,13 +323,12 @@ final class PlainNVRViewModel: ObservableObject {
 
     func liveURL(for camera: Camera) -> URL? {
         guard livePlaybackEnabled else { return nil }
-        return client?.liveHLSURL(
+        return client?.liveStreamURL(
             camera: camera,
             streamToken: status?.streamToken ?? "",
             fps: liveFrameRate.rawValue,
-            width: liveQuality.width,
+            width: liveQuality.mjpegWidth,
             grayscale: liveGrayscaleEnabled,
-            includeAudio: liveAudioEnabled,
             reloadID: liveReloadID
         )
     }

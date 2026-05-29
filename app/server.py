@@ -977,6 +977,7 @@ def build_mjpeg_command(camera, fps=2, width=1280, grayscale=False):
 
 
 def build_live_hls_command(camera, output_dir, fps=None, width=None, grayscale=False, include_audio=True):
+    camera = relay.source_camera(camera)
     output_dir.mkdir(parents=True, exist_ok=True)
     fps = optional_bounded_int(fps, 1, 15) or max(1, min(LIVE_HLS_DEFAULT_FPS, 15))
     width = optional_bounded_int(width, 320, 1920)

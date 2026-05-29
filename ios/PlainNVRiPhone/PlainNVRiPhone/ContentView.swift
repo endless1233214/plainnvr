@@ -274,17 +274,7 @@ struct LiveView: View {
             Color.black.ignoresSafeArea()
 
             if let camera = viewModel.selectedCamera, viewModel.livePlaybackEnabled, let url = viewModel.liveURL(for: camera) {
-                LivePlayerView(
-                    url: url,
-                    isMuted: !viewModel.liveAudioEnabled,
-                    volume: Float(viewModel.liveVolume),
-                    onStatus: { message in
-                        viewModel.updateLivePlayerStatus(message)
-                    },
-                    onFailure: { message in
-                        viewModel.updateLivePlayerFailure(message)
-                    }
-                )
+                MJPEGStreamView(url: url)
                 .ignoresSafeArea()
 
                 if let message = viewModel.liveStatusMessage, !message.isEmpty {
@@ -354,23 +344,6 @@ struct LiveControlsView: View {
                 }
                 .accessibilityLabel("Restart Live")
                 .buttonStyle(.bordered)
-
-                Button {
-                    Task { await viewModel.diagnoseLiveStream() }
-                } label: {
-                    Image(systemName: "antenna.radiowaves.left.and.right")
-                }
-                .accessibilityLabel("Check Stream")
-                .buttonStyle(.bordered)
-            }
-
-            HStack(spacing: 12) {
-                Toggle("Audio", isOn: $viewModel.liveAudioEnabled)
-                    .toggleStyle(.switch)
-
-                Slider(value: $viewModel.liveVolume, in: 0...1)
-                    .disabled(!viewModel.liveAudioEnabled)
-                    .accessibilityLabel("Live Volume")
             }
 
             Toggle("Grayscale", isOn: $viewModel.liveGrayscaleEnabled)
@@ -388,17 +361,7 @@ struct LivePlayerSurface: View {
     var body: some View {
         VStack(spacing: 8) {
             if viewModel.livePlaybackEnabled, let url = viewModel.liveURL(for: camera) {
-                LivePlayerView(
-                    url: url,
-                    isMuted: !viewModel.liveAudioEnabled,
-                    volume: Float(viewModel.liveVolume),
-                    onStatus: { message in
-                        viewModel.updateLivePlayerStatus(message)
-                    },
-                    onFailure: { message in
-                        viewModel.updateLivePlayerFailure(message)
-                    }
-                )
+                MJPEGStreamView(url: url)
                 .frame(maxWidth: .infinity)
                 .aspectRatio(16 / 9, contentMode: .fit)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
