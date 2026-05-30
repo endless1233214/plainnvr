@@ -23,6 +23,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib import error as urllib_error, request as urllib_request
 from urllib.parse import parse_qs, quote, unquote, urlparse
+from xml.etree import ElementTree
 
 
 APP_HOST = os.environ.get("NVR_HOST", "0.0.0.0")
@@ -105,6 +106,10 @@ PTZ_MOVE_VECTORS = {
     "zoom_in": (0, 0, 1),
     "zoom_out": (0, 0, -1),
 }
+
+
+class OnvifFault(RuntimeError):
+    pass
 
 
 def utcnow():
@@ -1104,9 +1109,31 @@ def ptz_url_candidates(camera):
     return candidates, credentials
 
 
-def onvif_envelope(body):
+def onvif_security_header(credentials):
+    if not credentials:
+        return ""
+    username, password = credentials
+    nonce = secrets.token_bytes(16)
+    created = utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    digest = hashlib.sha1(nonce + created.encode("utf-8") + password.encode("utf-8")).digest()
+    password_digest = base64.b64encode(digest).decode("ascii")
+    nonce_text = base64.b64encode(nonce).decode("ascii")
+    return f"""<s:Header>
+    <wsse:Security s:mustUnderstand="1" xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd" xmlns:wsu="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd">
+      <wsse:UsernameToken>
+        <wsse:Username>{html_escape(username, quote=True)}</wsse:Username>
+        <wsse:Password Type="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordDigest">{password_digest}</wsse:Password>
+        <wsse:Nonce EncodingType="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-soap-message-security-1.0#Base64Binary">{nonce_text}</wsse:Nonce>
+        <wsu:Created>{created}</wsu:Created>
+      </wsse:UsernameToken>
+    </wsse:Security>
+  </s:Header>"""
+
+
+def onvif_envelope(body, credentials=None):
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl" xmlns:tt="http://www.onvif.org/ver10/schema">
+  {onvif_security_header(credentials)}
   <s:Body>
     {body}
   </s:Body>
@@ -1151,10 +1178,37 @@ def onvif_move_body(action, speed, duration_ms, profile_token):
     </tptz:ContinuousMove>"""
 
 
+def onvif_fault_message(data):
+    try:
+        root = ElementTree.fromstring(data)
+    except ElementTree.ParseError:
+        text = data.decode("utf-8", errors="replace")
+        return "ONVIF SOAP fault" if re.search(r"<(?:\w+:)?Fault\b", text) else None
+
+    fault = None
+    for elem in root.iter():
+        if elem.tag.rsplit("}", 1)[-1] == "Fault":
+            fault = elem
+            break
+    if fault is None:
+        return None
+
+    values = []
+    reasons = []
+    for elem in fault.iter():
+        local = elem.tag.rsplit("}", 1)[-1]
+        if local == "Value" and elem.text:
+            values.append(elem.text.strip())
+        elif local == "Text" and elem.text:
+            reasons.append(elem.text.strip())
+    detail = ": ".join([part for part in ((values[-1] if values else ""), (reasons[0] if reasons else "")) if part])
+    return detail or "ONVIF SOAP fault"
+
+
 def onvif_post(url, body, credentials=None):
     request = urllib_request.Request(
         url,
-        data=onvif_envelope(body).encode("utf-8"),
+        data=onvif_envelope(body, credentials=credentials).encode("utf-8"),
         headers={
             "Content-Type": "application/soap+xml; charset=utf-8",
             "Accept": "application/soap+xml, text/xml, */*",
@@ -1166,7 +1220,11 @@ def onvif_post(url, body, credentials=None):
         token = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
         request.add_header("Authorization", f"Basic {token}")
     with urllib_request.urlopen(request, timeout=4) as response:
-        return response.read(256)
+        data = response.read(4096)
+    fault = onvif_fault_message(data)
+    if fault:
+        raise OnvifFault(fault)
+    return data
 
 
 def run_ptz_command(camera, payload):
@@ -1209,7 +1267,7 @@ def run_ptz_command(camera, payload):
                 "endpoint": redact_url_credentials(url),
                 "warning": stop_warning,
             }
-        except (TimeoutError, OSError, urllib_error.URLError, urllib_error.HTTPError) as exc:
+        except (OnvifFault, TimeoutError, OSError, urllib_error.URLError, urllib_error.HTTPError) as exc:
             last_error = exc
 
     raise RuntimeError(f"PTZ command failed: {last_error}")

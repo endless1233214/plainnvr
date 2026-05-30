@@ -132,6 +132,9 @@ controls for that camera.
 PlainNVR sends ONVIF PTZ commands from the server. If ONVIF URL is blank, it
 tries common local ONVIF endpoints on the camera host from the stream URL. For
 odd cameras, set the ONVIF URL and Profile token in the camera editor.
+Username/password credentials can be embedded in the ONVIF URL when a camera
+requires WS-Security, for example
+`http://user:password@camera-ip:8080/onvif/device_service`.
 
 ## Camera URL Examples
 
