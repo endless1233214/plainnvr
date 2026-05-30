@@ -34,11 +34,20 @@ struct Camera: Decodable, Identifiable, Hashable {
     let schedule: CameraSchedule?
     let recordAudio: Bool?
     let rtspTransport: String?
+    let ptzEnabled: Bool?
+    let ptzType: String?
+    let ptzUrl: String?
+    let ptzProfileToken: String?
+    let ptzSpeed: Double?
     let createdAt: String?
     let updatedAt: String?
 
     var shortRetention: String {
         "\(retentionDays)d"
+    }
+
+    var supportsPTZ: Bool {
+        ptzEnabled == true
     }
 }
 

@@ -215,6 +215,26 @@ final class PlainNVRViewModel: ObservableObject {
         }
     }
 
+    func sendPTZ(action: String) async {
+        do {
+            guard let client, let camera = selectedCamera else {
+                throw PlainNVRClientError.invalidServerURL
+            }
+            guard camera.supportsPTZ else {
+                throw PlainNVRClientError.server("PTZ is not enabled for this camera.")
+            }
+            let durationMs = ["stop", "home"].contains(action) ? 0 : 300
+            try await client.sendPTZ(
+                cameraID: camera.id,
+                action: action,
+                speed: camera.ptzSpeed ?? 0.55,
+                durationMs: durationMs
+            )
+        } catch {
+            errorMessage = userFacingError(error)
+        }
+    }
+
     func diagnoseLiveStream() async {
         liveStatusMessage = "Using MJPEG video from PlainNVR. MJPEG does not carry audio."
     }

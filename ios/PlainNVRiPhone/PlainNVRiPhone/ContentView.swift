@@ -338,9 +338,54 @@ struct LiveControlsView: View {
 
             Toggle("Grayscale", isOn: $viewModel.liveGrayscaleEnabled)
                 .toggleStyle(.switch)
+
+            if viewModel.selectedCamera?.supportsPTZ == true {
+                PTZControlPad()
+            }
         }
         .padding(12)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+struct PTZControlPad: View {
+    @EnvironmentObject private var viewModel: PlainNVRViewModel
+
+    private let columns = Array(repeating: GridItem(.fixed(46), spacing: 8), count: 3)
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 16) {
+            LazyVGrid(columns: columns, spacing: 8) {
+                ptzButton("arrow.up.left", action: "up_left", label: "Up Left")
+                ptzButton("arrow.up", action: "up", label: "Up")
+                ptzButton("arrow.up.right", action: "up_right", label: "Up Right")
+                ptzButton("arrow.left", action: "left", label: "Left")
+                ptzButton("house", action: "home", label: "Home")
+                ptzButton("arrow.right", action: "right", label: "Right")
+                ptzButton("arrow.down.left", action: "down_left", label: "Down Left")
+                ptzButton("arrow.down", action: "down", label: "Down")
+                ptzButton("arrow.down.right", action: "down_right", label: "Down Right")
+            }
+
+            VStack(spacing: 8) {
+                ptzButton("plus.magnifyingglass", action: "zoom_in", label: "Zoom In")
+                ptzButton("stop.fill", action: "stop", label: "Stop")
+                ptzButton("minus.magnifyingglass", action: "zoom_out", label: "Zoom Out")
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func ptzButton(_ systemName: String, action: String, label: String) -> some View {
+        Button {
+            Task { await viewModel.sendPTZ(action: action) }
+        } label: {
+            Image(systemName: systemName)
+                .font(.headline)
+                .frame(width: 42, height: 42)
+        }
+        .accessibilityLabel(label)
+        .buttonStyle(.bordered)
     }
 }
 

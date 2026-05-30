@@ -85,7 +85,33 @@
           <div class="toggles">
             <label><input id="enabled" type="checkbox" checked /> Enabled</label>
             <label><input id="recordAudio" type="checkbox" checked /> Audio</label>
+            <label><input id="ptzEnabled" type="checkbox" /> PTZ</label>
           </div>
+
+          <fieldset class="ptz-settings">
+            <legend>PTZ</legend>
+            <label>
+              Driver
+              <select id="ptzType">
+                <option value="onvif" selected>ONVIF</option>
+                <option value="none">None</option>
+              </select>
+            </label>
+            <label>
+              ONVIF URL
+              <input id="ptzUrl" autocomplete="off" placeholder="http://camera-ip:8080/onvif/ptz_service" />
+            </label>
+            <div class="ptz-form-row">
+              <label>
+                Profile
+                <input id="ptzProfileToken" autocomplete="off" value="Profile_1" />
+              </label>
+              <label>
+                Speed
+                <input id="ptzSpeed" type="number" min="0.05" max="1" step="0.05" value="0.55" />
+              </label>
+            </div>
+          </fieldset>
 
           <fieldset class="schedule">
             <legend>Schedule</legend>
@@ -166,6 +192,25 @@
           <div class="live-frame">
             <img id="liveImage" alt="" />
             <div id="liveEmpty" class="empty">No live stream selected.</div>
+          </div>
+          <div id="ptzPanel" class="ptz-panel" hidden>
+            <div class="ptz-pad" aria-label="PTZ movement controls">
+              <button type="button" data-ptz="up_left" title="Up left" aria-label="Up left">&nwarr;</button>
+              <button type="button" data-ptz="up" title="Up" aria-label="Up">&uarr;</button>
+              <button type="button" data-ptz="up_right" title="Up right" aria-label="Up right">&nearr;</button>
+              <button type="button" data-ptz="left" title="Left" aria-label="Left">&larr;</button>
+              <button type="button" data-ptz="home" title="Home" aria-label="Home">&#8962;</button>
+              <button type="button" data-ptz="right" title="Right" aria-label="Right">&rarr;</button>
+              <button type="button" data-ptz="down_left" title="Down left" aria-label="Down left">&swarr;</button>
+              <button type="button" data-ptz="down" title="Down" aria-label="Down">&darr;</button>
+              <button type="button" data-ptz="down_right" title="Down right" aria-label="Down right">&searr;</button>
+            </div>
+            <div class="ptz-zoom">
+              <button type="button" data-ptz="zoom_in" title="Zoom in" aria-label="Zoom in">+</button>
+              <button type="button" data-ptz="stop" title="Stop" aria-label="Stop">&#9632;</button>
+              <button type="button" data-ptz="zoom_out" title="Zoom out" aria-label="Zoom out">-</button>
+            </div>
+            <span id="ptzState" class="muted"></span>
           </div>
         </section>
 

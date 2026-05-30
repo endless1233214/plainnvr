@@ -364,6 +364,17 @@ fieldset {
   gap: 10px;
 }
 
+.ptz-settings {
+  display: grid;
+  gap: 10px;
+}
+
+.ptz-form-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) 110px;
+  gap: 10px;
+}
+
 .camera-list {
   display: grid;
   gap: 8px;
@@ -496,6 +507,43 @@ fieldset {
 
 #liveImage[hidden] {
   display: none;
+}
+
+.ptz-panel {
+  display: grid;
+  grid-template-columns: auto auto minmax(80px, 1fr);
+  align-items: center;
+  gap: 14px;
+  padding: 0 16px 16px;
+}
+
+.ptz-panel[hidden] {
+  display: none;
+}
+
+.ptz-pad {
+  display: grid;
+  grid-template-columns: repeat(3, 42px);
+  grid-auto-rows: 42px;
+  gap: 6px;
+}
+
+.ptz-zoom {
+  display: grid;
+  grid-template-columns: 42px;
+  grid-auto-rows: 42px;
+  gap: 6px;
+}
+
+.ptz-pad button,
+.ptz-zoom button {
+  display: grid;
+  place-items: center;
+  min-width: 42px;
+  min-height: 42px;
+  padding: 0;
+  font-size: 20px;
+  line-height: 1;
 }
 
 #player {
@@ -661,5 +709,13 @@ fieldset {
   .user-row,
   .user-form {
     grid-template-columns: 1fr;
+  }
+
+  .ptz-panel {
+    grid-template-columns: auto auto;
+  }
+
+  .ptz-panel .muted {
+    grid-column: 1 / -1;
   }
 }

@@ -123,6 +123,16 @@ The live viewer includes a Grayscale toggle. It applies only to the live HLS,
 MJPEG, or snapshot output requested by that viewer; recordings stay as the
 original camera stream.
 
+## PTZ Control
+
+Camera setup includes a PTZ checkbox beside Enabled and Audio. When PTZ is
+enabled, the web live view and iPhone app show pan, tilt, home, stop, and zoom
+controls for that camera.
+
+PlainNVR sends ONVIF PTZ commands from the server. If ONVIF URL is blank, it
+tries common local ONVIF endpoints on the camera host from the stream URL. For
+odd cameras, set the ONVIF URL and Profile token in the camera editor.
+
 ## Camera URL Examples
 
 Common RTSP shapes look like:

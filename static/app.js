@@ -7,6 +7,7 @@ const state = {
   selectedCameraId: "",
   liveCameraId: "",
   streamToken: "",
+  ptzBusy: false,
 };
 
 const dayKeys = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
@@ -193,6 +194,11 @@ function cameraPayloadFromForm() {
     retention_days: Number($("retentionDays").value),
     record_audio: $("recordAudio").checked,
     rtsp_transport: $("rtspTransport").value,
+    ptz_enabled: $("ptzEnabled").checked,
+    ptz_type: $("ptzType").value,
+    ptz_url: $("ptzUrl").value.trim(),
+    ptz_profile_token: $("ptzProfileToken").value.trim(),
+    ptz_speed: Number($("ptzSpeed").value),
     schedule: selectedScheduleFromForm(),
   };
 }
@@ -209,6 +215,11 @@ function resetForm() {
   $("segmentSeconds").value = "60";
   $("retentionDays").value = "14";
   $("rtspTransport").value = "tcp";
+  $("ptzEnabled").checked = false;
+  $("ptzType").value = "onvif";
+  $("ptzUrl").value = "";
+  $("ptzProfileToken").value = "Profile_1";
+  $("ptzSpeed").value = "0.55";
   applyScheduleToForm({ mode: "always", days: {} });
   $("deleteCamera").hidden = true;
   renderHaPanel(null);
@@ -228,6 +239,11 @@ function editCamera(camera) {
   $("segmentSeconds").value = String(camera.segment_seconds);
   $("retentionDays").value = String(camera.retention_days);
   $("rtspTransport").value = camera.rtsp_transport || "tcp";
+  $("ptzEnabled").checked = Boolean(camera.ptz_enabled);
+  $("ptzType").value = camera.ptz_type || "onvif";
+  $("ptzUrl").value = camera.ptz_url || "";
+  $("ptzProfileToken").value = camera.ptz_profile_token || "Profile_1";
+  $("ptzSpeed").value = String(camera.ptz_speed || 0.55);
   applyScheduleToForm(camera.schedule);
   $("deleteCamera").hidden = false;
   renderHaPanel(camera);
@@ -255,6 +271,7 @@ function renderCameras() {
         <span class="chip ${running ? "ok" : camera.enabled ? "warn" : "off"}">${running ? "recording" : camera.enabled ? "waiting" : "disabled"}</span>
         <span class="chip">${camera.segment_seconds}s</span>
         <span class="chip">${camera.retention_days}d</span>
+        ${camera.ptz_enabled ? '<span class="chip ok">ptz</span>' : ""}
       </div>
     `;
     button.addEventListener("click", () => editCamera(camera));
@@ -364,6 +381,27 @@ function renderLiveCameras() {
   const hasCameras = state.cameras.length > 0;
   $("startLive").disabled = !hasCameras;
   $("stopLive").disabled = !hasCameras;
+  renderPtzPanel();
+}
+
+function selectedLiveCamera() {
+  const cameraId = $("liveCamera").value || state.liveCameraId;
+  return state.cameras.find((item) => item.id === cameraId) || null;
+}
+
+function renderPtzPanel() {
+  const camera = selectedLiveCamera();
+  const panel = $("ptzPanel");
+  const ptzEnabled = Boolean(camera?.ptz_enabled);
+  panel.hidden = !ptzEnabled;
+  if (!ptzEnabled) {
+    $("ptzState").textContent = "";
+  } else if (state.ptzBusy) {
+    $("ptzState").textContent = "Moving...";
+  }
+  panel.querySelectorAll("[data-ptz]").forEach((button) => {
+    button.disabled = !ptzEnabled || state.ptzBusy;
+  });
 }
 
 function renderEvents(events) {
@@ -544,6 +582,7 @@ function startLive() {
   image.hidden = false;
   $("liveState").textContent = `${camera.name} Source MJPEG`;
   $("stopLive").disabled = false;
+  renderPtzPanel();
 }
 
 function stopLive() {
@@ -552,6 +591,31 @@ function stopLive() {
   $("liveEmpty").hidden = false;
   $("liveState").textContent = "";
   $("stopLive").disabled = state.cameras.length === 0;
+  renderPtzPanel();
+}
+
+async function sendPtzCommand(action) {
+  const camera = selectedLiveCamera();
+  if (!camera?.ptz_enabled) return;
+  state.ptzBusy = true;
+  renderPtzPanel();
+  $("ptzState").textContent = "Sending...";
+  try {
+    const result = await api(`/api/cameras/${camera.id}/ptz`, {
+      method: "POST",
+      body: JSON.stringify({
+        action,
+        speed: camera.ptz_speed || 0.55,
+        duration_ms: action === "stop" || action === "home" ? 0 : 300,
+      }),
+    });
+    $("ptzState").textContent = result.warning || "OK";
+  } catch (error) {
+    $("ptzState").textContent = error.message;
+  } finally {
+    state.ptzBusy = false;
+    renderPtzPanel();
+  }
 }
 
 async function logout() {
@@ -601,6 +665,14 @@ document.addEventListener("DOMContentLoaded", () => {
   $("stopLive").addEventListener("click", stopLive);
   $("liveCamera").addEventListener("change", (event) => {
     state.liveCameraId = event.target.value;
+    renderPtzPanel();
+  });
+  document.querySelectorAll("[data-ptz]").forEach((button) => {
+    button.addEventListener("click", () => {
+      sendPtzCommand(button.dataset.ptz).catch((error) => {
+        $("ptzState").textContent = error.message;
+      });
+    });
   });
   $("playbackCamera").addEventListener("change", () => {
     loadCoverage().catch((error) => {

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import base64
+from html import escape as html_escape
 import json
 import hashlib
 import hmac
@@ -20,6 +21,7 @@ from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib import error as urllib_error, request as urllib_request
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
 
@@ -74,10 +76,35 @@ AUTH_HASH_ITERATIONS = int(os.environ.get("NVR_AUTH_HASH_ITERATIONS", "260000"))
 BOOTSTRAP_USERNAME = os.environ.get("NVR_AUTH_USERNAME", "admin").strip() or "admin"
 BOOTSTRAP_PASSWORD = os.environ.get("NVR_AUTH_PASSWORD", "")
 STREAM_TOKEN_OVERRIDE = os.environ.get("NVR_STREAM_TOKEN", "").strip()
+DEFAULT_PTZ_PROFILE_TOKEN = os.environ.get("NVR_PTZ_PROFILE_TOKEN", "Profile_1").strip() or "Profile_1"
+try:
+    DEFAULT_PTZ_SPEED = float(os.environ.get("NVR_PTZ_SPEED", "0.55"))
+except ValueError:
+    DEFAULT_PTZ_SPEED = 0.55
+DEFAULT_PTZ_SPEED = max(0.05, min(DEFAULT_PTZ_SPEED, 1.0))
+try:
+    PTZ_DEFAULT_DURATION_MS = int(os.environ.get("NVR_PTZ_DURATION_MS", "350"))
+except ValueError:
+    PTZ_DEFAULT_DURATION_MS = 350
+PTZ_DEFAULT_DURATION_MS = max(80, min(PTZ_DEFAULT_DURATION_MS, 1500))
 
 DAY_KEYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 SEGMENT_RE = re.compile(r"^(?P<stamp>\d{8}T\d{6})\.mp4$")
 STREAM_URL_PREFIXES = ("rtsp://", "rtsps://", "http://", "https://")
+CONTROL_URL_PREFIXES = ("http://", "https://")
+PTZ_TYPES = ("none", "onvif")
+PTZ_MOVE_VECTORS = {
+    "up": (0, 1, 0),
+    "down": (0, -1, 0),
+    "left": (-1, 0, 0),
+    "right": (1, 0, 0),
+    "up_left": (-1, 1, 0),
+    "up_right": (1, 1, 0),
+    "down_left": (-1, -1, 0),
+    "down_right": (1, -1, 0),
+    "zoom_in": (0, 0, 1),
+    "zoom_out": (0, 0, -1),
+}
 
 
 def utcnow():
@@ -245,6 +272,11 @@ def init_db():
                 record_audio INTEGER NOT NULL DEFAULT 1,
                 grayscale_mode TEXT NOT NULL DEFAULT 'off',
                 rtsp_transport TEXT NOT NULL DEFAULT 'tcp',
+                ptz_enabled INTEGER NOT NULL DEFAULT 0,
+                ptz_type TEXT NOT NULL DEFAULT 'onvif',
+                ptz_url TEXT NOT NULL DEFAULT '',
+                ptz_profile_token TEXT NOT NULL DEFAULT 'Profile_1',
+                ptz_speed REAL NOT NULL DEFAULT 0.55,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
@@ -305,6 +337,18 @@ def ensure_camera_schema(conn):
         conn.execute("ALTER TABLE cameras ADD COLUMN audio_url TEXT NOT NULL DEFAULT ''")
     if "grayscale_mode" not in columns:
         conn.execute("ALTER TABLE cameras ADD COLUMN grayscale_mode TEXT NOT NULL DEFAULT 'off'")
+    if "rtsp_transport" not in columns:
+        conn.execute("ALTER TABLE cameras ADD COLUMN rtsp_transport TEXT NOT NULL DEFAULT 'tcp'")
+    if "ptz_enabled" not in columns:
+        conn.execute("ALTER TABLE cameras ADD COLUMN ptz_enabled INTEGER NOT NULL DEFAULT 0")
+    if "ptz_type" not in columns:
+        conn.execute("ALTER TABLE cameras ADD COLUMN ptz_type TEXT NOT NULL DEFAULT 'onvif'")
+    if "ptz_url" not in columns:
+        conn.execute("ALTER TABLE cameras ADD COLUMN ptz_url TEXT NOT NULL DEFAULT ''")
+    if "ptz_profile_token" not in columns:
+        conn.execute("ALTER TABLE cameras ADD COLUMN ptz_profile_token TEXT NOT NULL DEFAULT 'Profile_1'")
+    if "ptz_speed" not in columns:
+        conn.execute("ALTER TABLE cameras ADD COLUMN ptz_speed REAL NOT NULL DEFAULT 0.55")
 
 
 def bootstrap_auth_from_env(conn):
@@ -453,8 +497,13 @@ def camera_from_row(row):
     data = dict(row)
     data["enabled"] = bool(data["enabled"])
     data["record_audio"] = bool(data["record_audio"])
+    data["ptz_enabled"] = bool(data.get("ptz_enabled", False))
     data["audio_url"] = data.get("audio_url") or ""
     data["grayscale_mode"] = normalize_grayscale_mode(data.get("grayscale_mode"))
+    data["ptz_type"] = normalize_ptz_type(data.get("ptz_type"))
+    data["ptz_url"] = data.get("ptz_url") or ""
+    data["ptz_profile_token"] = normalize_ptz_profile_token(data.get("ptz_profile_token"))
+    data["ptz_speed"] = normalize_ptz_speed(data.get("ptz_speed"))
     data["schedule"] = normalize_schedule(json.loads(data.pop("schedule_json")))
     return data
 
@@ -488,6 +537,7 @@ def validate_camera_payload(payload, partial=False):
     name = str(payload.get("name", "")).strip()
     rtsp_url = str(payload.get("rtsp_url", "")).strip()
     audio_url = str(payload.get("audio_url", "")).strip()
+    ptz_url = str(payload.get("ptz_url", "")).strip()
     if not partial or "name" in payload:
         if not name:
             errors["name"] = "Name is required."
@@ -500,6 +550,17 @@ def validate_camera_payload(payload, partial=False):
         errors["audio_url"] = "Use an rtsp://, rtsps://, http://, or https:// audio URL."
     if "grayscale_mode" in payload and normalize_grayscale_mode(payload.get("grayscale_mode")) != str(payload.get("grayscale_mode") or "").strip().lower():
         errors["grayscale_mode"] = "Use off, always, or auto."
+    if ptz_url and not ptz_url.startswith(CONTROL_URL_PREFIXES):
+        errors["ptz_url"] = "Use an http:// or https:// ONVIF endpoint URL."
+    if "ptz_type" in payload and normalize_ptz_type(payload.get("ptz_type")) != str(payload.get("ptz_type") or "").strip().lower():
+        errors["ptz_type"] = "Use none or onvif."
+    if "ptz_speed" in payload:
+        try:
+            normalize_ptz_speed(payload.get("ptz_speed"))
+        except ValueError:
+            errors["ptz_speed"] = "Use a PTZ speed from 0.05 to 1.0."
+    if "ptz_profile_token" in payload and len(str(payload.get("ptz_profile_token") or "")) > 80:
+        errors["ptz_profile_token"] = "Profile token is too long."
     if errors:
         raise ValueError(json.dumps(errors))
 
@@ -509,6 +570,26 @@ def normalize_grayscale_mode(value):
     return value if value in ("off", "always", "auto") else "off"
 
 
+def normalize_ptz_type(value):
+    value = str(value or "onvif").strip().lower()
+    return value if value in PTZ_TYPES else "none"
+
+
+def normalize_ptz_profile_token(value):
+    value = str(value or "").strip()
+    return value[:80] or DEFAULT_PTZ_PROFILE_TOKEN
+
+
+def normalize_ptz_speed(value):
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Invalid PTZ speed.") from exc
+    if parsed < 0.05 or parsed > 1.0:
+        raise ValueError("Invalid PTZ speed.")
+    return round(parsed, 2)
+
+
 def create_camera(payload):
     validate_camera_payload(payload)
     now = iso_now()
@@ -516,15 +597,18 @@ def create_camera(payload):
     schedule = normalize_schedule(payload.get("schedule"))
     segment_seconds = max(10, int(payload.get("segment_seconds") or DEFAULT_SEGMENT_SECONDS))
     retention_days = max(1, int(payload.get("retention_days") or 14))
+    ptz_type = normalize_ptz_type(payload.get("ptz_type"))
+    ptz_speed = normalize_ptz_speed(payload.get("ptz_speed", DEFAULT_PTZ_SPEED))
     with db_conn() as conn:
         slug = unique_slug(conn, payload["name"])
         conn.execute(
             """
             INSERT INTO cameras (
                 id, name, slug, rtsp_url, audio_url, enabled, segment_seconds, retention_days,
-                schedule_json, record_audio, grayscale_mode, rtsp_transport, created_at, updated_at
+                schedule_json, record_audio, grayscale_mode, rtsp_transport, ptz_enabled, ptz_type,
+                ptz_url, ptz_profile_token, ptz_speed, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 camera_id,
@@ -539,6 +623,11 @@ def create_camera(payload):
                 normalize_bool(payload.get("record_audio", True)),
                 normalize_grayscale_mode(payload.get("grayscale_mode")),
                 payload.get("rtsp_transport", "tcp") if payload.get("rtsp_transport") in ("tcp", "udp") else "tcp",
+                normalize_bool(payload.get("ptz_enabled", False)),
+                ptz_type,
+                str(payload.get("ptz_url", "")).strip(),
+                normalize_ptz_profile_token(payload.get("ptz_profile_token")),
+                ptz_speed,
                 now,
                 now,
             ),
@@ -555,6 +644,8 @@ def update_camera(camera_id, payload):
     schedule = normalize_schedule(merged.get("schedule"))
     segment_seconds = max(10, int(merged.get("segment_seconds") or DEFAULT_SEGMENT_SECONDS))
     retention_days = max(1, int(merged.get("retention_days") or 14))
+    ptz_type = normalize_ptz_type(merged.get("ptz_type"))
+    ptz_speed = normalize_ptz_speed(merged.get("ptz_speed", DEFAULT_PTZ_SPEED))
     with db_conn() as conn:
         slug = unique_slug(conn, merged["name"], camera_id)
         conn.execute(
@@ -562,7 +653,8 @@ def update_camera(camera_id, payload):
             UPDATE cameras
             SET name = ?, slug = ?, rtsp_url = ?, audio_url = ?, enabled = ?, segment_seconds = ?,
                 retention_days = ?, schedule_json = ?, record_audio = ?, grayscale_mode = ?,
-                rtsp_transport = ?, updated_at = ?
+                rtsp_transport = ?, ptz_enabled = ?, ptz_type = ?, ptz_url = ?, ptz_profile_token = ?,
+                ptz_speed = ?, updated_at = ?
             WHERE id = ?
             """,
             (
@@ -577,6 +669,11 @@ def update_camera(camera_id, payload):
                 normalize_bool(merged.get("record_audio")),
                 normalize_grayscale_mode(merged.get("grayscale_mode")),
                 merged.get("rtsp_transport") if merged.get("rtsp_transport") in ("tcp", "udp") else "tcp",
+                normalize_bool(merged.get("ptz_enabled")),
+                ptz_type,
+                str(merged.get("ptz_url", "")).strip(),
+                normalize_ptz_profile_token(merged.get("ptz_profile_token")),
+                ptz_speed,
                 iso_now(),
                 camera_id,
             ),
@@ -941,6 +1038,181 @@ def optional_bounded_int(value, minimum, maximum):
     except (TypeError, ValueError):
         return None
     return max(minimum, min(parsed, maximum))
+
+
+def netloc_without_credentials(parsed):
+    host = parsed.hostname or ""
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    return f"{host}:{parsed.port}" if parsed.port else host
+
+
+def url_credentials(parsed):
+    if parsed.username is None:
+        return None
+    return unquote(parsed.username), unquote(parsed.password or "")
+
+
+def clean_control_url(value):
+    parsed = urlparse(value)
+    netloc = netloc_without_credentials(parsed)
+    path = parsed.path or "/"
+    query = f"?{parsed.query}" if parsed.query else ""
+    return f"{parsed.scheme}://{netloc}{path}{query}"
+
+
+def redact_url_credentials(value):
+    parsed = urlparse(str(value or ""))
+    if not parsed.username:
+        return value
+    netloc = netloc_without_credentials(parsed)
+    path = parsed.path or ""
+    query = f"?{parsed.query}" if parsed.query else ""
+    return f"{parsed.scheme}://<credentials>@{netloc}{path}{query}"
+
+
+def ptz_url_candidates(camera):
+    explicit_url = str(camera.get("ptz_url") or "").strip()
+    rtsp_url = str(camera.get("rtsp_url") or "").strip()
+    source = explicit_url or rtsp_url
+    parsed = urlparse(source)
+    credentials = url_credentials(urlparse(explicit_url)) or url_credentials(urlparse(rtsp_url))
+    candidates = []
+
+    def add(value):
+        if value not in candidates:
+            candidates.append(value)
+
+    if explicit_url:
+        if parsed.path and parsed.path != "/":
+            add(clean_control_url(explicit_url))
+        else:
+            base = f"{parsed.scheme}://{netloc_without_credentials(parsed)}"
+            for path in ("/onvif/ptz_service", "/onvif/PTZ", "/onvif/ptz", "/onvif/device_service"):
+                add(f"{base}{path}")
+        return candidates, credentials
+
+    host = parsed.hostname
+    if not host:
+        return [], credentials
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    for port in (8080, 80):
+        port_suffix = "" if port == 80 else f":{port}"
+        for path in ("/onvif/ptz_service", "/onvif/PTZ", "/onvif/ptz", "/onvif/device_service"):
+            add(f"http://{host}{port_suffix}{path}")
+    return candidates, credentials
+
+
+def onvif_envelope(body):
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl" xmlns:tt="http://www.onvif.org/ver10/schema">
+  <s:Body>
+    {body}
+  </s:Body>
+</s:Envelope>"""
+
+
+def onvif_stop_body(profile_token):
+    token = html_escape(profile_token, quote=True)
+    return f"""<tptz:Stop>
+      <tptz:ProfileToken>{token}</tptz:ProfileToken>
+      <tptz:PanTilt>true</tptz:PanTilt>
+      <tptz:Zoom>true</tptz:Zoom>
+    </tptz:Stop>"""
+
+
+def onvif_home_body(profile_token):
+    token = html_escape(profile_token, quote=True)
+    return f"""<tptz:GotoHomePosition>
+      <tptz:ProfileToken>{token}</tptz:ProfileToken>
+    </tptz:GotoHomePosition>"""
+
+
+def onvif_move_body(action, speed, duration_ms, profile_token):
+    x_dir, y_dir, z_dir = PTZ_MOVE_VECTORS[action]
+    token = html_escape(profile_token, quote=True)
+    velocity = []
+    if x_dir or y_dir:
+        velocity.append(
+            f'<tt:PanTilt x="{x_dir * speed:.2f}" y="{y_dir * speed:.2f}" '
+            'space="http://www.onvif.org/ver10/tptz/PanTiltSpaces/VelocityGenericSpace"/>'
+        )
+    if z_dir:
+        velocity.append(
+            f'<tt:Zoom x="{z_dir * speed:.2f}" '
+            'space="http://www.onvif.org/ver10/tptz/ZoomSpaces/VelocityGenericSpace"/>'
+        )
+    timeout_seconds = max(0.08, min(duration_ms / 1000, 1.5))
+    return f"""<tptz:ContinuousMove>
+      <tptz:ProfileToken>{token}</tptz:ProfileToken>
+      <tptz:Velocity>{''.join(velocity)}</tptz:Velocity>
+      <tptz:Timeout>PT{timeout_seconds:.2f}S</tptz:Timeout>
+    </tptz:ContinuousMove>"""
+
+
+def onvif_post(url, body, credentials=None):
+    request = urllib_request.Request(
+        url,
+        data=onvif_envelope(body).encode("utf-8"),
+        headers={
+            "Content-Type": "application/soap+xml; charset=utf-8",
+            "Accept": "application/soap+xml, text/xml, */*",
+        },
+        method="POST",
+    )
+    if credentials:
+        username, password = credentials
+        token = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
+        request.add_header("Authorization", f"Basic {token}")
+    with urllib_request.urlopen(request, timeout=4) as response:
+        return response.read(256)
+
+
+def run_ptz_command(camera, payload):
+    if not camera.get("ptz_enabled"):
+        raise ValueError("PTZ is disabled for this camera.")
+    if normalize_ptz_type(camera.get("ptz_type")) != "onvif":
+        raise ValueError("This camera does not have an ONVIF PTZ driver configured.")
+
+    action = str(payload.get("action", "")).strip().lower().replace("-", "_")
+    if action not in PTZ_MOVE_VECTORS and action not in ("stop", "home"):
+        raise ValueError("Unsupported PTZ action.")
+    speed = normalize_ptz_speed(payload.get("speed", camera.get("ptz_speed", DEFAULT_PTZ_SPEED)))
+    duration_ms = bounded_int(payload.get("duration_ms"), PTZ_DEFAULT_DURATION_MS, 80, 1500)
+    profile_token = normalize_ptz_profile_token(camera.get("ptz_profile_token"))
+    candidates, credentials = ptz_url_candidates(camera)
+    if not candidates:
+        raise ValueError("Could not derive an ONVIF endpoint from this camera URL.")
+
+    if action == "stop":
+        body = onvif_stop_body(profile_token)
+    elif action == "home":
+        body = onvif_home_body(profile_token)
+    else:
+        body = onvif_move_body(action, speed, duration_ms, profile_token)
+
+    last_error = None
+    for url in candidates:
+        try:
+            onvif_post(url, body, credentials=credentials)
+            stop_warning = None
+            if action in PTZ_MOVE_VECTORS:
+                time.sleep(duration_ms / 1000)
+                try:
+                    onvif_post(url, onvif_stop_body(profile_token), credentials=credentials)
+                except (TimeoutError, OSError, urllib_error.URLError, urllib_error.HTTPError) as exc:
+                    stop_warning = f"Move sent, but stop failed: {exc}"
+            return {
+                "ok": True,
+                "action": action,
+                "endpoint": redact_url_credentials(url),
+                "warning": stop_warning,
+            }
+        except (TimeoutError, OSError, urllib_error.URLError, urllib_error.HTTPError) as exc:
+            last_error = exc
+
+    raise RuntimeError(f"PTZ command failed: {last_error}")
 
 
 def build_mjpeg_command(camera, grayscale=False):
@@ -1670,6 +1942,7 @@ def redact_camera_text(text, camera):
     replacements = {
         str(camera.get("rtsp_url") or "").strip(): "<stream-url>",
         str(camera.get("audio_url") or "").strip(): "<audio-url>",
+        str(camera.get("ptz_url") or "").strip(): "<ptz-url>",
     }
     for value, label in replacements.items():
         if value:
@@ -1955,6 +2228,10 @@ class NvrHandler(SimpleHTTPRequestHandler):
                 return
             self.send_json(camera, HTTPStatus.CREATED)
             return
+        match = re.match(r"^/api/cameras/([a-f0-9]+)/ptz$", parsed.path)
+        if match:
+            self.handle_camera_ptz(match.group(1), payload)
+            return
         match = re.match(r"^/api/cameras/([a-f0-9]+)/(recorder|live)/(start|stop|restart)$", parsed.path)
         if match:
             self.handle_camera_control(match.group(1), match.group(2), match.group(3))
@@ -2078,6 +2355,21 @@ class NvrHandler(SimpleHTTPRequestHandler):
         elif action == "start":
             pass
         self.send_json({"ok": True})
+
+    def handle_camera_ptz(self, camera_id, payload):
+        camera = get_camera(camera_id)
+        if not camera:
+            self.send_error_json(HTTPStatus.NOT_FOUND, "Camera not found.")
+            return
+        try:
+            result = run_ptz_command(camera, payload)
+        except ValueError as exc:
+            self.send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
+            return
+        except RuntimeError as exc:
+            self.send_error_json(HTTPStatus.BAD_GATEWAY, redact_camera_text(str(exc), camera))
+            return
+        self.send_json(result)
 
     def handle_api_get(self, parsed):
         query = parse_qs(parsed.query)

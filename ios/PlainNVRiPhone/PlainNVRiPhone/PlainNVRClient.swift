@@ -24,6 +24,18 @@ struct OKResponse: Decodable {
     let ok: Bool
 }
 
+struct PTZCommandRequest: Encodable {
+    let action: String
+    let speed: Double
+    let durationMs: Int
+
+    enum CodingKeys: String, CodingKey {
+        case action
+        case speed
+        case durationMs = "duration_ms"
+    }
+}
+
 final class PlainNVRClient {
     let baseURL: URL
     let serverAddress: String
@@ -175,6 +187,13 @@ final class PlainNVRClient {
 
     func restartLive(cameraID: String) async throws {
         try await cameraControl(cameraID: cameraID, target: "live", action: "restart")
+    }
+
+    func sendPTZ(cameraID: String, action: String, speed: Double, durationMs: Int = 300) async throws {
+        let _: OKResponse = try await post(
+            "/api/cameras/\(cameraID)/ptz",
+            body: PTZCommandRequest(action: action, speed: speed, durationMs: durationMs)
+        )
     }
 
     func downloadSegment(_ segment: RecordingSegment, streamToken: String) async throws -> URL {
