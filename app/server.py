@@ -1259,7 +1259,7 @@ def run_ptz_command(camera, payload):
                 time.sleep(duration_ms / 1000)
                 try:
                     onvif_post(url, onvif_stop_body(profile_token), credentials=credentials)
-                except (TimeoutError, OSError, urllib_error.URLError, urllib_error.HTTPError) as exc:
+                except (OnvifFault, TimeoutError, OSError, urllib_error.URLError, urllib_error.HTTPError) as exc:
                     stop_warning = f"Move sent, but stop failed: {exc}"
             return {
                 "ok": True,
