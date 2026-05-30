@@ -514,7 +514,8 @@ fieldset {
   grid-template-columns: auto auto minmax(80px, 1fr);
   align-items: center;
   gap: 14px;
-  padding: 0 16px 16px;
+  border-bottom: 1px solid var(--line);
+  padding: 12px 16px 16px;
 }
 
 .ptz-panel[hidden] {

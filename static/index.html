@@ -189,10 +189,6 @@
             <button id="startLive" type="button">Start</button>
             <button id="stopLive" type="button">Stop</button>
           </div>
-          <div class="live-frame">
-            <img id="liveImage" alt="" />
-            <div id="liveEmpty" class="empty">No live stream selected.</div>
-          </div>
           <div id="ptzPanel" class="ptz-panel" hidden>
             <div class="ptz-pad" aria-label="PTZ movement controls">
               <button type="button" data-ptz="up_left" title="Up left" aria-label="Up left">&nwarr;</button>
@@ -211,6 +207,10 @@
               <button type="button" data-ptz="zoom_out" title="Zoom out" aria-label="Zoom out">-</button>
             </div>
             <span id="ptzState" class="muted"></span>
+          </div>
+          <div class="live-frame">
+            <img id="liveImage" alt="" />
+            <div id="liveEmpty" class="empty">No live stream selected.</div>
           </div>
         </section>
 
