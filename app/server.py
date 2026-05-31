@@ -28,6 +28,13 @@ from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 from xml.etree import ElementTree
 
 
+def env_float(name, default):
+    try:
+        return float(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
+
+
 APP_HOST = os.environ.get("NVR_HOST", "0.0.0.0")
 APP_PORT = int(os.environ.get("NVR_PORT", "8787"))
 DATA_DIR = Path(os.environ.get("NVR_DATA_DIR", "/data")).expanduser()
@@ -45,15 +52,14 @@ RTSP_THREAD_QUEUE_SIZE = os.environ.get("NVR_RTSP_THREAD_QUEUE_SIZE", "2048")
 SCAN_INTERVAL_SECONDS = int(os.environ.get("NVR_SCAN_INTERVAL_SECONDS", "10"))
 RETENTION_INTERVAL_SECONDS = int(os.environ.get("NVR_RETENTION_INTERVAL_SECONDS", "3600"))
 DEFAULT_SEGMENT_SECONDS = int(os.environ.get("NVR_DEFAULT_SEGMENT_SECONDS", "60"))
-LIVE_HLS_SEGMENT_SECONDS = int(os.environ.get("NVR_LIVE_HLS_SEGMENT_SECONDS", "2"))
-LIVE_HLS_LIST_SIZE = int(os.environ.get("NVR_LIVE_HLS_LIST_SIZE", "8"))
-LIVE_HLS_DELETE_THRESHOLD = int(os.environ.get("NVR_LIVE_HLS_DELETE_THRESHOLD", "10"))
+LIVE_HLS_SEGMENT_SECONDS = env_float("NVR_LIVE_HLS_SEGMENT_SECONDS", 1)
+LIVE_HLS_LIST_SIZE = int(os.environ.get("NVR_LIVE_HLS_LIST_SIZE", "4"))
+LIVE_HLS_DELETE_THRESHOLD = int(os.environ.get("NVR_LIVE_HLS_DELETE_THRESHOLD", "4"))
+LIVE_HLS_START_OFFSET_SECONDS = max(0, env_float("NVR_LIVE_HLS_START_OFFSET_SECONDS", 1))
 LIVE_HLS_IDLE_SECONDS = int(os.environ.get("NVR_LIVE_HLS_IDLE_SECONDS", "90"))
 LIVE_HLS_DEFAULT_FPS = int(os.environ.get("NVR_LIVE_HLS_DEFAULT_FPS", "10"))
 LIVE_HLS_READY_TIMEOUT_SECONDS = int(os.environ.get("NVR_LIVE_HLS_READY_TIMEOUT_SECONDS", "25"))
-LIVE_HLS_STALE_SECONDS = int(
-    os.environ.get("NVR_LIVE_HLS_STALE_SECONDS", str(max(4, LIVE_HLS_SEGMENT_SECONDS * 2)))
-)
+LIVE_HLS_STALE_SECONDS = env_float("NVR_LIVE_HLS_STALE_SECONDS", max(4, LIVE_HLS_SEGMENT_SECONDS * 2))
 LIVE_HLS_SEGMENT_TYPE = os.environ.get("NVR_LIVE_HLS_SEGMENT_TYPE", "fmp4").strip().lower()
 if LIVE_HLS_SEGMENT_TYPE not in ("fmp4", "mpegts"):
     LIVE_HLS_SEGMENT_TYPE = "fmp4"
@@ -1662,7 +1668,7 @@ def build_live_hls_command(camera, output_dir, grayscale=False, include_audio=Tr
             "-f",
             "hls",
             "-hls_time",
-            str(max(1, LIVE_HLS_SEGMENT_SECONDS)),
+            f"{max(0.5, LIVE_HLS_SEGMENT_SECONDS):g}",
             "-hls_list_size",
             str(max(3, LIVE_HLS_LIST_SIZE)),
             "-hls_delete_threshold",
@@ -2439,6 +2445,47 @@ def valid_stream_auth(handler, parsed):
     return bool(username and authenticate_user(username, password))
 
 
+def rewrite_live_playlist(text, playlist_path, token=""):
+    raw_lines = text.splitlines()
+    has_live_start = any(line.startswith("#EXT-X-START:") for line in raw_lines)
+    start_line = None
+    if LIVE_HLS_START_OFFSET_SECONDS > 0 and not has_live_start:
+        start_line = f"#EXT-X-START:TIME-OFFSET=-{LIVE_HLS_START_OFFSET_SECONDS:g},PRECISE=YES"
+
+    version_present = any(line.startswith("#EXT-X-VERSION:") for line in raw_lines)
+    lines = []
+    start_inserted = False
+
+    def rewrite_uri(uri):
+        if not re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", uri) and not uri.startswith("/"):
+            uri = f"{playlist_path}/{uri}"
+        if token:
+            separator = "&" if "?" in uri else "?"
+            uri = f"{uri}{separator}token={quote(token)}"
+        return uri
+
+    for line in raw_lines:
+        if line.startswith("#EXT-X-MAP:"):
+            match = re.search(r'URI="([^"]+)"', line)
+            if match:
+                uri = rewrite_uri(match.group(1))
+                line = line[: match.start(1)] + uri + line[match.end(1) :]
+        elif line and not line.startswith("#"):
+            line = rewrite_uri(line)
+        lines.append(line)
+        if start_line and not start_inserted and (
+            line.startswith("#EXT-X-VERSION:") or (line == "#EXTM3U" and not version_present)
+        ):
+            lines.append(start_line)
+            start_inserted = True
+
+    if start_line and not start_inserted:
+        index = 1 if lines and lines[0] == "#EXTM3U" else 0
+        lines.insert(index, start_line)
+
+    return "\n".join(lines) + "\n"
+
+
 class NvrHandler(SimpleHTTPRequestHandler):
     server_version = "PlainNVR/0.1"
 
@@ -2907,26 +2954,7 @@ class NvrHandler(SimpleHTTPRequestHandler):
         text = target.read_text(encoding="utf-8", errors="replace")
         token = parse_qs(parsed.query).get("token", [""])[0]
         playlist_path = parsed.path.rsplit("/", 1)[0]
-        lines = []
-        for line in text.splitlines():
-            if line.startswith("#EXT-X-MAP:"):
-                match = re.search(r'URI="([^"]+)"', line)
-                if match:
-                    uri = match.group(1)
-                    if not re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", uri) and not uri.startswith("/"):
-                        uri = f"{playlist_path}/{uri}"
-                    if token:
-                        separator = "&" if "?" in uri else "?"
-                        uri = f"{uri}{separator}token={quote(token)}"
-                    line = line[: match.start(1)] + uri + line[match.end(1) :]
-            if line and not line.startswith("#"):
-                if not re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", line) and not line.startswith("/"):
-                    line = f"{playlist_path}/{line}"
-                if token:
-                    separator = "&" if "?" in line else "?"
-                    line = f"{line}{separator}token={quote(token)}"
-            lines.append(line)
-        text = "\n".join(lines) + "\n"
+        text = rewrite_live_playlist(text, playlist_path, token)
         payload = text.encode("utf-8")
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "application/vnd.apple.mpegurl")

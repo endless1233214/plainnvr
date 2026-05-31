@@ -110,6 +110,11 @@ Browsers without native HLS support fall back to MJPEG in the web live panel.
 
 Live HLS uses fragmented MP4 segments by default for iPhone-friendly playback.
 Set `NVR_LIVE_HLS_SEGMENT_TYPE=mpegts` to return to classic `.ts` HLS segments.
+Live playlists are tuned to start near the live edge by default: 1-second
+segments, 4 listed segments, and a 1-second `EXT-X-START` offset. Tune those
+with `NVR_LIVE_HLS_SEGMENT_SECONDS`, `NVR_LIVE_HLS_LIST_SIZE`,
+`NVR_LIVE_HLS_DELETE_THRESHOLD`, and `NVR_LIVE_HLS_START_OFFSET_SECONDS` if a
+camera needs more buffering or lower delay.
 Some cameras need extra startup time before FFmpeg can identify the first video
 frame and write the HLS playlist; tune `NVR_LIVE_HLS_READY_TIMEOUT_SECONDS`
 from the default `25` seconds if the live view is still too impatient.

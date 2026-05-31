@@ -33,6 +33,9 @@ MJPEG is still available for the web/Home Assistant style preview, but MJPEG is 
 
 Live HLS audio is boosted by default with `NVR_LIVE_AUDIO_GAIN=4.0`. Set it lower if microphones distort, or higher if a camera is still too quiet.
 
+The live player keeps a very small forward buffer and seeks back toward the live
+edge whenever drift grows, so PTZ moves should show up faster on the phone.
+
 ## Run On iPhone
 
 1. Open `PlainNVRiPhone.xcodeproj` in Xcode.

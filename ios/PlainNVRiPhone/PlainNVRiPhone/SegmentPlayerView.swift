@@ -193,7 +193,7 @@ struct LivePlayerView: View {
         stopLiveEdgeTimer()
         onStatus("Opening live stream...")
         let item = AVPlayerItem(url: url)
-        item.preferredForwardBufferDuration = 1
+        item.preferredForwardBufferDuration = 0.25
         item.canUseNetworkResourcesForLiveStreamingWhilePaused = true
         statusObservation = item.observe(\.status, options: [.new]) { item, _ in
             DispatchQueue.main.async {
@@ -221,7 +221,7 @@ struct LivePlayerView: View {
         player.automaticallyWaitsToMinimizeStalling = false
         player.replaceCurrentItem(with: item)
         applyAudioSettings()
-        player.play()
+        player.playImmediately(atRate: 1)
         startLiveEdgeTimer()
     }
 
@@ -243,7 +243,7 @@ struct LivePlayerView: View {
 
     private func startLiveEdgeTimer() {
         stopLiveEdgeTimer()
-        liveEdgeTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { _ in
+        liveEdgeTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
             seekTowardLiveEdgeIfNeeded()
         }
     }
@@ -264,9 +264,9 @@ struct LivePlayerView: View {
         let liveEdge = range.start + range.duration
         let current = player.currentTime()
         let lag = CMTimeGetSeconds(liveEdge - current)
-        guard lag.isFinite, lag > 8 else { return }
+        guard lag.isFinite, lag > 2.5 else { return }
 
-        let target = liveEdge - CMTime(seconds: 2, preferredTimescale: 600)
+        let target = liveEdge - CMTime(seconds: 0.5, preferredTimescale: 600)
         player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero)
     }
 
