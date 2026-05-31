@@ -1221,32 +1221,32 @@ def run_victure_dvrip_ptz_command(camera, action, speed, duration_ms):
             session = dvrip_parse_session(reply["payload"])
             if not session:
                 raise RuntimeError("DVRIP login failed.")
-            ptz = json.dumps(
-                {
+            def ptz_payload(ptz_command, preset):
+                return json.dumps({
                     "Name": "OPPTZControl",
                     "OPPTZControl": {
-                        "Command": command,
+                        "Command": ptz_command,
                         "Parameter": {
                             "AUX": {"Number": 0, "Status": "On"},
                             "Channel": 0,
                             "MenuOpts": "Enter",
                             "POINT": {"bottom": 0, "left": 0, "right": 0, "top": 0},
                             "Pattern": "SetBegin",
-                            "Preset": 65535,
+                            "Preset": preset,
                             "Step": step,
                             "Tour": 0,
                         },
                     },
                     "SessionID": f"0x{session:08X}",
-                },
-                separators=(",", ":"),
-            )
-            dvrip_send_packet(sock, session, 4, 1400, ptz)
-            if action in PTZ_MOVE_VECTORS:
+                }, separators=(",", ":"))
+
+            if action == "stop":
+                for offset, stop_command in enumerate(("DirectionUp", "DirectionDown", "DirectionLeft", "DirectionRight")):
+                    dvrip_send_packet(sock, session, 4 + offset, 1400, ptz_payload(stop_command, -1))
+            else:
+                dvrip_send_packet(sock, session, 4, 1400, ptz_payload(command, 65535))
                 time.sleep(duration_ms / 1000)
-                stop = json.loads(ptz)
-                stop["OPPTZControl"]["Command"] = "Stop"
-                dvrip_send_packet(sock, session, 5, 1400, json.dumps(stop, separators=(",", ":")))
+                dvrip_send_packet(sock, session, 5, 1400, ptz_payload(command, -1))
     except (TimeoutError, OSError) as exc:
         raise RuntimeError(f"DVRIP command failed: {exc}") from exc
 
