@@ -212,6 +212,7 @@ struct CameraDetailView: View {
 struct LiveView: View {
     @EnvironmentObject private var viewModel: PlainNVRViewModel
     @Environment(\.verticalSizeClass) private var verticalSizeClass
+    @State private var landscapeDigitalZoom: CGFloat = 1
 
     private var isLandscape: Bool {
         verticalSizeClass == .compact
@@ -274,21 +275,24 @@ struct LiveView: View {
             Color.black.ignoresSafeArea()
 
             if let camera = viewModel.selectedCamera, viewModel.livePlaybackEnabled, let url = viewModel.liveURL(for: camera) {
-                if camera.usesLiveHLS {
-                    LivePlayerView(
-                        url: url,
-                        onStatus: viewModel.updateLivePlayerStatus,
-                        onFailure: viewModel.updateLivePlayerFailure
-                    )
+                landscapeSurface(camera: camera, url: url)
+                    .scaleEffect(landscapeDigitalZoom)
                     .ignoresSafeArea()
-                } else {
-                    MJPEGStreamView(url: url, grayscale: viewModel.liveGrayscaleEnabled)
-                    .ignoresSafeArea()
+
+                if camera.supportsPTZ {
+                    VStack {
+                        Spacer()
+                        HStack {
+                            PTZVideoOverlay(camera: camera, digitalZoomAction: applyLandscapeDigitalZoom)
+                                .padding(.leading, 14)
+                                .padding(.bottom, 14)
+                            Spacer()
+                        }
+                    }
                 }
 
                 if let message = viewModel.liveStatusMessage, !message.isEmpty {
                     VStack {
-                        Spacer()
                         Text(message)
                             .font(.caption)
                             .foregroundStyle(.white)
@@ -296,6 +300,7 @@ struct LiveView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .background(.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 8))
                             .padding()
+                        Spacer()
                     }
                 }
             } else if viewModel.selectedCamera != nil {
@@ -307,6 +312,35 @@ struct LiveView: View {
             }
         }
         .ignoresSafeArea()
+        .onChange(of: viewModel.selectedCamera?.id) { _, _ in
+            landscapeDigitalZoom = 1
+        }
+    }
+
+    @ViewBuilder
+    private func landscapeSurface(camera: Camera, url: URL) -> some View {
+        if camera.usesLiveHLS {
+            LivePlayerView(
+                url: url,
+                onStatus: viewModel.updateLivePlayerStatus,
+                onFailure: viewModel.updateLivePlayerFailure
+            )
+        } else {
+            MJPEGStreamView(url: url, grayscale: viewModel.liveGrayscaleEnabled)
+        }
+    }
+
+    private func applyLandscapeDigitalZoom(_ action: String) {
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.82)) {
+            switch action {
+            case "zoom_in":
+                landscapeDigitalZoom = min(4, landscapeDigitalZoom + 0.25)
+            case "zoom_out":
+                landscapeDigitalZoom = max(1, landscapeDigitalZoom - 0.25)
+            default:
+                landscapeDigitalZoom = 1
+            }
+        }
     }
 }
 

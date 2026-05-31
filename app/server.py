@@ -1350,7 +1350,14 @@ def run_victure_direct_ptz_command(camera, action, speed):
     try:
         with urllib_request.urlopen(request, timeout=4) as response:
             response.read(2048)
-    except (TimeoutError, OSError, urllib_error.URLError, urllib_error.HTTPError) as exc:
+            status = getattr(response, "status", 200)
+    except urllib_error.HTTPError as exc:
+        if exc.code in (301, 302, 303, 307, 308):
+            status = exc.code
+            exc.read(2048)
+        else:
+            raise RuntimeError(f"Victure direct-step command failed: {exc}") from exc
+    except (TimeoutError, OSError, urllib_error.URLError) as exc:
         raise RuntimeError(f"Victure direct-step command failed: {exc}") from exc
 
     return {
@@ -1359,6 +1366,7 @@ def run_victure_direct_ptz_command(camera, action, speed):
         "driver": "victure_direct",
         "endpoint": endpoint,
         "step": step,
+        "status": status,
     }
 
 
