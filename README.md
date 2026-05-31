@@ -126,8 +126,8 @@ original camera stream.
 ## PTZ Control
 
 Camera setup includes a PTZ checkbox beside Enabled and Audio. When PTZ is
-enabled, the web live view and iPhone app show pan, tilt, home, stop, and zoom
-controls for that camera.
+enabled, the web live view and iPhone app show controls supported by the
+selected driver.
 
 PlainNVR sends PTZ commands from the server. For ONVIF, if Control URL is
 blank, it tries common local ONVIF endpoints on the camera host from the stream
@@ -136,10 +136,11 @@ editor. Username/password credentials can be embedded in the ONVIF URL when a
 camera requires WS-Security, for example
 `http://user:password@camera-ip:8080/onvif/device_service`.
 
-For the local Victure/Alloca firmware build, choose the `Victure DVRIP` driver.
-Leave Control URL blank to use the RTSP host with DVRIP port `34567`, or set
-`dvrip://admin:nTBCS19C@192.168.1.135:34567`. The Profile / Hash field is used
-as the XM MD5 login hash when credentials are not embedded in the DVRIP URL.
+For the local Victure/Alloca firmware build with the direct stepper helper,
+choose the `Victure Direct Stepper` driver. Leave Control URL blank to use the
+RTSP host with admin port `8088`, or set `http://192.168.1.135:8088`. The
+legacy `Victure DVRIP` driver is kept for older experiments, but the direct
+stepper driver is the one that avoids the vendor homing behavior.
 
 ## Camera URL Examples
 

@@ -11,6 +11,16 @@ const state = {
 };
 
 const dayKeys = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+const victureDirectActions = new Set([
+  "up",
+  "down",
+  "left",
+  "right",
+  "up_left",
+  "up_right",
+  "down_left",
+  "down_right",
+]);
 
 const $ = (id) => document.getElementById(id);
 const themeStorageKey = "plainnvr-theme";
@@ -255,7 +265,12 @@ function editCamera(camera) {
 
 function updatePtzFormHints() {
   const driver = $("ptzType").value;
-  if (driver === "victure_dvrip") {
+  if (driver === "victure_direct") {
+    $("ptzUrl").placeholder = "http://192.168.1.135:8088";
+    if ($("ptzProfileToken").value === "nTBCS19C") {
+      $("ptzProfileToken").value = "Profile_1";
+    }
+  } else if (driver === "victure_dvrip") {
     $("ptzUrl").placeholder = "dvrip://192.168.1.135:34567";
     if (!$("ptzProfileToken").value || $("ptzProfileToken").value === "Profile_1") {
       $("ptzProfileToken").value = "nTBCS19C";
@@ -410,6 +425,7 @@ function renderPtzPanel() {
   const camera = selectedLiveCamera();
   const panel = $("ptzPanel");
   const ptzEnabled = Boolean(camera?.ptz_enabled);
+  const directStepper = camera?.ptz_type === "victure_direct";
   panel.hidden = !ptzEnabled;
   if (!ptzEnabled) {
     $("ptzState").textContent = "";
@@ -417,7 +433,9 @@ function renderPtzPanel() {
     $("ptzState").textContent = "Moving...";
   }
   panel.querySelectorAll("[data-ptz]").forEach((button) => {
-    button.disabled = !ptzEnabled || state.ptzBusy;
+    const visible = !directStepper || victureDirectActions.has(button.dataset.ptz);
+    button.hidden = !visible;
+    button.disabled = !ptzEnabled || state.ptzBusy || !visible;
   });
 }
 

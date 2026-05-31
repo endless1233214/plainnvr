@@ -24,7 +24,7 @@ from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib import error as urllib_error, request as urllib_request
-from urllib.parse import parse_qs, quote, unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 from xml.etree import ElementTree
 
 
@@ -96,7 +96,7 @@ SEGMENT_RE = re.compile(r"^(?P<stamp>\d{8}T\d{6})\.mp4$")
 STREAM_URL_PREFIXES = ("rtsp://", "rtsps://", "http://", "https://")
 CONTROL_URL_PREFIXES = ("http://", "https://")
 DVRIP_URL_PREFIXES = ("dvrip://", "tcp://")
-PTZ_TYPES = ("none", "onvif", "victure_dvrip")
+PTZ_TYPES = ("none", "onvif", "victure_dvrip", "victure_direct")
 PTZ_MOVE_VECTORS = {
     "up": (0, 1, 0),
     "down": (0, -1, 0),
@@ -113,6 +113,17 @@ DVRIP_DEFAULT_PORT = 34567
 DVRIP_DEFAULT_USER = "admin"
 DVRIP_DEFAULT_PASSHASH = "nTBCS19C"
 DVRIP_HEADER = struct.Struct("<BBHIIBBHI")
+VICTURE_DIRECT_DEFAULT_PORT = 8088
+VICTURE_DIRECT_ACTIONS = {
+    "up",
+    "down",
+    "left",
+    "right",
+    "up_left",
+    "up_right",
+    "down_left",
+    "down_right",
+}
 DVRIP_PTZ_COMMANDS = {
     "up": "DirectionUp",
     "down": "DirectionDown",
@@ -580,8 +591,10 @@ def validate_camera_payload(payload, partial=False):
         errors["ptz_url"] = "Use an http:// or https:// ONVIF endpoint URL."
     if ptz_url and ptz_type == "victure_dvrip" and "://" in ptz_url and not ptz_url.startswith(DVRIP_URL_PREFIXES):
         errors["ptz_url"] = "Use a dvrip:// host URL, or leave blank to use the stream host."
+    if ptz_url and ptz_type == "victure_direct" and "://" in ptz_url and not ptz_url.startswith(CONTROL_URL_PREFIXES):
+        errors["ptz_url"] = "Use an http:// admin URL, or leave blank to use the stream host."
     if "ptz_type" in payload and ptz_type != str(payload.get("ptz_type") or "").strip().lower():
-        errors["ptz_type"] = "Use none, onvif, or victure_dvrip."
+        errors["ptz_type"] = "Use none, onvif, victure_dvrip, or victure_direct."
     if "ptz_speed" in payload:
         try:
             normalize_ptz_speed(payload.get("ptz_speed"))
@@ -1260,6 +1273,67 @@ def run_victure_dvrip_ptz_command(camera, action, speed, duration_ms):
     }
 
 
+def http_admin_url_for_parse(value):
+    value = str(value or "").strip()
+    if "://" in value:
+        return value
+    return f"http://{value}"
+
+
+def victure_direct_target(camera):
+    explicit_url = str(camera.get("ptz_url") or "").strip()
+    source = explicit_url or str(camera.get("rtsp_url") or "").strip()
+    if not source:
+        raise ValueError("Could not derive a Victure admin endpoint from this camera URL.")
+
+    parsed = urlparse(http_admin_url_for_parse(source) if explicit_url else source)
+    host = parsed.hostname
+    if not host:
+        raise ValueError("Could not derive a Victure admin endpoint from this camera URL.")
+    scheme = parsed.scheme if explicit_url and parsed.scheme in ("http", "https") else "http"
+    port = (parsed.port if explicit_url else None) or VICTURE_DIRECT_DEFAULT_PORT
+    netloc = f"[{host}]:{port}" if ":" in host and not host.startswith("[") else f"{host}:{port}"
+    return f"{scheme}://{netloc}"
+
+
+def victure_direct_step_from_speed(speed):
+    return max(1, min(256, round(speed * 64)))
+
+
+def run_victure_direct_ptz_command(camera, action, speed):
+    if action not in VICTURE_DIRECT_ACTIONS:
+        return {
+            "ok": True,
+            "action": action,
+            "driver": "victure_direct",
+            "warning": "This Victure direct-step driver only supports directional moves.",
+        }
+
+    base_url = victure_direct_target(camera)
+    endpoint = f"{base_url}/ptz"
+    step = victure_direct_step_from_speed(speed)
+    body = urlencode({"action": action, "step": step}).encode("utf-8")
+    request = urllib_request.Request(
+        endpoint,
+        data=body,
+        method="POST",
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    try:
+        with urllib_request.urlopen(request, timeout=4) as response:
+            response.read(2048)
+    except (TimeoutError, OSError, urllib_error.URLError, urllib_error.HTTPError) as exc:
+        raise RuntimeError(f"Victure direct-step command failed: {exc}") from exc
+
+    return {
+        "ok": True,
+        "action": action,
+        "driver": "victure_direct",
+        "endpoint": endpoint,
+        "step": step,
+    }
+
+
 def ptz_url_candidates(camera):
     explicit_url = str(camera.get("ptz_url") or "").strip()
     rtsp_url = str(camera.get("rtsp_url") or "").strip()
@@ -1426,6 +1500,8 @@ def run_ptz_command(camera, payload):
 
     if ptz_type == "victure_dvrip":
         return run_victure_dvrip_ptz_command(camera, action, speed, duration_ms)
+    if ptz_type == "victure_direct":
+        return run_victure_direct_ptz_command(camera, action, speed)
     if ptz_type != "onvif":
         raise ValueError("This camera does not have a supported PTZ driver configured.")
 

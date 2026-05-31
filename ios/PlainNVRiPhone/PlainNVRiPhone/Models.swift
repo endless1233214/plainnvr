@@ -49,6 +49,10 @@ struct Camera: Decodable, Identifiable, Hashable {
     var supportsPTZ: Bool {
         ptzEnabled == true
     }
+
+    var usesDirectStepperPTZ: Bool {
+        ptzType == "victure_direct"
+    }
 }
 
 struct CameraSchedule: Decodable, Hashable {
