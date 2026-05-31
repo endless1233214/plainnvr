@@ -236,7 +236,11 @@ final class PlainNVRViewModel: ObservableObject {
     }
 
     func diagnoseLiveStream() async {
-        liveStatusMessage = "Using MJPEG video from PlainNVR. MJPEG does not carry audio."
+        if selectedCamera?.usesLiveHLS == true {
+            liveStatusMessage = "Using HLS from PlainNVR. H.264 video can stay compressed for lower CPU and smoother PTZ."
+        } else {
+            liveStatusMessage = "Using MJPEG video from PlainNVR. MJPEG does not carry audio."
+        }
     }
 
     func updateLivePlayerStatus(_ message: String?) {
@@ -244,7 +248,7 @@ final class PlainNVRViewModel: ObservableObject {
     }
 
     func updateLivePlayerFailure(_ message: String) {
-        liveStatusMessage = "\(message)\nUsing source MJPEG from PlainNVR."
+        liveStatusMessage = "\(message)\nUsing \(selectedCamera?.liveModeLabel ?? "live video") from PlainNVR."
     }
 
     func setRecorderRunning(_ running: Bool, camera: Camera) async {

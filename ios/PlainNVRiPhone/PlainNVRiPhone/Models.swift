@@ -33,11 +33,13 @@ struct Camera: Decodable, Identifiable, Hashable {
     let retentionDays: Int
     let schedule: CameraSchedule?
     let recordAudio: Bool?
+    let liveViewMode: String?
     let rtspTransport: String?
     let ptzEnabled: Bool?
     let ptzType: String?
     let ptzUrl: String?
     let ptzProfileToken: String?
+    let ptzZoomMode: String?
     let ptzSpeed: Double?
     let createdAt: String?
     let updatedAt: String?
@@ -52,6 +54,31 @@ struct Camera: Decodable, Identifiable, Hashable {
 
     var usesDirectStepperPTZ: Bool {
         ptzType == "victure_direct"
+    }
+
+    var usesLiveHLS: Bool {
+        liveViewMode != "mjpeg"
+    }
+
+    var liveModeLabel: String {
+        usesLiveHLS ? "HLS / H.264" : "MJPEG"
+    }
+
+    var resolvedZoomMode: String {
+        switch ptzZoomMode ?? "auto" {
+        case "digital", "hardware", "none":
+            return ptzZoomMode ?? "auto"
+        default:
+            return usesDirectStepperPTZ ? "digital" : "hardware"
+        }
+    }
+
+    var usesDigitalZoom: Bool {
+        resolvedZoomMode == "digital"
+    }
+
+    var usesHardwareZoom: Bool {
+        resolvedZoomMode == "hardware" && !usesDirectStepperPTZ
     }
 }
 

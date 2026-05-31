@@ -6,7 +6,7 @@ Native SwiftUI companion app for PlainNVR. It is meant for personal sideloading 
 
 - Sign in with the same PlainNVR account used by the web UI.
 - View camera status, recorder state, disk usage, and recent recorder events.
-- Play live camera video with audio through PlainNVR's HLS endpoint.
+- Play live camera video through the camera's selected PlainNVR live mode, using HLS for audio/video and low CPU when available.
 - Choose live stream FPS and quality from the Live tab. High quality is the default for steadier HLS startup; Source quality is still available when you want a direct camera copy.
 - Toggle live audio and set live volume from the Live tab.
 - Check a selected live stream from the Live tab and show player/server diagnostics in the app.
@@ -29,7 +29,7 @@ The app uses the existing session cookie API plus these media paths:
 - `GET /live/<camera_id>/stream.m3u8?fps=<fps>&width=<width>&token=<stream_token>` for live iPhone playback with audio. Omit `fps` and `width` to use source quality.
 - `GET /media/<camera_id>/<segment>.mp4?token=<stream_token>` for playback, share, and download.
 
-MJPEG is still available for the web/Home Assistant style preview, but MJPEG is video-only. The iPhone app uses HLS for live playback because `AVPlayer` can play audio and video together.
+MJPEG is still available for the web/Home Assistant style preview, but MJPEG is video-only. The iPhone app uses HLS by default because `AVPlayer` can play audio and video together, and it falls back to MJPEG only when that camera is configured for MJPEG live view.
 
 Live HLS audio is boosted by default with `NVR_LIVE_AUDIO_GAIN=4.0`. Set it lower if microphones distort, or higher if a camera is still too quiet.
 

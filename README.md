@@ -103,9 +103,10 @@ YAML.
 ## Live View
 
 PlainNVR also has a Live View panel for quick in-browser monitoring without Home
-Assistant. HLS mode uses the same live audio/video path as the iPhone app when
-the browser supports native HLS, while MJPEG mode stays available as a
-video-only fallback.
+Assistant. Each camera has a Live View setting: HLS / H.264 is the low-CPU
+default and copies the camera video stream when no video filter is needed, while
+MJPEG stays available as a video-only fallback for clients that cannot play HLS.
+Browsers without native HLS support fall back to MJPEG in the web live panel.
 
 Live HLS uses fragmented MP4 segments by default for iPhone-friendly playback.
 Set `NVR_LIVE_HLS_SEGMENT_TYPE=mpegts` to return to classic `.ts` HLS segments.
@@ -128,6 +129,12 @@ original camera stream.
 Camera setup includes a PTZ checkbox beside Enabled and Audio. When PTZ is
 enabled, the web live view and iPhone app show controls supported by the
 selected driver.
+
+PTZ zoom is configured separately from pan/tilt. Auto mode uses hardware zoom
+for normal PTZ drivers and digital viewer zoom for the Victure direct-stepper
+driver; set Zoom to Digital, Hardware, or None when a camera needs a specific
+behavior. Digital zoom only changes the local viewer and never sends a camera
+zoom command.
 
 PlainNVR sends PTZ commands from the server. For ONVIF, if Control URL is
 blank, it tries common local ONVIF endpoints on the camera host from the stream

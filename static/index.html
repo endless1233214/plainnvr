@@ -82,6 +82,13 @@
               <option value="udp">UDP</option>
             </select>
           </label>
+          <label>
+            Live View
+            <select id="liveViewMode">
+              <option value="hls" selected>HLS / H.264</option>
+              <option value="mjpeg">MJPEG</option>
+            </select>
+          </label>
           <div class="toggles">
             <label><input id="enabled" type="checkbox" checked /> Enabled</label>
             <label><input id="recordAudio" type="checkbox" checked /> Audio</label>
@@ -111,6 +118,15 @@
               <label>
                 Speed
                 <input id="ptzSpeed" type="number" min="0.05" max="1" step="0.05" value="0.55" />
+              </label>
+              <label>
+                Zoom
+                <select id="ptzZoomMode">
+                  <option value="auto" selected>Auto</option>
+                  <option value="digital">Digital</option>
+                  <option value="hardware">Hardware</option>
+                  <option value="none">None</option>
+                </select>
               </label>
             </div>
           </fieldset>
@@ -187,7 +203,7 @@
               Camera
               <select id="liveCamera"></select>
             </label>
-            <span class="live-source-label">Source MJPEG</span>
+            <span id="liveSourceLabel" class="live-source-label">HLS / H.264</span>
             <button id="startLive" type="button">Start</button>
             <button id="stopLive" type="button">Stop</button>
           </div>
@@ -211,6 +227,7 @@
             <span id="ptzState" class="muted"></span>
           </div>
           <div class="live-frame">
+            <video id="liveVideo" controls playsinline muted></video>
             <img id="liveImage" alt="" />
             <div id="liveEmpty" class="empty">No live stream selected.</div>
           </div>

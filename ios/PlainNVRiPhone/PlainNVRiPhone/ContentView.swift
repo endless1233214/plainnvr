@@ -274,8 +274,17 @@ struct LiveView: View {
             Color.black.ignoresSafeArea()
 
             if let camera = viewModel.selectedCamera, viewModel.livePlaybackEnabled, let url = viewModel.liveURL(for: camera) {
-                MJPEGStreamView(url: url, grayscale: viewModel.liveGrayscaleEnabled)
-                .ignoresSafeArea()
+                if camera.usesLiveHLS {
+                    LivePlayerView(
+                        url: url,
+                        onStatus: viewModel.updateLivePlayerStatus,
+                        onFailure: viewModel.updateLivePlayerFailure
+                    )
+                    .ignoresSafeArea()
+                } else {
+                    MJPEGStreamView(url: url, grayscale: viewModel.liveGrayscaleEnabled)
+                    .ignoresSafeArea()
+                }
 
                 if let message = viewModel.liveStatusMessage, !message.isEmpty {
                     VStack {
@@ -323,7 +332,7 @@ struct LiveControlsView: View {
             }
 
             HStack(spacing: 12) {
-                Text("Source MJPEG")
+                Text(viewModel.selectedCamera?.liveModeLabel ?? "Live")
                     .font(.headline)
                     .foregroundStyle(.secondary)
 
@@ -336,8 +345,10 @@ struct LiveControlsView: View {
                 .buttonStyle(.bordered)
             }
 
-            Toggle("Grayscale", isOn: $viewModel.liveGrayscaleEnabled)
-                .toggleStyle(.switch)
+            if viewModel.selectedCamera?.usesLiveHLS != true {
+                Toggle("Grayscale", isOn: $viewModel.liveGrayscaleEnabled)
+                    .toggleStyle(.switch)
+            }
         }
         .padding(12)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
@@ -351,6 +362,7 @@ struct PTZControlPad: View {
 
     var body: some View {
         let directStepper = viewModel.selectedCamera?.usesDirectStepperPTZ == true
+        let showHardwareZoom = viewModel.selectedCamera?.usesHardwareZoom == true
 
         HStack(alignment: .center, spacing: 16) {
             LazyVGrid(columns: columns, spacing: 8) {
@@ -371,7 +383,7 @@ struct PTZControlPad: View {
                 ptzButton("arrow.down.right", action: "down_right", label: "Down Right")
             }
 
-            if !directStepper {
+            if showHardwareZoom {
                 VStack(spacing: 8) {
                     ptzButton("plus.magnifyingglass", action: "zoom_in", label: "Zoom In")
                     ptzButton("stop.fill", action: "stop", label: "Stop")
@@ -398,11 +410,13 @@ struct PTZControlPad: View {
 struct LivePlayerSurface: View {
     @EnvironmentObject private var viewModel: PlainNVRViewModel
     let camera: Camera
+    @State private var digitalZoom: CGFloat = 1
 
     var body: some View {
         VStack(spacing: 8) {
             if viewModel.livePlaybackEnabled, let url = viewModel.liveURL(for: camera) {
-                MJPEGStreamView(url: url, grayscale: viewModel.liveGrayscaleEnabled)
+                liveSurface(url: url)
+                .scaleEffect(digitalZoom)
                 .frame(maxWidth: .infinity)
                 .aspectRatio(16 / 9, contentMode: .fit)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -412,7 +426,7 @@ struct LivePlayerSurface: View {
                 }
                 .overlay(alignment: .bottomLeading) {
                     if camera.supportsPTZ {
-                        PTZVideoOverlay(camera: camera)
+                        PTZVideoOverlay(camera: camera, digitalZoomAction: applyDigitalZoom)
                             .padding(8)
                     }
                 }
@@ -438,17 +452,48 @@ struct LivePlayerSurface: View {
             }
         }
         .padding(.horizontal)
+        .onChange(of: camera.id) { _, _ in
+            digitalZoom = 1
+        }
+    }
+
+    @ViewBuilder
+    private func liveSurface(url: URL) -> some View {
+        if camera.usesLiveHLS {
+            LivePlayerView(
+                url: url,
+                onStatus: viewModel.updateLivePlayerStatus,
+                onFailure: viewModel.updateLivePlayerFailure
+            )
+        } else {
+            MJPEGStreamView(url: url, grayscale: viewModel.liveGrayscaleEnabled)
+        }
+    }
+
+    private func applyDigitalZoom(_ action: String) {
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.82)) {
+            switch action {
+            case "zoom_in":
+                digitalZoom = min(4, digitalZoom + 0.25)
+            case "zoom_out":
+                digitalZoom = max(1, digitalZoom - 0.25)
+            default:
+                digitalZoom = 1
+            }
+        }
     }
 }
 
 struct PTZVideoOverlay: View {
     @EnvironmentObject private var viewModel: PlainNVRViewModel
     let camera: Camera
+    var digitalZoomAction: (String) -> Void = { _ in }
 
     private let columns = Array(repeating: GridItem(.fixed(34), spacing: 4), count: 3)
 
     var body: some View {
         let directStepper = camera.usesDirectStepperPTZ
+        let showZoom = camera.usesDigitalZoom || camera.usesHardwareZoom
 
         HStack(alignment: .bottom, spacing: 8) {
             LazyVGrid(columns: columns, spacing: 4) {
@@ -469,11 +514,11 @@ struct PTZVideoOverlay: View {
                 ptzButton("arrow.down.right", action: "down_right", label: "Down Right")
             }
 
-            if !directStepper {
+            if showZoom {
                 VStack(spacing: 4) {
-                    ptzButton("plus.magnifyingglass", action: "zoom_in", label: "Zoom In")
-                    ptzButton("stop.fill", action: "stop", label: "Stop")
-                    ptzButton("minus.magnifyingglass", action: "zoom_out", label: "Zoom Out")
+                    zoomButton("plus.magnifyingglass", action: "zoom_in", label: "Zoom In")
+                    zoomButton("stop.fill", action: "stop", label: camera.usesDigitalZoom ? "Reset Zoom" : "Stop")
+                    zoomButton("minus.magnifyingglass", action: "zoom_out", label: "Zoom Out")
                 }
             }
         }
@@ -484,6 +529,24 @@ struct PTZVideoOverlay: View {
     private func ptzButton(_ systemName: String, action: String, label: String) -> some View {
         Button {
             Task { await viewModel.sendPTZ(action: action) }
+        } label: {
+            Image(systemName: systemName)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(.blue)
+                .frame(width: 34, height: 34)
+                .background(.black.opacity(0.62), in: Circle())
+        }
+        .accessibilityLabel(label)
+        .buttonStyle(.plain)
+    }
+
+    private func zoomButton(_ systemName: String, action: String, label: String) -> some View {
+        Button {
+            if camera.usesDigitalZoom {
+                digitalZoomAction(action)
+            } else {
+                Task { await viewModel.sendPTZ(action: action) }
+            }
         } label: {
             Image(systemName: systemName)
                 .font(.system(size: 15, weight: .semibold))

@@ -307,11 +307,13 @@ def init_db():
                 schedule_json TEXT NOT NULL,
                 record_audio INTEGER NOT NULL DEFAULT 1,
                 grayscale_mode TEXT NOT NULL DEFAULT 'off',
+                live_view_mode TEXT NOT NULL DEFAULT 'hls',
                 rtsp_transport TEXT NOT NULL DEFAULT 'tcp',
                 ptz_enabled INTEGER NOT NULL DEFAULT 0,
                 ptz_type TEXT NOT NULL DEFAULT 'onvif',
                 ptz_url TEXT NOT NULL DEFAULT '',
                 ptz_profile_token TEXT NOT NULL DEFAULT 'Profile_1',
+                ptz_zoom_mode TEXT NOT NULL DEFAULT 'auto',
                 ptz_speed REAL NOT NULL DEFAULT 0.55,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
@@ -373,6 +375,8 @@ def ensure_camera_schema(conn):
         conn.execute("ALTER TABLE cameras ADD COLUMN audio_url TEXT NOT NULL DEFAULT ''")
     if "grayscale_mode" not in columns:
         conn.execute("ALTER TABLE cameras ADD COLUMN grayscale_mode TEXT NOT NULL DEFAULT 'off'")
+    if "live_view_mode" not in columns:
+        conn.execute("ALTER TABLE cameras ADD COLUMN live_view_mode TEXT NOT NULL DEFAULT 'hls'")
     if "rtsp_transport" not in columns:
         conn.execute("ALTER TABLE cameras ADD COLUMN rtsp_transport TEXT NOT NULL DEFAULT 'tcp'")
     if "ptz_enabled" not in columns:
@@ -383,6 +387,8 @@ def ensure_camera_schema(conn):
         conn.execute("ALTER TABLE cameras ADD COLUMN ptz_url TEXT NOT NULL DEFAULT ''")
     if "ptz_profile_token" not in columns:
         conn.execute("ALTER TABLE cameras ADD COLUMN ptz_profile_token TEXT NOT NULL DEFAULT 'Profile_1'")
+    if "ptz_zoom_mode" not in columns:
+        conn.execute("ALTER TABLE cameras ADD COLUMN ptz_zoom_mode TEXT NOT NULL DEFAULT 'auto'")
     if "ptz_speed" not in columns:
         conn.execute("ALTER TABLE cameras ADD COLUMN ptz_speed REAL NOT NULL DEFAULT 0.55")
 
@@ -536,9 +542,11 @@ def camera_from_row(row):
     data["ptz_enabled"] = bool(data.get("ptz_enabled", False))
     data["audio_url"] = data.get("audio_url") or ""
     data["grayscale_mode"] = normalize_grayscale_mode(data.get("grayscale_mode"))
+    data["live_view_mode"] = normalize_live_view_mode(data.get("live_view_mode"))
     data["ptz_type"] = normalize_ptz_type(data.get("ptz_type"))
     data["ptz_url"] = data.get("ptz_url") or ""
     data["ptz_profile_token"] = normalize_ptz_profile_token(data.get("ptz_profile_token"))
+    data["ptz_zoom_mode"] = normalize_ptz_zoom_mode(data.get("ptz_zoom_mode"))
     data["ptz_speed"] = normalize_ptz_speed(data.get("ptz_speed"))
     data["schedule"] = normalize_schedule(json.loads(data.pop("schedule_json")))
     return data
@@ -586,6 +594,8 @@ def validate_camera_payload(payload, partial=False):
         errors["audio_url"] = "Use an rtsp://, rtsps://, http://, or https:// audio URL."
     if "grayscale_mode" in payload and normalize_grayscale_mode(payload.get("grayscale_mode")) != str(payload.get("grayscale_mode") or "").strip().lower():
         errors["grayscale_mode"] = "Use off, always, or auto."
+    if "live_view_mode" in payload and normalize_live_view_mode(payload.get("live_view_mode")) != str(payload.get("live_view_mode") or "").strip().lower():
+        errors["live_view_mode"] = "Use hls or mjpeg."
     ptz_type = normalize_ptz_type(payload.get("ptz_type"))
     if ptz_url and ptz_type == "onvif" and not ptz_url.startswith(CONTROL_URL_PREFIXES):
         errors["ptz_url"] = "Use an http:// or https:// ONVIF endpoint URL."
@@ -602,6 +612,8 @@ def validate_camera_payload(payload, partial=False):
             errors["ptz_speed"] = "Use a PTZ speed from 0.05 to 1.0."
     if "ptz_profile_token" in payload and len(str(payload.get("ptz_profile_token") or "")) > 80:
         errors["ptz_profile_token"] = "Profile token is too long."
+    if "ptz_zoom_mode" in payload and normalize_ptz_zoom_mode(payload.get("ptz_zoom_mode")) != str(payload.get("ptz_zoom_mode") or "").strip().lower():
+        errors["ptz_zoom_mode"] = "Use auto, digital, hardware, or none."
     if errors:
         raise ValueError(json.dumps(errors))
 
@@ -609,6 +621,11 @@ def validate_camera_payload(payload, partial=False):
 def normalize_grayscale_mode(value):
     value = str(value or "off").strip().lower()
     return value if value in ("off", "always", "auto") else "off"
+
+
+def normalize_live_view_mode(value):
+    value = str(value or "hls").strip().lower()
+    return value if value in ("hls", "mjpeg") else "hls"
 
 
 def normalize_ptz_type(value):
@@ -619,6 +636,11 @@ def normalize_ptz_type(value):
 def normalize_ptz_profile_token(value):
     value = str(value or "").strip()
     return value[:80] or DEFAULT_PTZ_PROFILE_TOKEN
+
+
+def normalize_ptz_zoom_mode(value):
+    value = str(value or "auto").strip().lower()
+    return value if value in ("auto", "digital", "hardware", "none") else "auto"
 
 
 def normalize_ptz_speed(value):
@@ -646,10 +668,10 @@ def create_camera(payload):
             """
             INSERT INTO cameras (
                 id, name, slug, rtsp_url, audio_url, enabled, segment_seconds, retention_days,
-                schedule_json, record_audio, grayscale_mode, rtsp_transport, ptz_enabled, ptz_type,
-                ptz_url, ptz_profile_token, ptz_speed, created_at, updated_at
+                schedule_json, record_audio, grayscale_mode, live_view_mode, rtsp_transport, ptz_enabled, ptz_type,
+                ptz_url, ptz_profile_token, ptz_zoom_mode, ptz_speed, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 camera_id,
@@ -663,11 +685,13 @@ def create_camera(payload):
                 json.dumps(schedule),
                 normalize_bool(payload.get("record_audio", True)),
                 normalize_grayscale_mode(payload.get("grayscale_mode")),
+                normalize_live_view_mode(payload.get("live_view_mode")),
                 payload.get("rtsp_transport", "tcp") if payload.get("rtsp_transport") in ("tcp", "udp") else "tcp",
                 normalize_bool(payload.get("ptz_enabled", False)),
                 ptz_type,
                 str(payload.get("ptz_url", "")).strip(),
                 normalize_ptz_profile_token(payload.get("ptz_profile_token")),
+                normalize_ptz_zoom_mode(payload.get("ptz_zoom_mode")),
                 ptz_speed,
                 now,
                 now,
@@ -694,8 +718,8 @@ def update_camera(camera_id, payload):
             UPDATE cameras
             SET name = ?, slug = ?, rtsp_url = ?, audio_url = ?, enabled = ?, segment_seconds = ?,
                 retention_days = ?, schedule_json = ?, record_audio = ?, grayscale_mode = ?,
-                rtsp_transport = ?, ptz_enabled = ?, ptz_type = ?, ptz_url = ?, ptz_profile_token = ?,
-                ptz_speed = ?, updated_at = ?
+                live_view_mode = ?, rtsp_transport = ?, ptz_enabled = ?, ptz_type = ?, ptz_url = ?, ptz_profile_token = ?,
+                ptz_zoom_mode = ?, ptz_speed = ?, updated_at = ?
             WHERE id = ?
             """,
             (
@@ -709,11 +733,13 @@ def update_camera(camera_id, payload):
                 json.dumps(schedule),
                 normalize_bool(merged.get("record_audio")),
                 normalize_grayscale_mode(merged.get("grayscale_mode")),
+                normalize_live_view_mode(merged.get("live_view_mode")),
                 merged.get("rtsp_transport") if merged.get("rtsp_transport") in ("tcp", "udp") else "tcp",
                 normalize_bool(merged.get("ptz_enabled")),
                 ptz_type,
                 str(merged.get("ptz_url", "")).strip(),
                 normalize_ptz_profile_token(merged.get("ptz_profile_token")),
+                normalize_ptz_zoom_mode(merged.get("ptz_zoom_mode")),
                 ptz_speed,
                 iso_now(),
                 camera_id,
@@ -721,12 +747,14 @@ def update_camera(camera_id, payload):
         )
     recorder.restart(camera_id)
     relay.stop(camera_id)
+    live_hls.stop(camera_id)
     return get_camera(camera_id)
 
 
 def delete_camera(camera_id):
     recorder.stop(camera_id)
     relay.stop(camera_id)
+    live_hls.stop(camera_id)
     with db_conn() as conn:
         cur = conn.execute("DELETE FROM cameras WHERE id = ?", (camera_id,))
     return cur.rowcount > 0
