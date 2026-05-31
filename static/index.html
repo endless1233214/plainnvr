@@ -94,16 +94,17 @@
               Driver
               <select id="ptzType">
                 <option value="onvif" selected>ONVIF</option>
+                <option value="victure_dvrip">Victure DVRIP</option>
                 <option value="none">None</option>
               </select>
             </label>
             <label>
-              ONVIF URL
-              <input id="ptzUrl" autocomplete="off" placeholder="http://camera-ip:8080/onvif/ptz_service" />
+              Control URL
+              <input id="ptzUrl" autocomplete="off" placeholder="http://camera-ip:8080/onvif/ptz_service or dvrip://camera-ip:34567" />
             </label>
             <div class="ptz-form-row">
               <label>
-                Profile
+                Profile / Hash
                 <input id="ptzProfileToken" autocomplete="off" value="Profile_1" />
               </label>
               <label>

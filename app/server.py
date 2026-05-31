@@ -11,6 +11,8 @@ import secrets
 import shutil
 import signal
 import sqlite3
+import socket
+import struct
 import subprocess
 import sys
 import threading
@@ -93,7 +95,8 @@ DAY_KEYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 SEGMENT_RE = re.compile(r"^(?P<stamp>\d{8}T\d{6})\.mp4$")
 STREAM_URL_PREFIXES = ("rtsp://", "rtsps://", "http://", "https://")
 CONTROL_URL_PREFIXES = ("http://", "https://")
-PTZ_TYPES = ("none", "onvif")
+DVRIP_URL_PREFIXES = ("dvrip://", "tcp://")
+PTZ_TYPES = ("none", "onvif", "victure_dvrip")
 PTZ_MOVE_VECTORS = {
     "up": (0, 1, 0),
     "down": (0, -1, 0),
@@ -105,6 +108,23 @@ PTZ_MOVE_VECTORS = {
     "down_right": (1, -1, 0),
     "zoom_in": (0, 0, 1),
     "zoom_out": (0, 0, -1),
+}
+DVRIP_DEFAULT_PORT = 34567
+DVRIP_DEFAULT_USER = "admin"
+DVRIP_DEFAULT_PASSHASH = "nTBCS19C"
+DVRIP_HEADER = struct.Struct("<BBHIIBBHI")
+DVRIP_PTZ_COMMANDS = {
+    "up": "DirectionUp",
+    "down": "DirectionDown",
+    "left": "DirectionLeft",
+    "right": "DirectionRight",
+    "up_left": "DirectionLeftUp",
+    "up_right": "DirectionRightUp",
+    "down_left": "DirectionLeftDown",
+    "down_right": "DirectionRightDown",
+    "zoom_in": "ZoomTile",
+    "zoom_out": "ZoomWide",
+    "stop": "Stop",
 }
 
 
@@ -555,10 +575,13 @@ def validate_camera_payload(payload, partial=False):
         errors["audio_url"] = "Use an rtsp://, rtsps://, http://, or https:// audio URL."
     if "grayscale_mode" in payload and normalize_grayscale_mode(payload.get("grayscale_mode")) != str(payload.get("grayscale_mode") or "").strip().lower():
         errors["grayscale_mode"] = "Use off, always, or auto."
-    if ptz_url and not ptz_url.startswith(CONTROL_URL_PREFIXES):
+    ptz_type = normalize_ptz_type(payload.get("ptz_type"))
+    if ptz_url and ptz_type == "onvif" and not ptz_url.startswith(CONTROL_URL_PREFIXES):
         errors["ptz_url"] = "Use an http:// or https:// ONVIF endpoint URL."
-    if "ptz_type" in payload and normalize_ptz_type(payload.get("ptz_type")) != str(payload.get("ptz_type") or "").strip().lower():
-        errors["ptz_type"] = "Use none or onvif."
+    if ptz_url and ptz_type == "victure_dvrip" and "://" in ptz_url and not ptz_url.startswith(DVRIP_URL_PREFIXES):
+        errors["ptz_url"] = "Use a dvrip:// host URL, or leave blank to use the stream host."
+    if "ptz_type" in payload and ptz_type != str(payload.get("ptz_type") or "").strip().lower():
+        errors["ptz_type"] = "Use none, onvif, or victure_dvrip."
     if "ptz_speed" in payload:
         try:
             normalize_ptz_speed(payload.get("ptz_speed"))
@@ -1076,6 +1099,167 @@ def redact_url_credentials(value):
     return f"{parsed.scheme}://<credentials>@{netloc}{path}{query}"
 
 
+def dvrip_url_for_parse(value):
+    value = str(value or "").strip()
+    if "://" in value:
+        return value
+    return f"dvrip://{value}"
+
+
+def dvrip_target(camera):
+    explicit_url = str(camera.get("ptz_url") or "").strip()
+    source = explicit_url or str(camera.get("rtsp_url") or "").strip()
+    if not source:
+        raise ValueError("Could not derive a DVRIP endpoint from this camera URL.")
+
+    parsed = urlparse(dvrip_url_for_parse(source) if explicit_url else source)
+    host = parsed.hostname
+    if not host:
+        raise ValueError("Could not derive a DVRIP endpoint from this camera URL.")
+    credentials = url_credentials(parsed) if explicit_url else None
+    configured_hash = str(camera.get("ptz_profile_token") or "").strip()
+    if not configured_hash or configured_hash == DEFAULT_PTZ_PROFILE_TOKEN:
+        configured_hash = DVRIP_DEFAULT_PASSHASH
+    user, passhash = credentials or (DVRIP_DEFAULT_USER, configured_hash)
+    port = (parsed.port if explicit_url else None) or DVRIP_DEFAULT_PORT
+    endpoint = f"dvrip://{host}:{port}"
+    if ":" in host and not host.startswith("["):
+        endpoint = f"dvrip://[{host}]:{port}"
+    return {
+        "host": host,
+        "port": port,
+        "user": user or DVRIP_DEFAULT_USER,
+        "passhash": passhash or DVRIP_DEFAULT_PASSHASH,
+        "endpoint": endpoint,
+    }
+
+
+def dvrip_step_from_speed(speed):
+    return max(1, min(64, round(speed * 4)))
+
+
+def dvrip_recv_exact(sock, length):
+    chunks = []
+    remaining = length
+    while remaining:
+        chunk = sock.recv(remaining)
+        if not chunk:
+            raise ConnectionError("DVRIP connection closed early.")
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
+def dvrip_send_packet(sock, session, number, packet_type, payload):
+    data = payload.encode("utf-8")
+    header = DVRIP_HEADER.pack(0xFF, 0x01, 0, session, number, 0, 0, packet_type, len(data))
+    sock.sendall(header + data)
+
+
+def dvrip_recv_packet(sock):
+    header = dvrip_recv_exact(sock, DVRIP_HEADER.size)
+    magic, version, _pad, session, number, fragments, fragment, packet_type, length = DVRIP_HEADER.unpack(header)
+    if magic != 0xFF or version != 0x01:
+        raise RuntimeError("DVRIP returned an invalid header.")
+    payload = dvrip_recv_exact(sock, length) if length else b""
+    return {
+        "session": session,
+        "number": number,
+        "fragments": fragments,
+        "fragment": fragment,
+        "type": packet_type,
+        "payload": payload.decode("utf-8", errors="replace").rstrip("\0"),
+    }
+
+
+def dvrip_parse_session(payload):
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError:
+        data = {}
+    session_id = data.get("SessionID")
+    if isinstance(session_id, str):
+        return int(session_id, 16)
+    if isinstance(session_id, int):
+        return session_id
+    match = re.search(r'"SessionID"\s*:\s*"?(0x[0-9a-fA-F]+|\d+)"?', payload)
+    if match:
+        return int(match.group(1), 0)
+    return 0
+
+
+def run_victure_dvrip_ptz_command(camera, action, speed, duration_ms):
+    if action == "home":
+        return {
+            "ok": True,
+            "action": action,
+            "driver": "victure_dvrip",
+            "warning": "Home is not available on the Victure DVRIP driver.",
+        }
+
+    command = DVRIP_PTZ_COMMANDS.get(action)
+    if not command:
+        raise ValueError("Unsupported PTZ action.")
+
+    target = dvrip_target(camera)
+    step = dvrip_step_from_speed(speed)
+    login = json.dumps(
+        {
+            "EncryptType": "MD5",
+            "LoginType": "DVRIP-Web",
+            "PassWord": target["passhash"],
+            "UserName": target["user"],
+        },
+        separators=(",", ":"),
+    )
+
+    try:
+        with socket.create_connection((target["host"], target["port"]), timeout=4) as sock:
+            sock.settimeout(4)
+            dvrip_send_packet(sock, 0, 2, 1000, login)
+            reply = dvrip_recv_packet(sock)
+            session = dvrip_parse_session(reply["payload"])
+            if not session:
+                raise RuntimeError("DVRIP login failed.")
+            ptz = json.dumps(
+                {
+                    "Name": "OPPTZControl",
+                    "OPPTZControl": {
+                        "Command": command,
+                        "Parameter": {
+                            "AUX": {"Number": 0, "Status": "On"},
+                            "Channel": 0,
+                            "MenuOpts": "Enter",
+                            "POINT": {"bottom": 0, "left": 0, "right": 0, "top": 0},
+                            "Pattern": "SetBegin",
+                            "Preset": 65535,
+                            "Step": step,
+                            "Tour": 0,
+                        },
+                    },
+                    "SessionID": f"0x{session:08X}",
+                },
+                separators=(",", ":"),
+            )
+            dvrip_send_packet(sock, session, 4, 1400, ptz)
+            if action in PTZ_MOVE_VECTORS:
+                time.sleep(duration_ms / 1000)
+                stop = json.loads(ptz)
+                stop["OPPTZControl"]["Command"] = "Stop"
+                dvrip_send_packet(sock, session, 5, 1400, json.dumps(stop, separators=(",", ":")))
+    except (TimeoutError, OSError) as exc:
+        raise RuntimeError(f"DVRIP command failed: {exc}") from exc
+
+    return {
+        "ok": True,
+        "action": action,
+        "driver": "victure_dvrip",
+        "endpoint": target["endpoint"],
+        "step": step,
+        "duration_ms": duration_ms if action in PTZ_MOVE_VECTORS else 0,
+    }
+
+
 def ptz_url_candidates(camera):
     explicit_url = str(camera.get("ptz_url") or "").strip()
     rtsp_url = str(camera.get("rtsp_url") or "").strip()
@@ -1230,14 +1414,21 @@ def onvif_post(url, body, credentials=None):
 def run_ptz_command(camera, payload):
     if not camera.get("ptz_enabled"):
         raise ValueError("PTZ is disabled for this camera.")
-    if normalize_ptz_type(camera.get("ptz_type")) != "onvif":
-        raise ValueError("This camera does not have an ONVIF PTZ driver configured.")
+    ptz_type = normalize_ptz_type(camera.get("ptz_type"))
+    if ptz_type == "none":
+        raise ValueError("This camera does not have a PTZ driver configured.")
 
     action = str(payload.get("action", "")).strip().lower().replace("-", "_")
     if action not in PTZ_MOVE_VECTORS and action not in ("stop", "home"):
         raise ValueError("Unsupported PTZ action.")
     speed = normalize_ptz_speed(payload.get("speed", camera.get("ptz_speed", DEFAULT_PTZ_SPEED)))
     duration_ms = bounded_int(payload.get("duration_ms"), PTZ_DEFAULT_DURATION_MS, 80, 1500)
+
+    if ptz_type == "victure_dvrip":
+        return run_victure_dvrip_ptz_command(camera, action, speed, duration_ms)
+    if ptz_type != "onvif":
+        raise ValueError("This camera does not have a supported PTZ driver configured.")
+
     profile_token = normalize_ptz_profile_token(camera.get("ptz_profile_token"))
     candidates, credentials = ptz_url_candidates(camera)
     if not candidates:

@@ -225,6 +225,7 @@ function resetForm() {
   renderHaPanel(null);
   setSaveState("");
   renderCameras();
+  updatePtzFormHints();
 }
 
 function editCamera(camera) {
@@ -249,6 +250,22 @@ function editCamera(camera) {
   renderHaPanel(camera);
   setSaveState("");
   renderCameras();
+  updatePtzFormHints();
+}
+
+function updatePtzFormHints() {
+  const driver = $("ptzType").value;
+  if (driver === "victure_dvrip") {
+    $("ptzUrl").placeholder = "dvrip://192.168.1.135:34567";
+    if (!$("ptzProfileToken").value || $("ptzProfileToken").value === "Profile_1") {
+      $("ptzProfileToken").value = "nTBCS19C";
+    }
+  } else {
+    $("ptzUrl").placeholder = "http://camera-ip:8080/onvif/ptz_service";
+    if (driver === "onvif" && $("ptzProfileToken").value === "nTBCS19C") {
+      $("ptzProfileToken").value = "Profile_1";
+    }
+  }
 }
 
 function renderCameras() {
@@ -650,6 +667,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
   $("playbackDate").value = today();
   $("cameraForm").addEventListener("submit", saveCamera);
+  $("ptzType").addEventListener("change", updatePtzFormHints);
   $("newCamera").addEventListener("click", resetForm);
   $("deleteCamera").addEventListener("click", deleteSelectedCamera);
   $("testStream").addEventListener("click", testStream);
