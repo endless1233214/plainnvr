@@ -482,13 +482,18 @@ fieldset {
 
 .camera-time-row {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) auto auto auto minmax(120px, 1fr);
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
   align-items: end;
   gap: 10px;
 }
 
 .camera-time-row label {
   margin: 0;
+}
+
+.camera-time-row .muted {
+  grid-column: 1 / -1;
+  min-height: 1.2em;
 }
 
 .live-frame {
@@ -505,11 +510,7 @@ fieldset {
 }
 
 @media (max-width: 720px) {
-  .camera-time-row {
-    grid-template-columns: 1fr auto auto auto;
-  }
-
-  .camera-time-row .muted {
+  .camera-time-row label {
     grid-column: 1 / -1;
   }
 }
