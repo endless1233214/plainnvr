@@ -17,4 +17,7 @@ ENV NVR_HOST=0.0.0.0 \
 
 EXPOSE 8787
 
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD python -c "import os, urllib.request; port = os.environ.get('NVR_PORT', '8787'); urllib.request.urlopen(f'http://127.0.0.1:{port}/api/health', timeout=3).read()" || exit 1
+
 CMD ["python", "/app/app/server.py"]

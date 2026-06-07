@@ -8,6 +8,7 @@ import mimetypes
 import os
 import re
 import secrets
+import select
 import shutil
 import signal
 import sqlite3
@@ -49,6 +50,7 @@ RTSP_ANALYZE_DURATION = os.environ.get("NVR_RTSP_ANALYZE_DURATION", "0")
 RTSP_LIVE_PROBESIZE = os.environ.get("NVR_RTSP_LIVE_PROBESIZE", "5000000")
 RTSP_LIVE_ANALYZE_DURATION = os.environ.get("NVR_RTSP_LIVE_ANALYZE_DURATION", "5000000")
 RTSP_THREAD_QUEUE_SIZE = os.environ.get("NVR_RTSP_THREAD_QUEUE_SIZE", "2048")
+RTSP_READ_TIMEOUT_SECONDS = max(3, env_float("NVR_RTSP_READ_TIMEOUT_SECONDS", 15))
 SCAN_INTERVAL_SECONDS = int(os.environ.get("NVR_SCAN_INTERVAL_SECONDS", "10"))
 RETENTION_INTERVAL_SECONDS = int(os.environ.get("NVR_RETENTION_INTERVAL_SECONDS", "3600"))
 DEFAULT_SEGMENT_SECONDS = int(os.environ.get("NVR_DEFAULT_SEGMENT_SECONDS", "60"))
@@ -67,6 +69,13 @@ RELAY_HLS_SEGMENT_SECONDS = int(os.environ.get("NVR_RELAY_HLS_SEGMENT_SECONDS", 
 RELAY_HLS_LIST_SIZE = int(os.environ.get("NVR_RELAY_HLS_LIST_SIZE", "12"))
 RELAY_HLS_DELETE_THRESHOLD = int(os.environ.get("NVR_RELAY_HLS_DELETE_THRESHOLD", "18"))
 RELAY_READY_TIMEOUT_SECONDS = int(os.environ.get("NVR_RELAY_READY_TIMEOUT_SECONDS", "20"))
+RELAY_HLS_STALE_SECONDS = max(
+    6,
+    env_float("NVR_RELAY_HLS_STALE_SECONDS", RELAY_HLS_SEGMENT_SECONDS * 6),
+)
+RECORDER_START_GRACE_SECONDS = max(15, env_float("NVR_RECORDER_START_GRACE_SECONDS", 45))
+RECORDER_STALE_SECONDS = max(30, env_float("NVR_RECORDER_STALE_SECONDS", 90))
+MJPEG_STALE_SECONDS = max(5, env_float("NVR_MJPEG_STALE_SECONDS", 15))
 LIVE_AUDIO_GAIN = os.environ.get("NVR_LIVE_AUDIO_GAIN", "4.0").strip() or "4.0"
 if not re.match(r"^\d+(\.\d+)?$", LIVE_AUDIO_GAIN):
     LIVE_AUDIO_GAIN = "4.0"
@@ -554,6 +563,7 @@ def camera_from_row(row):
     data["ptz_profile_token"] = normalize_ptz_profile_token(data.get("ptz_profile_token"))
     data["ptz_zoom_mode"] = normalize_ptz_zoom_mode(data.get("ptz_zoom_mode"))
     data["ptz_speed"] = normalize_ptz_speed(data.get("ptz_speed"))
+    data["time_sync_supported"] = data["ptz_type"] in ("victure_direct", "victure_dvrip")
     data["schedule"] = normalize_schedule(json.loads(data.pop("schedule_json")))
     return data
 
@@ -769,6 +779,23 @@ def delete_camera(camera_id):
 def add_event(camera_id, level, message):
     try:
         with db_conn() as conn:
+            previous = conn.execute(
+                """
+                SELECT created_at
+                FROM recorder_events
+                WHERE camera_id = ? AND level = ? AND message = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (camera_id, level, message[:500]),
+            ).fetchone()
+            if previous:
+                try:
+                    previous_at = datetime.fromisoformat(previous["created_at"])
+                    if utcnow() - previous_at < timedelta(seconds=60):
+                        return
+                except (TypeError, ValueError):
+                    pass
             conn.execute(
                 "INSERT INTO recorder_events (camera_id, level, message, created_at) VALUES (?, ?, ?, ?)",
                 (camera_id, level, message[:500], iso_now()),
@@ -797,6 +824,9 @@ class RelayManager:
     def __init__(self):
         self.lock = threading.RLock()
         self.processes = {}
+        self.generations = {}
+        self.restart_counts = {}
+        self.last_errors = {}
 
     def stream_dir(self, camera_id):
         return RELAY_DIR / camera_id
@@ -805,36 +835,62 @@ class RelayManager:
         return self.stream_dir(camera_id) / "source.m3u8"
 
     def source_camera(self, camera):
-        self.ensure_running(camera)
+        generation = self.ensure_running(camera)
         cloned = dict(camera)
         cloned["rtsp_url"] = str(self.playlist_path(camera["id"]))
         cloned["audio_url"] = ""
         cloned["record_audio"] = bool(camera.get("record_audio", True))
         cloned["rtsp_transport"] = "tcp"
+        cloned["_relay_generation"] = generation
         return cloned
 
     def status(self):
         with self.lock:
             states = {}
-            for camera_id, entry in self.processes.items():
-                process = entry["process"]
+            camera_ids = set(self.processes) | set(self.generations) | set(self.last_errors)
+            for camera_id in camera_ids:
+                entry = self.processes.get(camera_id)
+                process = entry["process"] if entry else None
+                playlist_age = self._playlist_age(camera_id)
+                running = bool(process and process.poll() is None)
+                healthy = running and playlist_age is not None and playlist_age <= RELAY_HLS_STALE_SECONDS
                 states[camera_id] = {
-                    "running": process.poll() is None,
-                    "pid": process.pid,
-                    "started_at": entry["started_at"],
-                    "last_error": entry.get("last_error"),
+                    "running": running,
+                    "healthy": healthy,
+                    "pid": process.pid if running else None,
+                    "started_at": entry.get("started_at") if entry else None,
+                    "last_error": self.last_errors.get(camera_id),
                     "source": str(self.playlist_path(camera_id)),
+                    "playlist_age_seconds": round(playlist_age, 1) if playlist_age is not None else None,
+                    "generation": self.generations.get(camera_id, 0),
+                    "restart_count": self.restart_counts.get(camera_id, 0),
                 }
             return states
 
     def ensure_running(self, camera):
         camera_id = camera["id"]
+        restart_reason = None
         with self.lock:
             entry = self.processes.get(camera_id)
-            if entry and entry["process"].poll() is None and entry.get("source_key") == self.source_key(camera):
+            source_matches = bool(entry and entry.get("source_key") == self.source_key(camera))
+            process_running = bool(entry and entry["process"].poll() is None)
+            if source_matches and process_running and self._playlist_is_fresh(camera_id):
                 entry["last_seen"] = time.time()
-                if self.wait_ready(camera_id, locked=True):
-                    return
+                return entry["generation"]
+            if source_matches and process_running:
+                startup_age = time.time() - entry.get("started_wall", 0)
+                if startup_age <= max(5, RELAY_READY_TIMEOUT_SECONDS) and self.wait_ready(camera_id, locked=True):
+                    entry["last_seen"] = time.time()
+                    return entry["generation"]
+            if entry:
+                playlist_age = self._playlist_age(camera_id)
+                if source_matches and process_running:
+                    age_text = f"{playlist_age:.1f}s" if playlist_age is not None else "missing"
+                    restart_reason = f"Relay stalled; playlist age {age_text}. Restarting source."
+                elif not source_matches:
+                    restart_reason = "Relay source changed. Restarting source."
+                else:
+                    restart_reason = "Relay exited. Restarting source."
             self._stop_locked(camera_id)
             output_dir = self.stream_dir(camera_id)
             shutil.rmtree(output_dir, ignore_errors=True)
@@ -849,16 +905,35 @@ class RelayManager:
                 )
             finally:
                 log_handle.close()
+            generation = self.generations.get(camera_id, 0) + 1
+            self.generations[camera_id] = generation
+            if restart_reason:
+                self.restart_counts[camera_id] = self.restart_counts.get(camera_id, 0) + 1
             self.processes[camera_id] = {
                 "process": process,
                 "started_at": iso_now(),
+                "started_wall": time.time(),
                 "last_seen": time.time(),
                 "source_key": self.source_key(camera),
                 "log": log_file,
+                "generation": generation,
             }
 
         if not self.wait_ready(camera_id):
-            raise RuntimeError(f"Relay did not become ready for {camera.get('name') or camera_id}. {self.log_tail(camera_id)}")
+            detail = self.log_tail(camera_id)
+            message = f"Relay did not become ready for {camera.get('name') or camera_id}."
+            if detail:
+                message = f"{message} {detail}"
+            with self.lock:
+                self.last_errors[camera_id] = redact_camera_text(message, camera)
+                self._stop_locked(camera_id)
+            raise RuntimeError(message)
+        with self.lock:
+            self.last_errors.pop(camera_id, None)
+        if restart_reason:
+            add_event(camera_id, "warn", restart_reason)
+            add_event(camera_id, "info", "Relay recovered with fresh media.")
+        return generation
 
     def source_key(self, camera):
         return (
@@ -920,7 +995,6 @@ class RelayManager:
 
     def wait_ready(self, camera_id, locked=False):
         deadline = time.time() + max(5, RELAY_READY_TIMEOUT_SECONDS)
-        playlist = self.playlist_path(camera_id)
         while time.time() < deadline:
             if not locked:
                 with self.lock:
@@ -931,12 +1005,28 @@ class RelayManager:
                 process = entry["process"] if entry else None
             if process is None or process.poll() is not None:
                 return False
-            if playlist.exists() and playlist.stat().st_size > 0:
+            if self._playlist_is_fresh(camera_id):
                 return True
-            if locked:
-                return False
             time.sleep(0.2)
         return False
+
+    def generation(self, camera_id):
+        with self.lock:
+            return self.generations.get(camera_id, 0)
+
+    def _playlist_age(self, camera_id, now=None):
+        try:
+            return (now or time.time()) - self.playlist_path(camera_id).stat().st_mtime
+        except OSError:
+            return None
+
+    def _playlist_is_fresh(self, camera_id):
+        playlist = self.playlist_path(camera_id)
+        try:
+            stat = playlist.stat()
+        except OSError:
+            return False
+        return stat.st_size > 0 and time.time() - stat.st_mtime <= RELAY_HLS_STALE_SECONDS
 
     def log_tail(self, camera_id, line_count=20):
         with self.lock:
@@ -951,6 +1041,7 @@ class RelayManager:
     def stop(self, camera_id):
         with self.lock:
             self._stop_locked(camera_id)
+            self.last_errors.pop(camera_id, None)
 
     def _stop_locked(self, camera_id):
         entry = self.processes.pop(camera_id, None)
@@ -975,7 +1066,10 @@ class RelayManager:
                 try:
                     self.ensure_running(camera)
                 except Exception as exc:
-                    add_event(camera["id"], "error", f"Relay failed: {redact_camera_text(str(exc), camera)}")
+                    message = f"Relay failed: {redact_camera_text(str(exc), camera)}"
+                    with self.lock:
+                        self.last_errors[camera["id"]] = message
+                    add_event(camera["id"], "error", message)
 
     def shutdown(self):
         with self.lock:
@@ -987,8 +1081,8 @@ class RelayManager:
 relay = RelayManager()
 
 
-def build_ffmpeg_command(camera):
-    camera = relay.source_camera(camera)
+def build_ffmpeg_command(camera, source_camera=None):
+    camera = source_camera or relay.source_camera(camera)
     target_dir = camera_dir(camera)
     target_dir.mkdir(parents=True, exist_ok=True)
     output_pattern = str(target_dir / "%Y%m%dT%H%M%S.mp4")
@@ -1050,6 +1144,8 @@ def ffmpeg_input_args(camera_or_payload, url_key="rtsp_url", low_latency=True):
             [
                 "-rtsp_transport",
                 transport if transport in ("tcp", "udp") else "tcp",
+                "-timeout",
+                str(round(RTSP_READ_TIMEOUT_SECONDS * 1_000_000)),
                 "-probesize",
                 probesize,
                 "-analyzeduration",
@@ -1235,6 +1331,105 @@ def dvrip_parse_session(payload):
     return 0
 
 
+def dvrip_parse_json(payload):
+    try:
+        return json.loads(payload)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("DVRIP returned invalid JSON.") from exc
+
+
+def dvrip_login(sock, target):
+    login = json.dumps(
+        {
+            "EncryptType": "MD5",
+            "LoginType": "DVRIP-Web",
+            "PassWord": target["passhash"],
+            "UserName": target["user"],
+        },
+        separators=(",", ":"),
+    )
+    dvrip_send_packet(sock, 0, 2, 1000, login)
+    reply = dvrip_recv_packet(sock)
+    details = dvrip_parse_json(reply["payload"])
+    session = dvrip_parse_session(reply["payload"])
+    if not session or details.get("Ret") != 100:
+        raise RuntimeError("DVRIP login failed.")
+    return session
+
+
+def dvrip_time_target(camera):
+    target_camera = dict(camera)
+    if normalize_ptz_type(camera.get("ptz_type")) != "victure_dvrip":
+        target_camera["ptz_url"] = ""
+    return dvrip_target(target_camera)
+
+
+def dvrip_query_time(sock, session, number=4):
+    payload = json.dumps(
+        {
+            "Name": "OPTimeQuery",
+            "SessionID": f"0x{session:08X}",
+        },
+        separators=(",", ":"),
+    )
+    dvrip_send_packet(sock, session, number, 1452, payload)
+    details = dvrip_parse_json(dvrip_recv_packet(sock)["payload"])
+    if details.get("Ret") != 100 or not details.get("OPTimeQuery"):
+        raise RuntimeError("Camera did not return its clock.")
+    return datetime.strptime(details["OPTimeQuery"], "%Y-%m-%d %H:%M:%S")
+
+
+def normalize_requested_camera_time(value):
+    text = str(value or "").strip()
+    if not text:
+        return datetime.now().replace(microsecond=0)
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("Invalid camera date and time.") from exc
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone().replace(tzinfo=None)
+    parsed = parsed.replace(microsecond=0)
+    if parsed.year < 2001 or parsed.year > 2100:
+        raise ValueError("Camera date must be between 2001 and 2100.")
+    return parsed
+
+
+def camera_time(camera, requested=None):
+    if not camera.get("time_sync_supported"):
+        raise ValueError("Clock sync is not available for this camera driver.")
+    target = dvrip_time_target(camera)
+    try:
+        with socket.create_connection((target["host"], target["port"]), timeout=4) as sock:
+            sock.settimeout(4)
+            session = dvrip_login(sock, target)
+            if requested is not None:
+                value = normalize_requested_camera_time(requested)
+                payload = json.dumps(
+                    {
+                        "Name": "OPTimeSetting",
+                        "OPTimeSetting": value.strftime("%Y-%m-%d %H:%M:%S"),
+                        "SessionID": f"0x{session:08X}",
+                    },
+                    separators=(",", ":"),
+                )
+                dvrip_send_packet(sock, session, 4, 1450, payload)
+                details = dvrip_parse_json(dvrip_recv_packet(sock)["payload"])
+                if details.get("Ret") != 100:
+                    raise RuntimeError("Camera rejected the clock update.")
+                current = dvrip_query_time(sock, session, number=6)
+            else:
+                current = dvrip_query_time(sock, session)
+    except (TimeoutError, OSError) as exc:
+        raise RuntimeError(f"Camera clock request failed: {exc}") from exc
+    return {
+        "ok": True,
+        "driver": "dvrip",
+        "time": current.strftime("%Y-%m-%d %H:%M:%S"),
+        "endpoint": target["endpoint"],
+    }
+
+
 def run_victure_dvrip_ptz_command(camera, action, speed, duration_ms):
     if action == "home":
         return {
@@ -1250,24 +1445,10 @@ def run_victure_dvrip_ptz_command(camera, action, speed, duration_ms):
 
     target = dvrip_target(camera)
     step = dvrip_step_from_speed(speed)
-    login = json.dumps(
-        {
-            "EncryptType": "MD5",
-            "LoginType": "DVRIP-Web",
-            "PassWord": target["passhash"],
-            "UserName": target["user"],
-        },
-        separators=(",", ":"),
-    )
-
     try:
         with socket.create_connection((target["host"], target["port"]), timeout=4) as sock:
             sock.settimeout(4)
-            dvrip_send_packet(sock, 0, 2, 1000, login)
-            reply = dvrip_recv_packet(sock)
-            session = dvrip_parse_session(reply["payload"])
-            if not session:
-                raise RuntimeError("DVRIP login failed.")
+            session = dvrip_login(sock, target)
             def ptz_payload(ptz_command, preset):
                 return json.dumps({
                     "Name": "OPPTZControl",
@@ -1601,8 +1782,8 @@ def build_mjpeg_command(camera, grayscale=False):
     return command
 
 
-def build_live_hls_command(camera, output_dir, grayscale=False, include_audio=True):
-    camera = relay.source_camera(camera)
+def build_live_hls_command(camera, output_dir, grayscale=False, include_audio=True, source_camera=None):
+    camera = source_camera or relay.source_camera(camera)
     output_dir.mkdir(parents=True, exist_ok=True)
     audio_url = str(camera.get("audio_url") or "").strip()
     rtsp_url = str(camera.get("rtsp_url") or "").strip()
@@ -1850,9 +2031,15 @@ class LiveHLSManager:
         camera_id = camera["id"]
         grayscale = grayscale_enabled(camera) if grayscale is None else bool(grayscale)
         include_audio = bool(include_audio)
+        try:
+            source_camera = relay.source_camera(camera)
+        except (OSError, RuntimeError):
+            self.stop(camera_id)
+            raise
         profile = (
             grayscale,
             include_audio,
+            source_camera.get("_relay_generation"),
         )
         with self.lock:
             self._sweep_idle_locked()
@@ -1875,6 +2062,7 @@ class LiveHLSManager:
                         output_dir,
                         grayscale=grayscale,
                         include_audio=include_audio,
+                        source_camera=source_camera,
                     ),
                     stdout=subprocess.DEVNULL,
                     stderr=log_handle,
@@ -1901,7 +2089,7 @@ class LiveHLSManager:
                 self.stop(camera_id)
                 detail = f" {log_tail}" if log_tail else ""
                 raise RuntimeError(f"Live stream exited before it produced a playlist.{detail}")
-            if playlist.exists() and playlist.stat().st_size > 0:
+            if self._playlist_is_fresh(playlist):
                 return playlist
             time.sleep(0.2)
         log_tail = self.log_tail(camera_id)
@@ -1915,9 +2103,12 @@ class LiveHLSManager:
     def touch(self, camera_id):
         with self.lock:
             entry = self.processes.get(camera_id)
-            if entry and entry["process"].poll() is None:
+            playlist = entry["dir"] / "stream.m3u8" if entry else None
+            if entry and entry["process"].poll() is None and self._playlist_is_fresh(playlist):
                 entry["last_seen"] = time.time()
                 return True
+            if entry:
+                self._stop_locked(camera_id)
             return False
 
     def log_tail(self, camera_id, line_count=20):
@@ -1958,7 +2149,7 @@ class LiveHLSManager:
                 or now - entry["last_seen"] > LIVE_HLS_IDLE_SECONDS
                 or (
                     playlist_age is not None
-                    and playlist_age > max(LIVE_HLS_IDLE_SECONDS, LIVE_HLS_STALE_SECONDS)
+                    and playlist_age > LIVE_HLS_STALE_SECONDS
                 )
             ):
                 self._stop_locked(camera_id)
@@ -2010,12 +2201,15 @@ class RecorderSupervisor:
             states = {}
             for camera_id, entry in self.processes.items():
                 process = entry["process"]
+                output_age = self.output_age(camera_id)
                 states[camera_id] = {
                     "running": process.poll() is None,
                     "pid": process.pid,
                     "started_at": entry["started_at"],
                     "last_error": entry.get("last_error"),
                     "paused": False,
+                    "output_age_seconds": round(output_age, 1) if output_age is not None else None,
+                    "relay_generation": entry.get("relay_generation"),
                 }
             for camera_id in self.paused_camera_ids:
                 states.setdefault(
@@ -2060,20 +2254,37 @@ class RecorderSupervisor:
             entry = self.processes.pop(camera_id, None)
         if not entry:
             return
-        process = entry["process"]
-        if process.poll() is None:
-            process.terminate()
-            try:
-                process.wait(timeout=8)
-            except subprocess.TimeoutExpired:
-                process.kill()
+        self._terminate_entry(entry)
         add_event(camera_id, "info", "Recorder stopped.")
 
     def ensure_running(self, camera):
+        try:
+            source_camera = relay.source_camera(camera)
+        except (OSError, RuntimeError) as exc:
+            with self.lock:
+                entry = self.processes.pop(camera["id"], None)
+            if entry:
+                self._terminate_entry(entry)
+            add_event(camera["id"], "error", f"Recorder waiting for relay: {redact_camera_text(str(exc), camera)}")
+            return
+
+        relay_generation = source_camera.get("_relay_generation")
         with self.lock:
             entry = self.processes.get(camera["id"])
             if entry and entry["process"].poll() is None:
-                return
+                generation_matches = entry.get("relay_generation") == relay_generation
+                output_fresh = self._output_is_fresh(camera, entry)
+                if generation_matches and output_fresh:
+                    return
+                reason = (
+                    "Recorder source was replaced; restarting."
+                    if not generation_matches
+                    else "Recorder stopped producing fresh output; restarting."
+                )
+                self.processes.pop(camera["id"], None)
+                self._terminate_entry(entry)
+                add_event(camera["id"], "warn", reason)
+                entry = None
             if entry:
                 stderr = ""
                 try:
@@ -2085,7 +2296,7 @@ class RecorderSupervisor:
                 self.processes.pop(camera["id"], None)
 
             try:
-                command = build_ffmpeg_command(camera)
+                command = build_ffmpeg_command(camera, source_camera=source_camera)
                 process = subprocess.Popen(
                     command,
                     stdout=subprocess.DEVNULL,
@@ -2099,9 +2310,38 @@ class RecorderSupervisor:
             self.processes[camera["id"]] = {
                 "process": process,
                 "started_at": iso_now(),
+                "started_wall": time.time(),
                 "command": command,
+                "relay_generation": relay_generation,
             }
             add_event(camera["id"], "info", "Recorder started.")
+
+    def output_age(self, camera_id):
+        camera = get_camera(camera_id)
+        if not camera:
+            return None
+        root = camera_dir(camera)
+        try:
+            latest = max((path.stat().st_mtime for path in root.glob("*.mp4")), default=None)
+        except OSError:
+            return None
+        return time.time() - latest if latest is not None else None
+
+    def _output_is_fresh(self, camera, entry):
+        if time.time() - entry.get("started_wall", time.time()) < RECORDER_START_GRACE_SECONDS:
+            return True
+        age = self.output_age(camera["id"])
+        limit = max(RECORDER_STALE_SECONDS, min(float(camera.get("segment_seconds") or 60), 120))
+        return age is not None and age <= limit
+
+    def _terminate_entry(self, entry):
+        process = entry["process"]
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=8)
+            except subprocess.TimeoutExpired:
+                process.kill()
 
     def run_retention(self, cameras):
         now = time.time()
@@ -2522,6 +2762,7 @@ class NvrHandler(SimpleHTTPRequestHandler):
             "/login.html",
             "/styles.css",
             "/favicon.ico",
+            "/api/health",
             "/api/auth/state",
             "/api/auth/login",
             "/api/auth/setup",
@@ -2639,6 +2880,10 @@ class NvrHandler(SimpleHTTPRequestHandler):
         match = re.match(r"^/api/cameras/([a-f0-9]+)/ptz$", parsed.path)
         if match:
             self.handle_camera_ptz(match.group(1), payload)
+            return
+        match = re.match(r"^/api/cameras/([a-f0-9]+)/time$", parsed.path)
+        if match:
+            self.handle_camera_time(match.group(1), payload)
             return
         match = re.match(r"^/api/cameras/([a-f0-9]+)/(recorder|live)/(start|stop|restart)$", parsed.path)
         if match:
@@ -2779,8 +3024,26 @@ class NvrHandler(SimpleHTTPRequestHandler):
             return
         self.send_json(result)
 
+    def handle_camera_time(self, camera_id, payload=None):
+        camera = get_camera(camera_id)
+        if not camera:
+            self.send_error_json(HTTPStatus.NOT_FOUND, "Camera not found.")
+            return
+        try:
+            result = camera_time(camera, None if payload is None else payload.get("time"))
+        except ValueError as exc:
+            self.send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
+            return
+        except RuntimeError as exc:
+            self.send_error_json(HTTPStatus.BAD_GATEWAY, redact_camera_text(str(exc), camera))
+            return
+        self.send_json(result)
+
     def handle_api_get(self, parsed):
         query = parse_qs(parsed.query)
+        if parsed.path == "/api/health":
+            self.send_json({"ok": True, "now": iso_now()})
+            return
         if parsed.path == "/api/auth/state":
             username = self.auth_user()
             self.send_json(
@@ -2793,6 +3056,10 @@ class NvrHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path == "/api/cameras":
             self.send_json({"cameras": list_cameras()})
+            return
+        match = re.match(r"^/api/cameras/([a-f0-9]+)/time$", parsed.path)
+        if match:
+            self.handle_camera_time(match.group(1))
             return
         match = re.match(r"^/api/cameras/([a-f0-9]+)/live/diagnostics$", parsed.path)
         if match:
@@ -2905,7 +3172,9 @@ class NvrHandler(SimpleHTTPRequestHandler):
                 )
                 return
         else:
-            live_hls.touch(camera["id"])
+            if not live_hls.touch(camera["id"]):
+                self.send_error(HTTPStatus.SERVICE_UNAVAILABLE, "Live stream is restarting.")
+                return
         target = (live_hls.stream_dir(camera["id"]) / filename).resolve()
         root = live_hls.stream_dir(camera["id"]).resolve()
         if root not in target.parents:
@@ -2990,14 +3259,17 @@ class NvrHandler(SimpleHTTPRequestHandler):
         self.send_header("Content-Length", str(len(result.stdout)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
-        self.wfile.write(result.stdout)
+        try:
+            self.wfile.write(result.stdout)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def handle_mjpeg(self, camera, grayscale=False):
         try:
             process = subprocess.Popen(
                 build_mjpeg_command(camera, grayscale=grayscale),
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
             )
         except (OSError, RuntimeError) as exc:
             self.send_error(HTTPStatus.BAD_GATEWAY, f"Could not start FFmpeg: {redact_camera_text(str(exc), camera)}")
@@ -3007,11 +3279,18 @@ class NvrHandler(SimpleHTTPRequestHandler):
         self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=ffmpeg")
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
+        last_output = time.monotonic()
         try:
             while True:
-                chunk = process.stdout.read(8192)
+                readable, _, _ = select.select([process.stdout], [], [], 1)
+                if not readable:
+                    if process.poll() is not None or time.monotonic() - last_output > MJPEG_STALE_SECONDS:
+                        break
+                    continue
+                chunk = os.read(process.stdout.fileno(), 8192)
                 if not chunk:
                     break
+                last_output = time.monotonic()
                 self.wfile.write(chunk)
                 self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError):

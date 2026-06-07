@@ -131,6 +131,20 @@
             </div>
           </fieldset>
 
+          <fieldset id="cameraTimePanel" class="camera-time-settings" hidden>
+            <legend>Camera Clock</legend>
+            <div class="camera-time-row">
+              <label>
+                Date and Time
+                <input id="cameraTime" type="datetime-local" step="1" />
+              </label>
+              <button id="cameraTimeNow" type="button">Now</button>
+              <button id="readCameraTime" type="button">Read</button>
+              <button id="setCameraTime" type="button">Set</button>
+              <span id="cameraTimeState" class="muted"></span>
+            </div>
+          </fieldset>
+
           <fieldset class="schedule">
             <legend>Schedule</legend>
             <div class="mode-row">

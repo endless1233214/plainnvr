@@ -19,6 +19,13 @@ source that recording, browser live view, iPhone live view, snapshots, and Home
 Assistant can share. This keeps small camera nodes from serving a new RTSP reader
 for every viewer.
 
+Relay and recorder health is based on fresh media output, not only whether an
+FFmpeg process still exists. If a camera or FFmpeg stalls without exiting,
+PlainNVR discards the stale playlist, restarts the relay, and restarts dependent
+recording/live workers against the new relay generation. The web and iPhone
+players also reject frozen playback and retry instead of leaving the final frame
+on screen indefinitely.
+
 ## Run Locally
 
 ```bash
@@ -123,7 +130,11 @@ restarts it after `NVR_LIVE_HLS_STALE_SECONDS` seconds.
 PlainNVR uses a more patient RTSP probe for the internal relay so cameras that
 expose audio a moment after video still record both tracks. The relay can be
 tuned with `NVR_RELAY_HLS_SEGMENT_SECONDS`, `NVR_RELAY_HLS_LIST_SIZE`,
-`NVR_RELAY_HLS_DELETE_THRESHOLD`, and `NVR_RELAY_READY_TIMEOUT_SECONDS`.
+`NVR_RELAY_HLS_DELETE_THRESHOLD`, `NVR_RELAY_READY_TIMEOUT_SECONDS`, and
+`NVR_RELAY_HLS_STALE_SECONDS`. RTSP reads time out after
+`NVR_RTSP_READ_TIMEOUT_SECONDS` so a dead camera connection cannot hang forever.
+Recorder output is also supervised with `NVR_RECORDER_START_GRACE_SECONDS` and
+`NVR_RECORDER_STALE_SECONDS`.
 
 The live viewer includes a Grayscale toggle. It applies only to the live HLS,
 MJPEG, or snapshot output requested by that viewer; recordings stay as the
@@ -153,6 +164,10 @@ choose the `Victure Direct Stepper` driver. Leave Control URL blank to use the
 RTSP host with admin port `8088`, or set `http://192.168.1.135:8088`. The
 legacy `Victure DVRIP` driver is kept for older experiments, but the direct
 stepper driver is the one that avoids the vendor homing behavior.
+
+Those Victure drivers also expose a Camera Clock section in the camera editor.
+Use Read to inspect the camera's overlay clock, Now to fill the browser's local
+time, and Set to send and verify it over DVRIP.
 
 ## Camera URL Examples
 

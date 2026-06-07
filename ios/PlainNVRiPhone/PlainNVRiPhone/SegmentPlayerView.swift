@@ -132,7 +132,13 @@ struct LivePlayerView: View {
     @State private var player = AVPlayer()
     @State private var statusObservation: NSKeyValueObservation?
     @State private var errorLogObserver: NSObjectProtocol?
+    @State private var playbackStalledObserver: NSObjectProtocol?
+    @State private var playbackFailedObserver: NSObjectProtocol?
     @State private var liveEdgeTimer: Timer?
+    @State private var retryTask: Task<Void, Never>?
+    @State private var isActive = false
+    @State private var lastPlaybackTime: Double?
+    @State private var lastPlaybackProgressAt = Date()
     @State private var baseScale: CGFloat = 1
     @GestureState private var gestureScale: CGFloat = 1
     @State private var baseOffset: CGSize = .zero
@@ -171,6 +177,7 @@ struct LivePlayerView: View {
         }
         .background(.black)
         .onAppear {
+            isActive = true
             startPlayback(url)
         }
         .onChange(of: url) { _, newURL in
@@ -184,13 +191,18 @@ struct LivePlayerView: View {
             applyAudioSettings()
         }
         .onDisappear {
+            isActive = false
             stopPlayback()
         }
     }
 
     private func startPlayback(_ url: URL) {
+        retryTask?.cancel()
+        retryTask = nil
         clearObservers()
         stopLiveEdgeTimer()
+        lastPlaybackTime = nil
+        lastPlaybackProgressAt = Date()
         onStatus("Opening live stream...")
         let item = AVPlayerItem(url: url)
         item.preferredForwardBufferDuration = 0.25
@@ -201,7 +213,10 @@ struct LivePlayerView: View {
                 case .readyToPlay:
                     onStatus(nil)
                 case .failed:
-                    onFailure("Player failed: \(item.error?.localizedDescription ?? "Unknown AVPlayer error")")
+                    scheduleRetry(
+                        url,
+                        message: "Player failed: \(item.error?.localizedDescription ?? "Unknown AVPlayer error")"
+                    )
                 case .unknown:
                     break
                 @unknown default:
@@ -216,7 +231,22 @@ struct LivePlayerView: View {
         ) { _ in
             guard let event = item.errorLog()?.events.last else { return }
             let details = event.errorComment ?? event.errorStatusCode.description
-            onFailure("Player error \(event.errorStatusCode): \(details)")
+            scheduleRetry(url, message: "Player error \(event.errorStatusCode): \(details)")
+        }
+        playbackStalledObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemPlaybackStalled,
+            object: item,
+            queue: .main
+        ) { _ in
+            scheduleRetry(url, message: "Live playback stalled.")
+        }
+        playbackFailedObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemFailedToPlayToEndTime,
+            object: item,
+            queue: .main
+        ) { notification in
+            let error = notification.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error
+            scheduleRetry(url, message: "Live playback stopped: \(error?.localizedDescription ?? "Unknown error")")
         }
         player.automaticallyWaitsToMinimizeStalling = false
         player.replaceCurrentItem(with: item)
@@ -226,6 +256,8 @@ struct LivePlayerView: View {
     }
 
     private func stopPlayback() {
+        retryTask?.cancel()
+        retryTask = nil
         clearObservers()
         stopLiveEdgeTimer()
         player.pause()
@@ -238,6 +270,14 @@ struct LivePlayerView: View {
         if let errorLogObserver {
             NotificationCenter.default.removeObserver(errorLogObserver)
             self.errorLogObserver = nil
+        }
+        if let playbackStalledObserver {
+            NotificationCenter.default.removeObserver(playbackStalledObserver)
+            self.playbackStalledObserver = nil
+        }
+        if let playbackFailedObserver {
+            NotificationCenter.default.removeObserver(playbackFailedObserver)
+            self.playbackFailedObserver = nil
         }
     }
 
@@ -263,11 +303,30 @@ struct LivePlayerView: View {
 
         let liveEdge = range.start + range.duration
         let current = player.currentTime()
+        let currentSeconds = CMTimeGetSeconds(current)
+        if currentSeconds.isFinite,
+           lastPlaybackTime == nil || currentSeconds > (lastPlaybackTime ?? 0) + 0.05 {
+            lastPlaybackTime = currentSeconds
+            lastPlaybackProgressAt = Date()
+        } else if Date().timeIntervalSince(lastPlaybackProgressAt) > 12 {
+            scheduleRetry(url, message: "Live video stopped advancing.")
+            return
+        }
         let lag = CMTimeGetSeconds(liveEdge - current)
         guard lag.isFinite, lag > 2.5 else { return }
 
         let target = liveEdge - CMTime(seconds: 0.5, preferredTimescale: 600)
         player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero)
+    }
+
+    private func scheduleRetry(_ url: URL, message: String) {
+        guard isActive, retryTask == nil else { return }
+        onFailure("\(message) Retrying...")
+        retryTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled, isActive else { return }
+            startPlayback(url)
+        }
     }
 
     private func applyAudioSettings() {

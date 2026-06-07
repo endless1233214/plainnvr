@@ -1,6 +1,7 @@
 const state = {
   cameras: [],
   recorders: {},
+  relays: {},
   users: [],
   username: "",
   coverage: {},
@@ -9,6 +10,11 @@ const state = {
   streamToken: "",
   ptzBusy: false,
   digitalZoom: 1,
+  liveActive: false,
+  liveRetryTimer: null,
+  liveWatchTimer: null,
+  liveLastMediaTime: null,
+  liveLastProgressAt: 0,
 };
 
 const dayKeys = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
@@ -57,6 +63,11 @@ function today() {
   const now = new Date();
   const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
   return local.toISOString().slice(0, 10);
+}
+
+function localDateTimeValue(value = new Date()) {
+  const local = new Date(value.getTime() - value.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 19);
 }
 
 function formatBytes(value) {
@@ -278,6 +289,9 @@ function resetForm() {
   $("ptzProfileToken").value = "Profile_1";
   $("ptzZoomMode").value = "auto";
   $("ptzSpeed").value = "0.55";
+  $("cameraTime").value = localDateTimeValue();
+  $("cameraTimePanel").hidden = true;
+  $("cameraTimeState").textContent = "";
   applyScheduleToForm({ mode: "always", days: {} });
   $("deleteCamera").hidden = true;
   renderHaPanel(null);
@@ -305,6 +319,9 @@ function editCamera(camera) {
   $("ptzProfileToken").value = camera.ptz_profile_token || "Profile_1";
   $("ptzZoomMode").value = camera.ptz_zoom_mode || "auto";
   $("ptzSpeed").value = String(camera.ptz_speed || 0.55);
+  $("cameraTime").value = localDateTimeValue();
+  $("cameraTimePanel").hidden = !camera.time_sync_supported;
+  $("cameraTimeState").textContent = "";
   applyScheduleToForm(camera.schedule);
   $("deleteCamera").hidden = false;
   renderHaPanel(camera);
@@ -343,14 +360,24 @@ function renderCameras() {
   list.innerHTML = "";
   state.cameras.forEach((camera) => {
     const recorder = state.recorders[camera.id];
+    const relay = state.relays[camera.id];
     const running = recorder?.running;
+    const streamHealthy = relay?.healthy === true;
+    const stateLabel = !camera.enabled
+      ? "disabled"
+      : streamHealthy && running
+        ? "recording"
+        : streamHealthy
+          ? "live"
+          : "recovering";
+    const stateClass = !camera.enabled ? "off" : streamHealthy ? "ok" : "warn";
     const button = document.createElement("button");
     button.type = "button";
     button.className = `camera-item ${camera.id === state.selectedCameraId ? "active" : ""}`;
     button.innerHTML = `
       <strong>${escapeHtml(camera.name)}</strong>
       <div class="camera-meta">
-        <span class="chip ${running ? "ok" : camera.enabled ? "warn" : "off"}">${running ? "recording" : camera.enabled ? "waiting" : "disabled"}</span>
+        <span class="chip ${stateClass}">${stateLabel}</span>
         <span class="chip">${camera.segment_seconds}s</span>
         <span class="chip">${camera.retention_days}d</span>
         <span class="chip">${liveModeLabel(cameraLiveMode(camera))}</span>
@@ -556,6 +583,7 @@ async function loadStatus() {
   const data = await api("/api/status");
   state.cameras = data.cameras;
   state.recorders = data.recorders;
+  state.relays = data.relays || {};
   state.users = data.users || [];
   state.username = data.username || "";
   state.streamToken = data.stream_token || "";
@@ -566,6 +594,7 @@ async function loadStatus() {
   renderCoverage();
   renderEvents(data.events);
   renderUsers();
+  syncLiveHealth();
 }
 
 async function saveCamera(event) {
@@ -603,6 +632,46 @@ async function testStream() {
     setSaveState(result.ok ? `OK in ${result.seconds}s` : result.message);
   } catch (error) {
     setSaveState(error.message);
+  }
+}
+
+function applyCameraTimeResult(result) {
+  const parsed = new Date(String(result.time || "").replace(" ", "T"));
+  if (!Number.isNaN(parsed.getTime())) {
+    $("cameraTime").value = localDateTimeValue(parsed);
+  }
+  $("cameraTimeState").textContent = result.time ? `Camera: ${result.time}` : "Done";
+}
+
+async function readCameraTime() {
+  const cameraId = $("cameraId").value;
+  if (!cameraId) return;
+  $("cameraTimeState").textContent = "Reading...";
+  try {
+    applyCameraTimeResult(await api(`/api/cameras/${cameraId}/time`));
+  } catch (error) {
+    $("cameraTimeState").textContent = error.message;
+  }
+}
+
+async function setCameraTime() {
+  const cameraId = $("cameraId").value;
+  if (!cameraId) return;
+  const value = $("cameraTime").value;
+  if (!value) {
+    $("cameraTimeState").textContent = "Choose a date and time.";
+    return;
+  }
+  $("cameraTimeState").textContent = "Setting...";
+  try {
+    applyCameraTimeResult(
+      await api(`/api/cameras/${cameraId}/time`, {
+        method: "POST",
+        body: JSON.stringify({ time: value }),
+      })
+    );
+  } catch (error) {
+    $("cameraTimeState").textContent = error.message;
   }
 }
 
@@ -667,6 +736,7 @@ function startLive() {
     return;
   }
   state.liveCameraId = camera.id;
+  state.liveActive = true;
   state.digitalZoom = 1;
   stopLiveMedia();
   const image = $("liveImage");
@@ -687,17 +757,22 @@ function startLive() {
     }
     video.onplaying = () => {
       $("liveState").textContent = `${camera.name} HLS / H.264`;
+      state.liveLastMediaTime = video.currentTime;
+      state.liveLastProgressAt = Date.now();
     };
     video.onerror = () => {
       startLiveMjpeg(camera, "MJPEG fallback");
       $("liveState").textContent = `${camera.name} HLS failed; MJPEG fallback`;
+      scheduleLiveRetry(camera);
     };
     video.src = cameraLiveHlsUrl(camera);
     video.hidden = false;
     video.play().catch(() => {
-      $("liveState").textContent = `${camera.name} HLS ready`;
+      startLiveMjpeg(camera, "MJPEG fallback");
+      scheduleLiveRetry(camera);
     });
     $("liveState").textContent = `${camera.name} HLS starting`;
+    startLiveWatchdog(camera);
   } else {
     startLiveMjpeg(camera, "MJPEG");
   }
@@ -706,6 +781,7 @@ function startLive() {
 }
 
 function startLiveMjpeg(camera, label) {
+  clearLiveWatchdog();
   const video = $("liveVideo");
   video.pause();
   video.onplaying = null;
@@ -714,14 +790,96 @@ function startLiveMjpeg(camera, label) {
   video.load();
   video.hidden = true;
   const image = $("liveImage");
-  image.src = cameraLiveMjpegUrl(camera);
+  image.onerror = () => {
+    if (!state.liveActive || state.liveCameraId !== camera.id) return;
+    image.removeAttribute("src");
+    image.hidden = true;
+    $("liveEmpty").hidden = false;
+    $("liveEmpty").textContent = "Stream unavailable. Retrying...";
+    $("liveState").textContent = `${camera.name} stream offline`;
+    scheduleLiveRetry(camera, 3000);
+  };
+  const separator = cameraLiveMjpegUrl(camera).includes("?") ? "&" : "?";
+  image.src = `${cameraLiveMjpegUrl(camera)}${separator}reload=${Date.now()}`;
   image.hidden = false;
+  $("liveEmpty").hidden = true;
   $("liveSourceLabel").textContent = "MJPEG";
   $("liveState").textContent = `${camera.name} ${label}`;
   applyDigitalZoom();
 }
 
+function clearLiveWatchdog() {
+  if (state.liveWatchTimer) {
+    clearInterval(state.liveWatchTimer);
+    state.liveWatchTimer = null;
+  }
+  state.liveLastMediaTime = null;
+  state.liveLastProgressAt = 0;
+}
+
+function clearLiveRetry() {
+  if (state.liveRetryTimer) {
+    clearTimeout(state.liveRetryTimer);
+    state.liveRetryTimer = null;
+  }
+}
+
+function scheduleLiveRetry(camera, delay = 10000) {
+  clearLiveRetry();
+  state.liveRetryTimer = setTimeout(() => {
+    state.liveRetryTimer = null;
+    if (state.liveActive && state.liveCameraId === camera.id) {
+      const relay = state.relays[camera.id];
+      if (relay && !relay.healthy) {
+        scheduleLiveRetry(camera, 3000);
+        return;
+      }
+      startLive();
+    }
+  }, delay);
+}
+
+function startLiveWatchdog(camera) {
+  clearLiveWatchdog();
+  state.liveLastProgressAt = Date.now();
+  state.liveWatchTimer = setInterval(() => {
+    if (!state.liveActive || state.liveCameraId !== camera.id) return;
+    const video = $("liveVideo");
+    const current = video.currentTime;
+    if (Number.isFinite(current) && (state.liveLastMediaTime === null || current > state.liveLastMediaTime + 0.05)) {
+      state.liveLastMediaTime = current;
+      state.liveLastProgressAt = Date.now();
+      return;
+    }
+    if (Date.now() - state.liveLastProgressAt > 15000) {
+      startLiveMjpeg(camera, "HLS stalled; MJPEG fallback");
+      scheduleLiveRetry(camera);
+    }
+  }, 3000);
+}
+
+function syncLiveHealth() {
+  if (!state.liveActive) return;
+  const camera = selectedLiveCamera();
+  if (!camera) return;
+  const relay = state.relays[camera.id];
+  if (relay && !relay.healthy) {
+    stopLiveMedia();
+    $("liveEmpty").hidden = false;
+    $("liveEmpty").textContent = "Stream offline. Relay is recovering...";
+    $("liveState").textContent = `${camera.name} recovering`;
+    scheduleLiveRetry(camera, 3000);
+    return;
+  }
+  const hasMedia = Boolean($("liveVideo").getAttribute("src") || $("liveImage").getAttribute("src"));
+  if (relay?.healthy && !hasMedia) {
+    startLive();
+  }
+}
+
 function stopLiveMedia() {
+  clearLiveWatchdog();
+  clearLiveRetry();
   const video = $("liveVideo");
   video.pause();
   video.removeAttribute("src");
@@ -729,15 +887,19 @@ function stopLiveMedia() {
   video.onplaying = null;
   video.onerror = null;
   video.hidden = true;
-  $("liveImage").removeAttribute("src");
-  $("liveImage").hidden = true;
+  const image = $("liveImage");
+  image.onerror = null;
+  image.removeAttribute("src");
+  image.hidden = true;
   state.digitalZoom = 1;
   applyDigitalZoom();
 }
 
 function stopLive() {
+  state.liveActive = false;
   stopLiveMedia();
   $("liveEmpty").hidden = false;
+  $("liveEmpty").textContent = "No live stream selected.";
   $("liveState").textContent = "";
   $("stopLive").disabled = state.cameras.length === 0;
   renderPtzPanel();
@@ -832,6 +994,12 @@ document.addEventListener("DOMContentLoaded", () => {
   $("newCamera").addEventListener("click", resetForm);
   $("deleteCamera").addEventListener("click", deleteSelectedCamera);
   $("testStream").addEventListener("click", testStream);
+  $("cameraTimeNow").addEventListener("click", () => {
+    $("cameraTime").value = localDateTimeValue();
+    $("cameraTimeState").textContent = "";
+  });
+  $("readCameraTime").addEventListener("click", readCameraTime);
+  $("setCameraTime").addEventListener("click", setCameraTime);
   $("refreshStatus").addEventListener("click", loadStatus);
   $("logoutButton").addEventListener("click", logout);
   $("loadSegments").addEventListener("click", loadSegments);
@@ -847,6 +1015,9 @@ document.addEventListener("DOMContentLoaded", () => {
     const camera = selectedLiveCamera();
     $("liveSourceLabel").textContent = camera ? liveModeLabel(cameraLiveMode(camera)) : "";
     renderPtzPanel();
+    if (state.liveActive) {
+      startLive();
+    }
   });
   document.querySelectorAll("[data-ptz]").forEach((button) => {
     button.addEventListener("click", () => {
