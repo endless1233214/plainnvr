@@ -1,112 +1,139 @@
-# PlainNVR on TrueNAS
+# Deploy PlainNVR On TrueNAS
 
-TrueNAS can install this as a custom app using Docker Compose YAML, but it still needs a container image.
+PlainNVR can run as a TrueNAS custom app from Docker Compose YAML. The
+registry-based installation is recommended because TrueNAS can pull published
+updates without rebuilding the image locally.
 
-Use one of these two paths.
+The names and locations of TrueNAS menu items can vary slightly between
+releases.
 
-## Option 1: No Registry
+## Prepare Storage
 
-This is the least account-setup nonsense.
+Create persistent directories or datasets for the database and recordings. The
+supplied YAML uses these example paths:
 
-1. Copy this `plainnvr` folder to a TrueNAS dataset, for example:
+```text
+/mnt/Apps/plainnvr/data
+/mnt/Apps/plainnvr/recordings
+```
+
+Create the directories from the TrueNAS shell when needed:
+
+```bash
+mkdir -p /mnt/Apps/plainnvr/data /mnt/Apps/plainnvr/recordings
+```
+
+Edit both host paths in the selected YAML file when another pool or dataset
+layout is preferred. Keep the container paths `/data` and `/recordings`
+unchanged.
+
+## Recommended: Pull The Published Image
+
+[`truenas-compose.registry.yaml`](truenas-compose.registry.yaml) uses:
+
+```yaml
+image: ghcr.io/endless1233214/plainnvr:latest
+pull_policy: always
+```
+
+The package is public, so registry credentials are not required.
+
+1. Open **Apps** in TrueNAS.
+2. Choose the custom-app or **Install via YAML** action.
+3. Paste the contents of `truenas-compose.registry.yaml`.
+4. Adjust the `TZ` value and host storage paths.
+5. Save and deploy the app.
+
+For a private fork, sign in to GitHub Container Registry from the TrueNAS Apps
+configuration with:
+
+```text
+Registry: ghcr.io
+Username: GITHUB-USERNAME
+Password: GITHUB-TOKEN-WITH-read:packages
+```
+
+Replace the image owner in the YAML with the fork's GitHub account or
+organization.
+
+## Alternative: Build The Image On TrueNAS
+
+Use this method when the server must run a local checkout or cannot pull from
+GitHub Container Registry.
+
+1. Copy or clone the repository into a TrueNAS dataset, such as:
 
    ```text
    /mnt/Apps/plainnvr-src
    ```
 
-2. SSH into TrueNAS or open Shell.
-
-3. Build the image:
+2. Build the image from the TrueNAS shell:
 
    ```bash
    cd /mnt/Apps/plainnvr-src
    docker build -t plainnvr:latest .
    ```
 
-4. Make storage folders if they do not exist:
+3. Install the custom app with
+   [`truenas-compose.yaml`](truenas-compose.yaml).
 
-   ```bash
-   mkdir -p /mnt/Apps/plainnvr/data /mnt/Apps/plainnvr/recordings
-   ```
-
-5. In TrueNAS, go to Apps > Discover, use the three-dot menu, choose Install via YAML, and paste `truenas-compose.yaml`.
-
-This YAML uses:
+That YAML uses:
 
 ```yaml
 image: plainnvr:latest
 pull_policy: never
 ```
 
-That tells Compose to use the image you built locally instead of trying to pull it from Docker Hub.
+`pull_policy: never` keeps Compose from looking for the locally tagged image on
+an external registry.
 
-## Option 2: GitHub Container Registry
-
-Use this if you want TrueNAS to pull updates later.
-
-1. Create a GitHub repo named `plainnvr`.
-
-2. Upload this folder into that repo.
-
-3. Add the workflow from `.github/workflows/docker-image.yml`.
-
-4. In the GitHub repo, go to Settings > Actions > General and set Workflow permissions to Read and write permissions.
-
-5. Push to `main`. GitHub Actions should publish:
-
-   ```text
-   ghcr.io/endless1233214/plainnvr:latest
-   ```
-
-6. Use `truenas-compose.registry.yaml`.
-
-7. If the package is public, TrueNAS can pull it without registry login.
-
-8. If the package is private, create a GitHub token with `read:packages`, then in TrueNAS go to Apps > Configuration > Sign-in to a Docker registry:
-
-   ```text
-   Type: Other Registry
-   URI: ghcr.io
-   Username: your GitHub username
-   Password: the GitHub token
-   ```
-
-9. Install via YAML using `truenas-compose.registry.yaml`.
-
-## After Install
+## First Launch
 
 Open:
 
 ```text
-http://TRUENAS-IP:8787
+http://TRUENAS-HOST:8787
 ```
 
-The supplied YAML also publishes:
-
-```text
-8554/tcp      go2rtc RTSP restreams
-8555/tcp+udp  go2rtc WebRTC media
-```
-
-Port `1984` is intentionally not published. PlainNVR proxies the required
-go2rtc media API behind its own login.
-
-The first visit creates the local admin account. If you want to seed the account
-from YAML instead, add these environment variables before first launch:
+The first visit creates the local administrator account. To create the account
+from YAML before the first launch, add these environment variables:
 
 ```yaml
 NVR_AUTH_USERNAME: admin
 NVR_AUTH_PASSWORD: use-a-long-unique-password
 ```
 
-Recordings land in:
+The password must be at least 12 characters.
 
-```text
-/mnt/Apps/plainnvr/recordings
-```
+## Published Ports
 
-The database/config lands in:
+| Port | Purpose |
+| --- | --- |
+| `8787/tcp` | PlainNVR web interface and API |
+| `8554/tcp` | go2rtc RTSP restreams |
+| `8555/tcp` and `8555/udp` | go2rtc WebRTC media |
 
-```text
-/mnt/Apps/plainnvr/data
-```
+Port `1984` is intentionally not published. PlainNVR proxies the required
+go2rtc media API through its authenticated web service.
+
+## Updating
+
+For the registry installation, redeploy or pull the custom app after a new
+`latest` image is published.
+
+For a local build, update the checkout, run the `docker build` command again,
+and redeploy the custom app.
+
+The database and recordings remain in their host datasets during image updates.
+
+## Publishing A Fork
+
+The included workflow at `.github/workflows/docker-image.yml` publishes an image
+on every push to `main`.
+
+1. Enable **Read and write permissions** under the repository's GitHub Actions
+   workflow settings.
+2. Push the fork to `main`.
+3. Confirm that GitHub Actions published
+   `ghcr.io/REPOSITORY-OWNER/plainnvr:latest`.
+4. Update the image reference in `truenas-compose.registry.yaml`.

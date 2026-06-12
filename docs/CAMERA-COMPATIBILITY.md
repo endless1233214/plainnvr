@@ -15,12 +15,12 @@ firmware, stream codecs, ONVIF profiles, and PTZ features that were tested.
 
 ## Published Matrix
 
-Do not list a model without its firmware version. Add one row per materially
-different firmware branch.
+Each entry must include a firmware version. Use a separate row for every
+materially different firmware branch.
 
 | Manufacturer | Model | Firmware | Level | Video | Audio | ONVIF profiles | PTZ | Presets | Notes | Report |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| _Add verified cameras here_ |  |  |  |  |  |  |  |  |  |  |
+| _No verified reports published yet_ |  |  |  |  |  |  |  |  |  |  |
 
 ## Verification Procedure
 
@@ -36,6 +36,18 @@ different firmware branch.
 
 Reports redact configured credentials. Review free-form camera error messages
 before publishing because unusual vendor firmware can echo private values.
+
+## Submit A Result
+
+1. Complete the verification procedure for the exact model and firmware.
+2. Download the compatibility report from the saved camera.
+3. Inspect the JSON for unexpected private data, especially vendor error text.
+4. Open an issue or pull request with the model, firmware, support level, test
+   notes, and report.
+
+Reports that cannot be reproduced can still be listed as **Reported**. A model
+should move to **Verified** only after every advertised feature has been tested
+on the named firmware.
 
 ## ONVIF Feature Contract
 
