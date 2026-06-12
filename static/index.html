@@ -129,6 +129,24 @@
                 </select>
               </label>
             </div>
+            <div class="onvif-discovery">
+              <div class="onvif-actions">
+                <button id="discoverOnvif" type="button">Discover ONVIF</button>
+                <button id="downloadCompatibility" type="button" disabled>Compatibility Report</button>
+                <span id="onvifState" class="muted">Uses the stream credentials unless a control URL is provided.</span>
+              </div>
+              <div class="onvif-results">
+                <label>
+                  Discovered Profile
+                  <select id="onvifProfile" disabled></select>
+                </label>
+                <label>
+                  Discovered Stream
+                  <select id="onvifStream" disabled></select>
+                </label>
+                <button id="useOnvifStream" type="button" disabled>Use Stream</button>
+              </div>
+            </div>
           </fieldset>
 
           <fieldset id="cameraTimePanel" class="camera-time-settings" hidden>
@@ -238,9 +256,17 @@
               <button type="button" data-ptz="stop" title="Stop" aria-label="Stop">&#9632;</button>
               <button type="button" data-ptz="zoom_out" title="Zoom out" aria-label="Zoom out">-</button>
             </div>
+            <div id="ptzPresets" class="ptz-presets" hidden>
+              <label>
+                Preset
+                <select id="ptzPreset"></select>
+              </label>
+              <button id="goToPtzPreset" type="button">Go</button>
+            </div>
             <span id="ptzState" class="muted"></span>
           </div>
           <div class="live-frame">
+            <plainnvr-live-player id="go2rtcLive" hidden></plainnvr-live-player>
             <video id="liveVideo" controls playsinline muted></video>
             <img id="liveImage" alt="" />
             <div id="liveEmpty" class="empty">No live stream selected.</div>
@@ -296,6 +322,7 @@
       </section>
     </main>
 
+    <script type="module" src="/go2rtc-player.js"></script>
     <script src="/app.js"></script>
   </body>
 </html>

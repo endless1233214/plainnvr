@@ -378,6 +378,29 @@ fieldset {
   gap: 10px;
 }
 
+.onvif-discovery {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.onvif-actions,
+.onvif-results {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 10px;
+}
+
+.onvif-actions .muted {
+  flex: 1 1 240px;
+}
+
+.onvif-results label {
+  flex: 1 1 180px;
+}
+
 .camera-list {
   display: grid;
   gap: 8px;
@@ -523,7 +546,8 @@ fieldset {
 }
 
 #liveVideo,
-#liveImage {
+#liveImage,
+#go2rtcLive {
   display: block;
   width: 100%;
   height: 100%;
@@ -538,17 +562,33 @@ fieldset {
 }
 
 #liveVideo[hidden],
-#liveImage[hidden] {
+#liveImage[hidden],
+#go2rtcLive[hidden] {
   display: none;
+}
+
+#go2rtcLive {
+  background: #000;
 }
 
 .ptz-panel {
   display: grid;
-  grid-template-columns: auto auto minmax(80px, 1fr);
+  grid-template-columns: auto auto minmax(140px, 1fr);
   align-items: center;
   gap: 14px;
   border-bottom: 1px solid var(--line);
   padding: 12px 16px 16px;
+}
+
+.ptz-presets {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) auto;
+  align-items: end;
+  gap: 8px;
+}
+
+.ptz-presets[hidden] {
+  display: none;
 }
 
 .ptz-panel[hidden] {
@@ -578,6 +618,8 @@ fieldset {
   padding: 0;
   font-size: 20px;
   line-height: 1;
+  touch-action: none;
+  user-select: none;
 }
 
 #player {

@@ -13,11 +13,14 @@ It is intentionally boring: FFmpeg copies camera video where it can instead of
 re-encoding it. Use H.264 camera streams for the smoothest browser and iPhone
 playback.
 
-PlainNVR runs an internal relay for each enabled camera. The relay pulls the
-camera once, merges the optional secondary audio stream, and exposes a local HLS
-source that recording, browser live view, iPhone live view, snapshots, and Home
-Assistant can share. This keeps small camera nodes from serving a new RTSP reader
-for every viewer.
+The Docker image bundles go2rtc as PlainNVR's primary live and restream layer.
+Recording, snapshots, and live viewers can share one local RTSP restream instead
+of opening a new connection to the camera for every consumer. The web viewer
+uses go2rtc's MSE path for native frame rate, resolution, and low latency.
+
+PlainNVR's existing FFmpeg HLS/MJPEG relay remains an automatic fallback when
+go2rtc is unavailable, a camera has a separate audio-only URL, or a browser
+cannot use the preferred stream.
 
 Relay and recorder health is based on fresh media output, not only whether an
 FFmpeg process still exists. If a camera or FFmpeg stalls without exiting,
@@ -36,6 +39,9 @@ python3 app/server.py
 ```
 
 Open `http://localhost:8787`.
+
+Running directly with Python still works without go2rtc and uses the FFmpeg
+fallback. The Docker image includes the pinned go2rtc version used by PlainNVR.
 
 On first launch, PlainNVR asks you to create a local admin account. The password
 must be at least 12 characters.
@@ -58,6 +64,10 @@ docker compose up --build
 ```
 
 Open `http://localhost:8787`.
+
+Compose also publishes `8554/tcp` for RTSP restreams and `8555/tcp+udp` for
+WebRTC media. The go2rtc management API stays on container loopback and is only
+available through PlainNVR's authenticated same-origin proxy.
 
 If no account exists in `/data/nvr.sqlite3`, the first browser visit opens the
 account setup screen. After that, the UI, API, playback files, and camera
@@ -110,10 +120,14 @@ YAML.
 ## Live View
 
 PlainNVR also has a Live View panel for quick in-browser monitoring without Home
-Assistant. Each camera has a Live View setting: HLS / H.264 is the low-CPU
-default and copies the camera video stream when no video filter is needed, while
-MJPEG stays available as a video-only fallback for clients that cannot play HLS.
-Browsers without native HLS support fall back to MJPEG in the web live panel.
+Assistant. With the Docker image, the web app prefers go2rtc MSE and falls back
+through HLS and MJPEG. MSE sends fragmented MP4 directly over a WebSocket instead
+of waiting for a multi-segment playlist, which makes PTZ monitoring feel much
+closer to the camera's native response.
+
+The iPhone app and Home Assistant HLS endpoint still use PlainNVR's supervised
+HLS output, but that output reads from the local go2rtc restream when possible.
+This reduces camera connections even where the client cannot use browser MSE.
 
 Live HLS uses fragmented MP4 segments by default for iPhone-friendly playback.
 Set `NVR_LIVE_HLS_SEGMENT_TYPE=mpegts` to return to classic `.ts` HLS segments.
@@ -152,12 +166,24 @@ driver; set Zoom to Digital, Hardware, or None when a camera needs a specific
 behavior. Digital zoom only changes the local viewer and never sends a camera
 zoom command.
 
-PlainNVR sends PTZ commands from the server. For ONVIF, if Control URL is
-blank, it tries common local ONVIF endpoints on the camera host from the stream
-URL. For odd cameras, set the Control URL and Profile token in the camera
-editor. Username/password credentials can be embedded in the ONVIF URL when a
-camera requires WS-Security, for example
+PlainNVR sends PTZ commands from the server. Use **Discover ONVIF** in the camera
+editor to query device services, media profiles, stream URIs, PTZ configuration,
+supported movement spaces, home position, and presets. The selected ONVIF
+service and profile token are cached with the camera, and both the web and
+iPhone controls only show capabilities the camera advertised.
+
+ONVIF movement uses press-and-hold continuous movement with STOP on release.
+Click movement remains available for vendor drivers that only support discrete
+steps. For odd cameras, Control URL and Profile token remain available as manual
+fallbacks. Username/password credentials can be embedded in the stream or ONVIF
+URL when a camera requires WS-Security, for example
 `http://user:password@camera-ip:8080/onvif/device_service`.
+
+Each saved camera can download a redacted compatibility report containing its
+stream probe, device/firmware identity, discovered profiles, individual PTZ
+features, go2rtc state, recorder health, and recommendations. See
+[`docs/CAMERA-COMPATIBILITY.md`](docs/CAMERA-COMPATIBILITY.md) for the publishing
+matrix and test procedure.
 
 For the local Victure/Alloca firmware build with the direct stepper helper,
 choose the `Victure Direct Stepper` driver. Leave Control URL blank to use the
@@ -200,7 +226,19 @@ Four cameras at 4 Mbps each need about 173 GB per day, before filesystem overhea
 
 - Playback is per segment, not a scrubby merged timeline yet.
 - H.265 may record fine but may not play in every browser.
+- WebRTC requires reachable port `8555` and suitable ICE candidates; MSE is the
+  default low-latency web path.
+- Cameras with a separate audio URL use the FFmpeg relay until multi-source
+  go2rtc composition is configured.
 - Recordings are timestamped MP4 chunks under each camera folder.
 - The Playback panel shows one selected date at a time, plus a recording
   coverage summary with the oldest/newest segment and available dates.
 - Deleting a camera leaves existing recordings on disk.
+
+## Upstream Components
+
+- go2rtc `v1.9.13` provides restreaming and the vendored MIT-licensed browser
+  player under `static/vendor/go2rtc`.
+- Frigate's public ONVIF probe, capability-driven PTZ UI, and live-view
+  architecture were used as behavioral references. PlainNVR's server discovery
+  and integration code is independently implemented for this smaller codebase.

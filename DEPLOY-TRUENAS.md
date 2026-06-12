@@ -81,6 +81,16 @@ Open:
 http://TRUENAS-IP:8787
 ```
 
+The supplied YAML also publishes:
+
+```text
+8554/tcp      go2rtc RTSP restreams
+8555/tcp+udp  go2rtc WebRTC media
+```
+
+Port `1984` is intentionally not published. PlainNVR proxies the required
+go2rtc media API behind its own login.
+
 The first visit creates the local admin account. If you want to seed the account
 from YAML instead, add these environment variables before first launch:
 

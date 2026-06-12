@@ -389,55 +389,134 @@ struct LiveControlsView: View {
     }
 }
 
+struct PTZPressButton: View {
+    @EnvironmentObject private var viewModel: PlainNVRViewModel
+
+    let systemName: String
+    let action: String
+    let label: String
+    let size: CGFloat
+    let continuous: Bool
+    var overlayStyle = false
+
+    @State private var isPressed = false
+    @State private var startTask: Task<Void, Never>?
+
+    var body: some View {
+        Image(systemName: systemName)
+            .font(.system(size: overlayStyle ? 15 : 17, weight: .semibold))
+            .foregroundStyle(.blue)
+            .frame(width: size, height: size)
+            .background(overlayStyle ? Color.black.opacity(0.62) : Color.secondary.opacity(0.08))
+            .clipShape(RoundedRectangle(cornerRadius: overlayStyle ? size / 2 : 8))
+            .overlay {
+                if !overlayStyle {
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(.quaternary, lineWidth: 1)
+                }
+            }
+            .scaleEffect(isPressed ? 0.92 : 1)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { _ in
+                        guard !isPressed else { return }
+                        isPressed = true
+                        if continuous {
+                            startTask = Task {
+                                await viewModel.beginPTZ(action: action)
+                            }
+                        }
+                    }
+                    .onEnded { _ in
+                        let pendingStart = startTask
+                        isPressed = false
+                        startTask = nil
+                        if continuous {
+                            Task {
+                                await pendingStart?.value
+                                await viewModel.stopPTZ()
+                            }
+                        } else {
+                            Task { await viewModel.sendPTZ(action: action) }
+                        }
+                    }
+            )
+            .accessibilityLabel(label)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction {
+                Task { await viewModel.sendPTZ(action: action) }
+            }
+    }
+}
+
 struct PTZControlPad: View {
     @EnvironmentObject private var viewModel: PlainNVRViewModel
 
     private let columns = Array(repeating: GridItem(.fixed(46), spacing: 8), count: 3)
 
     var body: some View {
-        let directStepper = viewModel.selectedCamera?.usesDirectStepperPTZ == true
-        let showHardwareZoom = viewModel.selectedCamera?.usesHardwareZoom == true
+        let camera = viewModel.selectedCamera
+        let directStepper = camera?.usesDirectStepperPTZ == true
+        let showHardwareZoom = camera?.usesHardwareZoom == true
 
-        HStack(alignment: .center, spacing: 16) {
-            LazyVGrid(columns: columns, spacing: 8) {
-                ptzButton("arrow.up.left", action: "up_left", label: "Up Left")
-                ptzButton("arrow.up", action: "up", label: "Up")
-                ptzButton("arrow.up.right", action: "up_right", label: "Up Right")
-                ptzButton("arrow.left", action: "left", label: "Left")
-                if directStepper {
-                    Color.clear
-                        .frame(width: 42, height: 42)
-                        .accessibilityHidden(true)
-                } else {
-                    ptzButton("house", action: "home", label: "Home")
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 16) {
+                if camera?.supportsPanTilt == true {
+                    LazyVGrid(columns: columns, spacing: 8) {
+                        ptzButton("arrow.up.left", action: "up_left", label: "Up Left")
+                        ptzButton("arrow.up", action: "up", label: "Up")
+                        ptzButton("arrow.up.right", action: "up_right", label: "Up Right")
+                        ptzButton("arrow.left", action: "left", label: "Left")
+                        if directStepper || camera?.supportsHomePosition != true {
+                            Color.clear
+                                .frame(width: 42, height: 42)
+                                .accessibilityHidden(true)
+                        } else {
+                            ptzButton("house", action: "home", label: "Home")
+                        }
+                        ptzButton("arrow.right", action: "right", label: "Right")
+                        ptzButton("arrow.down.left", action: "down_left", label: "Down Left")
+                        ptzButton("arrow.down", action: "down", label: "Down")
+                        ptzButton("arrow.down.right", action: "down_right", label: "Down Right")
+                    }
                 }
-                ptzButton("arrow.right", action: "right", label: "Right")
-                ptzButton("arrow.down.left", action: "down_left", label: "Down Left")
-                ptzButton("arrow.down", action: "down", label: "Down")
-                ptzButton("arrow.down.right", action: "down_right", label: "Down Right")
+
+                if showHardwareZoom {
+                    VStack(spacing: 8) {
+                        ptzButton("plus.magnifyingglass", action: "zoom_in", label: "Zoom In")
+                        ptzButton("stop.fill", action: "stop", label: "Stop")
+                        ptzButton("minus.magnifyingglass", action: "zoom_out", label: "Zoom Out")
+                    }
+                }
             }
 
-            if showHardwareZoom {
-                VStack(spacing: 8) {
-                    ptzButton("plus.magnifyingglass", action: "zoom_in", label: "Zoom In")
-                    ptzButton("stop.fill", action: "stop", label: "Stop")
-                    ptzButton("minus.magnifyingglass", action: "zoom_out", label: "Zoom Out")
+            if let presets = camera?.ptzPresets, !presets.isEmpty {
+                Menu {
+                    ForEach(presets) { preset in
+                        Button(preset.name) {
+                            Task { await viewModel.goToPreset(preset) }
+                        }
+                    }
+                } label: {
+                    Label("Go to Preset", systemImage: "viewfinder")
                 }
+                .buttonStyle(.bordered)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func ptzButton(_ systemName: String, action: String, label: String) -> some View {
-        Button {
-            Task { await viewModel.sendPTZ(action: action) }
-        } label: {
-            Image(systemName: systemName)
-                .font(.headline)
-                .frame(width: 42, height: 42)
-        }
-        .accessibilityLabel(label)
-        .buttonStyle(.bordered)
+        let continuous = viewModel.selectedCamera?.usesContinuousONVIF == true
+            && !["home", "stop"].contains(action)
+        return PTZPressButton(
+            systemName: systemName,
+            action: action,
+            label: label,
+            size: 42,
+            continuous: continuous
+        )
     }
 }
 
@@ -530,22 +609,24 @@ struct PTZVideoOverlay: View {
         let showZoom = camera.usesDigitalZoom || camera.usesHardwareZoom
 
         HStack(alignment: .bottom, spacing: 8) {
-            LazyVGrid(columns: columns, spacing: 4) {
-                ptzButton("arrow.up.left", action: "up_left", label: "Up Left")
-                ptzButton("arrow.up", action: "up", label: "Up")
-                ptzButton("arrow.up.right", action: "up_right", label: "Up Right")
-                ptzButton("arrow.left", action: "left", label: "Left")
-                if directStepper {
-                    Color.clear
-                        .frame(width: 34, height: 34)
-                        .accessibilityHidden(true)
-                } else {
-                    ptzButton("house", action: "home", label: "Home")
+            if camera.supportsPanTilt {
+                LazyVGrid(columns: columns, spacing: 4) {
+                    ptzButton("arrow.up.left", action: "up_left", label: "Up Left")
+                    ptzButton("arrow.up", action: "up", label: "Up")
+                    ptzButton("arrow.up.right", action: "up_right", label: "Up Right")
+                    ptzButton("arrow.left", action: "left", label: "Left")
+                    if directStepper || !camera.supportsHomePosition {
+                        Color.clear
+                            .frame(width: 34, height: 34)
+                            .accessibilityHidden(true)
+                    } else {
+                        ptzButton("house", action: "home", label: "Home")
+                    }
+                    ptzButton("arrow.right", action: "right", label: "Right")
+                    ptzButton("arrow.down.left", action: "down_left", label: "Down Left")
+                    ptzButton("arrow.down", action: "down", label: "Down")
+                    ptzButton("arrow.down.right", action: "down_right", label: "Down Right")
                 }
-                ptzButton("arrow.right", action: "right", label: "Right")
-                ptzButton("arrow.down.left", action: "down_left", label: "Down Left")
-                ptzButton("arrow.down", action: "down", label: "Down")
-                ptzButton("arrow.down.right", action: "down_right", label: "Down Right")
             }
 
             if showZoom {
@@ -561,35 +642,40 @@ struct PTZVideoOverlay: View {
     }
 
     private func ptzButton(_ systemName: String, action: String, label: String) -> some View {
-        Button {
-            Task { await viewModel.sendPTZ(action: action) }
-        } label: {
-            Image(systemName: systemName)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(.blue)
-                .frame(width: 34, height: 34)
-                .background(.black.opacity(0.62), in: Circle())
-        }
-        .accessibilityLabel(label)
-        .buttonStyle(.plain)
+        PTZPressButton(
+            systemName: systemName,
+            action: action,
+            label: label,
+            size: 34,
+            continuous: camera.usesContinuousONVIF && !["home", "stop"].contains(action),
+            overlayStyle: true
+        )
     }
 
+    @ViewBuilder
     private func zoomButton(_ systemName: String, action: String, label: String) -> some View {
-        Button {
-            if camera.usesDigitalZoom {
+        if camera.usesDigitalZoom {
+            Button {
                 digitalZoomAction(action)
-            } else {
-                Task { await viewModel.sendPTZ(action: action) }
+            } label: {
+                Image(systemName: systemName)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.blue)
+                    .frame(width: 34, height: 34)
+                    .background(.black.opacity(0.62), in: Circle())
             }
-        } label: {
-            Image(systemName: systemName)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(.blue)
-                .frame(width: 34, height: 34)
-                .background(.black.opacity(0.62), in: Circle())
+            .accessibilityLabel(label)
+            .buttonStyle(.plain)
+        } else {
+            PTZPressButton(
+                systemName: systemName,
+                action: action,
+                label: label,
+                size: 34,
+                continuous: camera.usesContinuousONVIF && action != "stop",
+                overlayStyle: true
+            )
         }
-        .accessibilityLabel(label)
-        .buttonStyle(.plain)
     }
 }
 

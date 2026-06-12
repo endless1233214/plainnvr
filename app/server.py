@@ -28,6 +28,29 @@ from urllib import error as urllib_error, request as urllib_request
 from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 from xml.etree import ElementTree
 
+try:
+    from onvif_client import (
+        OnvifError,
+        cacheable_discovery,
+        discover as discover_onvif,
+        goto_preset_body,
+        payload_credentials as onvif_payload_credentials,
+        redacted_discovery,
+        redact_url as redact_onvif_url,
+        soap_post as onvif_soap_post,
+    )
+except ModuleNotFoundError:
+    from app.onvif_client import (
+        OnvifError,
+        cacheable_discovery,
+        discover as discover_onvif,
+        goto_preset_body,
+        payload_credentials as onvif_payload_credentials,
+        redacted_discovery,
+        redact_url as redact_onvif_url,
+        soap_post as onvif_soap_post,
+    )
+
 
 def env_float(name, default):
     try:
@@ -45,6 +68,15 @@ LIVE_DIR = Path(os.environ.get("NVR_LIVE_DIR", str(DATA_DIR / "live"))).expandus
 RELAY_DIR = Path(os.environ.get("NVR_RELAY_DIR", str(DATA_DIR / "relay"))).expanduser()
 FFMPEG_BIN = os.environ.get("FFMPEG_BIN", "ffmpeg")
 FFPROBE_BIN = os.environ.get("FFPROBE_BIN", "ffprobe")
+GO2RTC_BIN = os.environ.get("GO2RTC_BIN", "go2rtc")
+GO2RTC_API_HOST = os.environ.get("NVR_GO2RTC_API_HOST", "127.0.0.1")
+GO2RTC_API_PORT = int(os.environ.get("NVR_GO2RTC_API_PORT", "1984"))
+GO2RTC_RTSP_HOST = os.environ.get("NVR_GO2RTC_RTSP_HOST", "127.0.0.1")
+GO2RTC_RTSP_PORT = int(os.environ.get("NVR_GO2RTC_RTSP_PORT", "8554"))
+GO2RTC_WEBRTC_PORT = int(os.environ.get("NVR_GO2RTC_WEBRTC_PORT", "8555"))
+GO2RTC_START_TIMEOUT_SECONDS = max(
+    2, env_float("NVR_GO2RTC_START_TIMEOUT_SECONDS", 10)
+)
 RTSP_PROBESIZE = os.environ.get("NVR_RTSP_PROBESIZE", "32768")
 RTSP_ANALYZE_DURATION = os.environ.get("NVR_RTSP_ANALYZE_DURATION", "0")
 RTSP_LIVE_PROBESIZE = os.environ.get("NVR_RTSP_LIVE_PROBESIZE", "5000000")
@@ -330,6 +362,8 @@ def init_db():
                 ptz_profile_token TEXT NOT NULL DEFAULT 'Profile_1',
                 ptz_zoom_mode TEXT NOT NULL DEFAULT 'auto',
                 ptz_speed REAL NOT NULL DEFAULT 0.55,
+                onvif_json TEXT NOT NULL DEFAULT '{}',
+                onvif_updated_at TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
@@ -406,6 +440,10 @@ def ensure_camera_schema(conn):
         conn.execute("ALTER TABLE cameras ADD COLUMN ptz_zoom_mode TEXT NOT NULL DEFAULT 'auto'")
     if "ptz_speed" not in columns:
         conn.execute("ALTER TABLE cameras ADD COLUMN ptz_speed REAL NOT NULL DEFAULT 0.55")
+    if "onvif_json" not in columns:
+        conn.execute("ALTER TABLE cameras ADD COLUMN onvif_json TEXT NOT NULL DEFAULT '{}'")
+    if "onvif_updated_at" not in columns:
+        conn.execute("ALTER TABLE cameras ADD COLUMN onvif_updated_at TEXT NOT NULL DEFAULT ''")
 
 
 def bootstrap_auth_from_env(conn):
@@ -563,9 +601,43 @@ def camera_from_row(row):
     data["ptz_profile_token"] = normalize_ptz_profile_token(data.get("ptz_profile_token"))
     data["ptz_zoom_mode"] = normalize_ptz_zoom_mode(data.get("ptz_zoom_mode"))
     data["ptz_speed"] = normalize_ptz_speed(data.get("ptz_speed"))
+    try:
+        onvif = json.loads(data.pop("onvif_json", "{}") or "{}")
+    except json.JSONDecodeError:
+        onvif = {}
+    data["onvif"] = onvif
+    data["ptz_features"] = list(onvif.get("features") or [])
+    data["ptz_presets"] = list(onvif.get("presets") or [])
+    data["ptz_profiles"] = list(onvif.get("profiles") or [])
+    if data["ptz_type"] == "victure_direct":
+        data["ptz_features"] = ["pt"]
+    elif data["ptz_type"] == "victure_dvrip" and not data["ptz_features"]:
+        data["ptz_features"] = ["pt", "zoom"]
     data["time_sync_supported"] = data["ptz_type"] in ("victure_direct", "victure_dvrip")
     data["schedule"] = normalize_schedule(json.loads(data.pop("schedule_json")))
     return data
+
+
+def save_onvif_discovery(camera_id, result):
+    cached = cacheable_discovery(result)
+    updated_at = str(cached.get("tested_at") or iso_now())
+    with db_conn() as conn:
+        conn.execute(
+            """
+            UPDATE cameras
+            SET onvif_json = ?, onvif_updated_at = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (json.dumps(cached), updated_at, iso_now(), camera_id),
+        )
+    return cached
+
+
+def discover_camera_onvif(camera_or_payload, camera_id=None):
+    result = discover_onvif(camera_or_payload)
+    if camera_id:
+        save_onvif_discovery(camera_id, result)
+    return result
 
 
 def list_cameras():
@@ -713,7 +785,11 @@ def create_camera(payload):
                 now,
             ),
         )
-    return get_camera(camera_id)
+    camera = get_camera(camera_id)
+    manager = globals().get("go2rtc")
+    if manager:
+        manager.configure_camera(camera)
+    return camera
 
 
 def update_camera(camera_id, payload):
@@ -727,6 +803,12 @@ def update_camera(camera_id, payload):
     retention_days = max(1, int(merged.get("retention_days") or 14))
     ptz_type = normalize_ptz_type(merged.get("ptz_type"))
     ptz_speed = normalize_ptz_speed(merged.get("ptz_speed", DEFAULT_PTZ_SPEED))
+    discovery_changed = any(
+        str(existing.get(key) or "") != str(merged.get(key) or "")
+        for key in ("rtsp_url", "ptz_url", "ptz_profile_token", "ptz_type")
+    )
+    onvif_json = "{}" if discovery_changed else json.dumps(existing.get("onvif") or {})
+    onvif_updated_at = "" if discovery_changed else str(existing.get("onvif_updated_at") or "")
     with db_conn() as conn:
         slug = unique_slug(conn, merged["name"], camera_id)
         conn.execute(
@@ -735,7 +817,7 @@ def update_camera(camera_id, payload):
             SET name = ?, slug = ?, rtsp_url = ?, audio_url = ?, enabled = ?, segment_seconds = ?,
                 retention_days = ?, schedule_json = ?, record_audio = ?, grayscale_mode = ?,
                 live_view_mode = ?, rtsp_transport = ?, ptz_enabled = ?, ptz_type = ?, ptz_url = ?, ptz_profile_token = ?,
-                ptz_zoom_mode = ?, ptz_speed = ?, updated_at = ?
+                ptz_zoom_mode = ?, ptz_speed = ?, onvif_json = ?, onvif_updated_at = ?, updated_at = ?
             WHERE id = ?
             """,
             (
@@ -757,10 +839,15 @@ def update_camera(camera_id, payload):
                 normalize_ptz_profile_token(merged.get("ptz_profile_token")),
                 normalize_ptz_zoom_mode(merged.get("ptz_zoom_mode")),
                 ptz_speed,
+                onvif_json,
+                onvif_updated_at,
                 iso_now(),
                 camera_id,
             ),
         )
+    manager = globals().get("go2rtc")
+    if manager:
+        manager.configure_camera(get_camera(camera_id))
     recorder.restart(camera_id)
     relay.stop(camera_id)
     live_hls.stop(camera_id)
@@ -771,6 +858,9 @@ def delete_camera(camera_id):
     recorder.stop(camera_id)
     relay.stop(camera_id)
     live_hls.stop(camera_id)
+    manager = globals().get("go2rtc")
+    if manager:
+        manager.delete_camera(camera_id)
     with db_conn() as conn:
         cur = conn.execute("DELETE FROM cameras WHERE id = ?", (camera_id,))
     return cur.rowcount > 0
@@ -820,6 +910,242 @@ def camera_dir(camera):
     return RECORDINGS_DIR / camera["slug"]
 
 
+class Go2RTCManager:
+    def __init__(self):
+        self.lock = threading.RLock()
+        self.process = None
+        self.log_handle = None
+        self.config_path = DATA_DIR / "go2rtc.json"
+        self.log_path = DATA_DIR / "go2rtc.log"
+        self.stream_keys = {}
+        self.generations = {}
+        self.last_error = None
+
+    def stream_name(self, camera):
+        return f"plainnvr_{camera['id']}"
+
+    def source_key(self, camera):
+        return str(camera.get("rtsp_url") or "").strip()
+
+    def binary_path(self):
+        return shutil.which(GO2RTC_BIN)
+
+    def running(self):
+        with self.lock:
+            return bool(self.process and self.process.poll() is None)
+
+    def can_restream(self, camera):
+        stream_url = self.source_key(camera)
+        audio_url = str(camera.get("audio_url") or "").strip()
+        separate_audio = bool(
+            camera.get("record_audio", True)
+            and audio_url
+            and audio_url != stream_url
+        )
+        return (
+            self.running()
+            and stream_url.startswith(STREAM_URL_PREFIXES)
+            and not separate_audio
+        )
+
+    def _config(self):
+        candidates = [
+            item.strip()
+            for item in os.environ.get("NVR_GO2RTC_WEBRTC_CANDIDATES", "").split(",")
+            if item.strip()
+        ]
+        config = {
+            "api": {
+                "listen": f"{GO2RTC_API_HOST}:{GO2RTC_API_PORT}",
+                "origin": "*",
+            },
+            "rtsp": {"listen": f":{GO2RTC_RTSP_PORT}"},
+            "webrtc": {"listen": f":{GO2RTC_WEBRTC_PORT}"},
+            "ffmpeg": {"bin": FFMPEG_BIN},
+            "streams": {},
+        }
+        if candidates:
+            config["webrtc"]["candidates"] = candidates
+        return config
+
+    def start(self, cameras):
+        binary = self.binary_path()
+        if not binary:
+            self.last_error = (
+                f"{GO2RTC_BIN} is not installed; using PlainNVR's FFmpeg relay fallback."
+            )
+            print(self.last_error)
+            return False
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        self.config_path.write_text(
+            json.dumps(self._config(), indent=2) + "\n",
+            encoding="utf-8",
+        )
+        with self.lock:
+            if self.process and self.process.poll() is None:
+                return True
+            self.log_handle = self.log_path.open("a", encoding="utf-8", errors="replace")
+            self.process = subprocess.Popen(
+                [binary, "-config", str(self.config_path)],
+                stdout=self.log_handle,
+                stderr=subprocess.STDOUT,
+            )
+        deadline = time.time() + GO2RTC_START_TIMEOUT_SECONDS
+        while time.time() < deadline:
+            if not self.running():
+                break
+            try:
+                self._request("/api/streams", timeout=1)
+                self.last_error = None
+                self.reconcile(cameras)
+                print("go2rtc is ready; low-latency restreaming enabled.")
+                return True
+            except (OSError, urllib_error.URLError, urllib_error.HTTPError):
+                time.sleep(0.2)
+        self.last_error = f"go2rtc did not become ready. {self.log_tail(8)}".strip()
+        print(self.last_error)
+        self.shutdown()
+        return False
+
+    def _request(self, path, method="GET", timeout=3):
+        request = urllib_request.Request(
+            f"http://{GO2RTC_API_HOST}:{GO2RTC_API_PORT}{path}",
+            method=method,
+        )
+        with urllib_request.urlopen(request, timeout=timeout) as response:
+            return response.read(1024 * 1024)
+
+    def configure_camera(self, camera):
+        if not self.running():
+            return False
+        source = self.source_key(camera)
+        if not source:
+            return False
+        name = self.stream_name(camera)
+        source_key = self.source_key(camera)
+        with self.lock:
+            if self.stream_keys.get(camera["id"]) == source_key:
+                return True
+        query = urlencode({"name": name, "src": source})
+        try:
+            self._request(f"/api/streams?{query}", method="PATCH")
+        except (OSError, urllib_error.URLError, urllib_error.HTTPError) as exc:
+            self.last_error = f"Could not configure {camera.get('name')}: {exc}"
+            return False
+        with self.lock:
+            self.stream_keys[camera["id"]] = source_key
+            self.generations[camera["id"]] = self.generations.get(camera["id"], 0) + 1
+        return True
+
+    def delete_camera(self, camera_id):
+        with self.lock:
+            self.stream_keys.pop(camera_id, None)
+            self.generations.pop(camera_id, None)
+        if not self.running():
+            return
+        name = f"plainnvr_{camera_id}"
+        try:
+            self._request(
+                f"/api/streams?{urlencode({'src': name})}",
+                method="DELETE",
+            )
+        except (OSError, urllib_error.URLError, urllib_error.HTTPError):
+            pass
+
+    def reconcile(self, cameras):
+        active_ids = set()
+        for camera in cameras:
+            if not camera.get("enabled"):
+                continue
+            active_ids.add(camera["id"])
+            self.configure_camera(camera)
+        with self.lock:
+            stale_ids = set(self.stream_keys) - active_ids
+        for camera_id in stale_ids:
+            self.delete_camera(camera_id)
+
+    def source_camera(self, camera):
+        if not self.can_restream(camera) or not self.configure_camera(camera):
+            raise RuntimeError("go2rtc restream is unavailable for this camera.")
+        cloned = dict(camera)
+        cloned["rtsp_url"] = (
+            f"rtsp://{GO2RTC_RTSP_HOST}:{GO2RTC_RTSP_PORT}/"
+            f"{self.stream_name(camera)}"
+        )
+        cloned["audio_url"] = ""
+        cloned["rtsp_transport"] = "tcp"
+        cloned["_relay_generation"] = self.generations.get(camera["id"], 0)
+        cloned["_relay_backend"] = "go2rtc"
+        return cloned
+
+    def camera_status(self, camera):
+        configured = self.stream_keys.get(camera["id"]) == self.source_key(camera)
+        return {
+            "running": self.running(),
+            "healthy": self.running() and configured,
+            "pid": self.process.pid if self.running() else None,
+            "started_at": None,
+            "last_error": self.last_error,
+            "source": (
+                f"rtsp://{GO2RTC_RTSP_HOST}:{GO2RTC_RTSP_PORT}/"
+                f"{self.stream_name(camera)}"
+            ),
+            "generation": self.generations.get(camera["id"], 0),
+            "restart_count": 0,
+            "backend": "go2rtc",
+            "stream": self.stream_name(camera),
+        }
+
+    def stream_info(self, camera):
+        if not self.running() or not self.configure_camera(camera):
+            return None
+        try:
+            raw = self._request(
+                f"/api/streams?{urlencode({'src': self.stream_name(camera)})}"
+            )
+            return json.loads(raw.decode("utf-8"))
+        except (OSError, ValueError, urllib_error.URLError, urllib_error.HTTPError):
+            return None
+
+    def status(self):
+        return {
+            "available": bool(self.binary_path()),
+            "running": self.running(),
+            "pid": self.process.pid if self.running() else None,
+            "error": self.last_error,
+            "api_proxy": "/go2rtc/api/ws",
+            "rtsp_port": GO2RTC_RTSP_PORT,
+            "webrtc_port": GO2RTC_WEBRTC_PORT,
+        }
+
+    def log_tail(self, line_count=20):
+        try:
+            lines = self.log_path.read_text(
+                encoding="utf-8", errors="replace"
+            ).splitlines()
+        except OSError:
+            return ""
+        return "\n".join(lines[-line_count:]).strip()
+
+    def shutdown(self):
+        with self.lock:
+            process = self.process
+            self.process = None
+        if process and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+        with self.lock:
+            if self.log_handle:
+                self.log_handle.close()
+                self.log_handle = None
+
+
+go2rtc = Go2RTCManager()
+
+
 class RelayManager:
     def __init__(self):
         self.lock = threading.RLock()
@@ -835,6 +1161,11 @@ class RelayManager:
         return self.stream_dir(camera_id) / "source.m3u8"
 
     def source_camera(self, camera):
+        if go2rtc.can_restream(camera):
+            try:
+                return go2rtc.source_camera(camera)
+            except RuntimeError as exc:
+                go2rtc.last_error = str(exc)
         generation = self.ensure_running(camera)
         cloned = dict(camera)
         cloned["rtsp_url"] = str(self.playlist_path(camera["id"]))
@@ -844,7 +1175,7 @@ class RelayManager:
         cloned["_relay_generation"] = generation
         return cloned
 
-    def status(self):
+    def status(self, cameras=None):
         with self.lock:
             states = {}
             camera_ids = set(self.processes) | set(self.generations) | set(self.last_errors)
@@ -864,8 +1195,12 @@ class RelayManager:
                     "playlist_age_seconds": round(playlist_age, 1) if playlist_age is not None else None,
                     "generation": self.generations.get(camera_id, 0),
                     "restart_count": self.restart_counts.get(camera_id, 0),
+                    "backend": "ffmpeg-hls",
                 }
-            return states
+        for camera in cameras or []:
+            if go2rtc.can_restream(camera):
+                states[camera["id"]] = go2rtc.camera_status(camera)
+        return states
 
     def ensure_running(self, camera):
         camera_id = camera["id"]
@@ -1056,20 +1391,25 @@ class RelayManager:
                 process.kill()
 
     def reconcile(self, cameras):
-        enabled = {camera["id"] for camera in cameras if camera.get("enabled")}
+        go2rtc.reconcile(cameras)
+        fallback_cameras = [
+            camera
+            for camera in cameras
+            if camera.get("enabled") and not go2rtc.can_restream(camera)
+        ]
+        enabled = {camera["id"] for camera in fallback_cameras}
         with self.lock:
             for camera_id in list(self.processes.keys()):
                 if camera_id not in enabled:
                     self._stop_locked(camera_id)
-        for camera in cameras:
-            if camera.get("enabled"):
-                try:
-                    self.ensure_running(camera)
-                except Exception as exc:
-                    message = f"Relay failed: {redact_camera_text(str(exc), camera)}"
-                    with self.lock:
-                        self.last_errors[camera["id"]] = message
-                    add_event(camera["id"], "error", message)
+        for camera in fallback_cameras:
+            try:
+                self.ensure_running(camera)
+            except Exception as exc:
+                message = f"Relay failed: {redact_camera_text(str(exc), camera)}"
+                with self.lock:
+                    self.last_errors[camera["id"]] = message
+                add_event(camera["id"], "error", message)
 
     def shutdown(self):
         with self.lock:
@@ -1637,7 +1977,7 @@ def onvif_home_body(profile_token):
     </tptz:GotoHomePosition>"""
 
 
-def onvif_move_body(action, speed, duration_ms, profile_token):
+def onvif_move_body(action, speed, duration_ms, profile_token, continuous=False):
     x_dir, y_dir, z_dir = PTZ_MOVE_VECTORS[action]
     token = html_escape(profile_token, quote=True)
     velocity = []
@@ -1651,11 +1991,14 @@ def onvif_move_body(action, speed, duration_ms, profile_token):
             f'<tt:Zoom x="{z_dir * speed:.2f}" '
             'space="http://www.onvif.org/ver10/tptz/ZoomSpaces/VelocityGenericSpace"/>'
         )
-    timeout_seconds = max(0.08, min(duration_ms / 1000, 1.5))
+    timeout = ""
+    if not continuous:
+        timeout_seconds = max(0.08, min(duration_ms / 1000, 1.5))
+        timeout = f"<tptz:Timeout>PT{timeout_seconds:.2f}S</tptz:Timeout>"
     return f"""<tptz:ContinuousMove>
       <tptz:ProfileToken>{token}</tptz:ProfileToken>
       <tptz:Velocity>{''.join(velocity)}</tptz:Velocity>
-      <tptz:Timeout>PT{timeout_seconds:.2f}S</tptz:Timeout>
+      {timeout}
     </tptz:ContinuousMove>"""
 
 
@@ -1716,48 +2059,108 @@ def run_ptz_command(camera, payload):
         raise ValueError("This camera does not have a PTZ driver configured.")
 
     action = str(payload.get("action", "")).strip().lower().replace("-", "_")
-    if action not in PTZ_MOVE_VECTORS and action not in ("stop", "home"):
+    if action not in PTZ_MOVE_VECTORS and action not in ("stop", "home", "preset"):
         raise ValueError("Unsupported PTZ action.")
     speed = normalize_ptz_speed(payload.get("speed", camera.get("ptz_speed", DEFAULT_PTZ_SPEED)))
     duration_ms = bounded_int(payload.get("duration_ms"), PTZ_DEFAULT_DURATION_MS, 80, 1500)
+    continuous = bool(normalize_bool(payload.get("continuous", False)))
 
     if ptz_type == "victure_dvrip":
+        if action == "preset":
+            raise ValueError("Presets are not supported by this PTZ driver.")
         return run_victure_dvrip_ptz_command(camera, action, speed, duration_ms)
     if ptz_type == "victure_direct":
+        if action == "preset":
+            raise ValueError("Presets are not supported by this PTZ driver.")
         return run_victure_direct_ptz_command(camera, action, speed)
     if ptz_type != "onvif":
         raise ValueError("This camera does not have a supported PTZ driver configured.")
 
-    profile_token = normalize_ptz_profile_token(camera.get("ptz_profile_token"))
-    candidates, credentials = ptz_url_candidates(camera)
+    discovery = camera.get("onvif") or {}
+    if not discovery.get("success"):
+        try:
+            discovery = discover_camera_onvif(camera, camera["id"])
+        except OnvifError:
+            discovery = {}
+
+    selected_profile = discovery.get("selected_profile") or {}
+    profile_token = normalize_ptz_profile_token(
+        selected_profile.get("token") or camera.get("ptz_profile_token")
+    )
+    discovered_url = (discovery.get("services") or {}).get("ptz")
+    candidates, legacy_credentials = ptz_url_candidates(camera)
+    if discovered_url:
+        candidates = [discovered_url] + [
+            candidate for candidate in candidates if candidate != discovered_url
+        ]
+    credentials = onvif_payload_credentials(camera) or legacy_credentials
     if not candidates:
         raise ValueError("Could not derive an ONVIF endpoint from this camera URL.")
+
+    features = set(discovery.get("features") or [])
+    if features:
+        if action in PTZ_MOVE_VECTORS and action.startswith("zoom") and "zoom" not in features:
+            raise ValueError("This camera did not advertise continuous zoom support.")
+        if action in PTZ_MOVE_VECTORS and not action.startswith("zoom") and "pt" not in features:
+            raise ValueError("This camera did not advertise continuous pan/tilt support.")
+        if action == "home" and "home" not in features:
+            raise ValueError("This camera did not advertise a home position.")
+        if action == "preset" and "presets" not in features:
+            raise ValueError("This camera did not advertise PTZ presets.")
 
     if action == "stop":
         body = onvif_stop_body(profile_token)
     elif action == "home":
         body = onvif_home_body(profile_token)
+    elif action == "preset":
+        preset_token = str(payload.get("preset_token") or "").strip()
+        if not preset_token:
+            preset_name = str(payload.get("preset_name") or "").strip()
+            preset = next(
+                (
+                    item
+                    for item in discovery.get("presets") or []
+                    if item.get("name") == preset_name
+                ),
+                None,
+            )
+            preset_token = str((preset or {}).get("token") or "")
+        if not preset_token:
+            raise ValueError("Choose a PTZ preset.")
+        body = goto_preset_body(profile_token, preset_token)
     else:
-        body = onvif_move_body(action, speed, duration_ms, profile_token)
+        body = onvif_move_body(
+            action,
+            speed,
+            duration_ms,
+            profile_token,
+            continuous=continuous,
+        )
 
     last_error = None
     for url in candidates:
         try:
-            onvif_post(url, body, credentials=credentials)
+            onvif_soap_post(url, body, credentials=credentials, timeout=4)
             stop_warning = None
-            if action in PTZ_MOVE_VECTORS:
+            if action in PTZ_MOVE_VECTORS and not continuous:
                 time.sleep(duration_ms / 1000)
                 try:
-                    onvif_post(url, onvif_stop_body(profile_token), credentials=credentials)
-                except (OnvifFault, TimeoutError, OSError, urllib_error.URLError, urllib_error.HTTPError) as exc:
+                    onvif_soap_post(
+                        url,
+                        onvif_stop_body(profile_token),
+                        credentials=credentials,
+                        timeout=4,
+                    )
+                except OnvifError as exc:
                     stop_warning = f"Move sent, but stop failed: {exc}"
             return {
                 "ok": True,
                 "action": action,
                 "endpoint": redact_url_credentials(url),
                 "warning": stop_warning,
+                "continuous": continuous,
             }
-        except (OnvifFault, TimeoutError, OSError, urllib_error.URLError, urllib_error.HTTPError) as exc:
+        except OnvifError as exc:
             last_error = exc
 
     raise RuntimeError(f"PTZ command failed: {last_error}")
@@ -2554,6 +2957,11 @@ def redact_camera_text(text, camera):
     for value, label in replacements.items():
         if value:
             redacted = redacted.replace(value, label)
+    redacted = re.sub(
+        r"([a-zA-Z][a-zA-Z0-9+.-]*://)[^/\s\"'@]+@",
+        r"\1<credentials>@",
+        redacted,
+    )
     return redacted
 
 
@@ -2622,6 +3030,97 @@ def live_diagnostics(camera, include_audio=True):
         "hls": hls,
         "log": log_tail,
     }
+
+
+def compatibility_recommendations(stream_result, discovery):
+    recommendations = []
+    details = stream_result.get("details") or {}
+    streams = list(details.get("streams") or [])
+    for section in ("video", "audio"):
+        nested = details.get(section) or {}
+        streams.extend(nested.get("details", nested).get("streams") or [])
+    codecs = {str(item.get("codec_name") or "").lower() for item in streams}
+    if "h264" not in codecs:
+        recommendations.append(
+            "Use H.264 for the live stream when possible; it has the widest MSE, "
+            "WebRTC, Safari, and Home Assistant compatibility."
+        )
+    if codecs.intersection({"pcm_alaw", "pcm_mulaw", "pcma", "pcmu", "opus"}) and "aac" not in codecs:
+        recommendations.append(
+            "The camera audio may need on-demand AAC transcoding for MSE playback."
+        )
+    if "hevc" in codecs or "h265" in codecs:
+        recommendations.append(
+            "H.265 support varies by browser. Keep an H.264 profile available for live view."
+        )
+    if not discovery.get("success"):
+        recommendations.append(
+            "ONVIF discovery did not complete. Verify that ONVIF is enabled in the "
+            "camera and that the stream credentials also have ONVIF permission."
+        )
+    if discovery.get("ptz_supported") and not discovery.get("presets"):
+        recommendations.append(
+            "Pan/tilt was detected, but the selected ONVIF profile returned no presets."
+        )
+    if not recommendations:
+        recommendations.append(
+            "The detected stream and ONVIF capabilities match PlainNVR's preferred path."
+        )
+    return recommendations
+
+
+def camera_compatibility_report(camera, refresh_onvif=True):
+    stream_result = test_stream(camera)
+    discovery = camera.get("onvif") or {}
+    discovery_error = None
+    if refresh_onvif:
+        try:
+            discovery = discover_camera_onvif(camera, camera["id"])
+        except OnvifError as exc:
+            discovery_error = str(exc)
+    if discovery_error and not discovery:
+        discovery = {
+            "success": False,
+            "tested_at": iso_now(),
+            "features": [],
+            "profiles": [],
+            "presets": [],
+            "errors": [discovery_error],
+        }
+    elif discovery_error:
+        discovery = dict(discovery)
+        discovery.setdefault("errors", []).append(discovery_error)
+
+    report = {
+        "schema_version": 1,
+        "generated_at": iso_now(),
+        "plainnvr": {
+            "server": NvrHandler.server_version,
+            "go2rtc": go2rtc.status(),
+        },
+        "camera": {
+            "id": camera["id"],
+            "name": camera["name"],
+            "enabled": camera["enabled"],
+            "stream_url": redact_onvif_url(camera.get("rtsp_url")),
+            "audio_url": redact_onvif_url(camera.get("audio_url")),
+            "transport": camera.get("rtsp_transport"),
+            "record_audio": camera.get("record_audio"),
+            "live_view_mode": camera.get("live_view_mode"),
+            "ptz_enabled": camera.get("ptz_enabled"),
+            "ptz_type": camera.get("ptz_type"),
+        },
+        "stream_probe": stream_result,
+        "onvif": redacted_discovery(discovery),
+        "go2rtc_stream": go2rtc.stream_info(camera),
+        "relay": relay.status([camera]).get(camera["id"]),
+        "recorder": recorder.status().get(camera["id"]),
+        "recordings": recording_coverage(camera),
+        "recommendations": compatibility_recommendations(stream_result, discovery),
+    }
+    serialized = json.dumps(report)
+    serialized = redact_camera_text(serialized, camera)
+    return json.loads(serialized)
 
 
 def get_recent_events(camera_id=None):
@@ -2734,8 +3233,8 @@ class NvrHandler(SimpleHTTPRequestHandler):
         message = re.sub(r"([?&]token=)[^\s&]+", r"\1<redacted>", message)
         print(f"{self.address_string()} - {message}")
 
-    def send_json(self, value, status=HTTPStatus.OK, headers=None):
-        data = json.dumps(value).encode("utf-8")
+    def send_json(self, value, status=HTTPStatus.OK, headers=None, indent=None):
+        data = json.dumps(value, indent=indent).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
@@ -2819,6 +3318,9 @@ class NvrHandler(SimpleHTTPRequestHandler):
         if parsed.path.startswith("/api/"):
             self.handle_api_get(parsed)
             return
+        if parsed.path.startswith("/go2rtc/"):
+            self.handle_go2rtc_proxy(parsed)
+            return
         if parsed.path.startswith("/ha/"):
             self.handle_home_assistant(parsed)
             return
@@ -2848,6 +3350,9 @@ class NvrHandler(SimpleHTTPRequestHandler):
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
+        if parsed.path.startswith("/go2rtc/"):
+            self.handle_go2rtc_proxy(parsed, head_only=True)
+            return
         self.serve_static(parsed.path, head_only=True)
 
     def do_POST(self):
@@ -2876,6 +3381,19 @@ class NvrHandler(SimpleHTTPRequestHandler):
                 self.send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
                 return
             self.send_json(camera, HTTPStatus.CREATED)
+            return
+        if parsed.path == "/api/onvif/discover":
+            self.handle_onvif_discovery(payload)
+            return
+        match = re.match(
+            r"^/api/cameras/([a-f0-9]+)/(onvif/discover|compatibility)$",
+            parsed.path,
+        )
+        if match:
+            if match.group(2) == "onvif/discover":
+                self.handle_camera_onvif_discovery(match.group(1), payload)
+            else:
+                self.handle_camera_compatibility(match.group(1))
             return
         match = re.match(r"^/api/cameras/([a-f0-9]+)/ptz$", parsed.path)
         if match:
@@ -3024,6 +3542,52 @@ class NvrHandler(SimpleHTTPRequestHandler):
             return
         self.send_json(result)
 
+    def handle_onvif_discovery(self, payload):
+        rtsp_url = str(payload.get("rtsp_url") or "").strip()
+        ptz_url = str(payload.get("ptz_url") or "").strip()
+        if not rtsp_url and not ptz_url:
+            self.send_error_json(
+                HTTPStatus.BAD_REQUEST,
+                "Enter a stream URL or ONVIF control URL first.",
+            )
+            return
+        try:
+            result = discover_camera_onvif(payload)
+        except OnvifError as exc:
+            self.send_error_json(HTTPStatus.BAD_GATEWAY, str(exc))
+            return
+        self.send_json(result)
+
+    def handle_camera_onvif_discovery(self, camera_id, payload=None):
+        camera = get_camera(camera_id)
+        if not camera:
+            self.send_error_json(HTTPStatus.NOT_FOUND, "Camera not found.")
+            return
+        try:
+            result = discover_camera_onvif({**camera, **(payload or {})}, camera_id)
+        except OnvifError as exc:
+            self.send_error_json(
+                HTTPStatus.BAD_GATEWAY,
+                redact_camera_text(str(exc), camera),
+            )
+            return
+        self.send_json(result)
+
+    def handle_camera_compatibility(self, camera_id, download=False):
+        camera = get_camera(camera_id)
+        if not camera:
+            self.send_error_json(HTTPStatus.NOT_FOUND, "Camera not found.")
+            return
+        report = camera_compatibility_report(camera, refresh_onvif=True)
+        headers = None
+        if download:
+            headers = {
+                "Content-Disposition": (
+                    f'attachment; filename="plainnvr-{camera["slug"]}-compatibility.json"'
+                )
+            }
+        self.send_json(report, headers=headers, indent=2 if download else None)
+
     def handle_camera_time(self, camera_id, payload=None):
         camera = get_camera(camera_id)
         if not camera:
@@ -3074,6 +3638,13 @@ class NvrHandler(SimpleHTTPRequestHandler):
                 )
             )
             return
+        match = re.match(
+            r"^/api/cameras/([a-f0-9]+)/compatibility-report$",
+            parsed.path,
+        )
+        if match:
+            self.handle_camera_compatibility(match.group(1), download=True)
+            return
         if parsed.path == "/api/status":
             cameras = list_cameras()
             states = recorder.status()
@@ -3084,7 +3655,8 @@ class NvrHandler(SimpleHTTPRequestHandler):
                     "disk": disk_status(),
                     "events": get_recent_events(),
                     "stream_token": get_stream_token(),
-                    "relays": relay.status(),
+                    "relays": relay.status(cameras),
+                    "go2rtc": go2rtc.status(),
                     "night_modes": night_modes.status(),
                     "users": list_users(),
                     "username": self.auth_user(),
@@ -3110,6 +3682,121 @@ class NvrHandler(SimpleHTTPRequestHandler):
             self.send_json({"segments": scan_segments(camera, date_value)})
             return
         self.send_error_json(HTTPStatus.NOT_FOUND, "Not found.")
+
+    def handle_go2rtc_proxy(self, parsed, head_only=False):
+        if not go2rtc.running():
+            self.send_error_json(HTTPStatus.SERVICE_UNAVAILABLE, "go2rtc is unavailable.")
+            return
+        upstream_path = parsed.path[len("/go2rtc") :]
+        if not upstream_path.startswith("/api/"):
+            self.send_error_json(HTTPStatus.NOT_FOUND, "Not found.")
+            return
+        if parsed.query:
+            upstream_path = f"{upstream_path}?{parsed.query}"
+        if self.headers.get("Upgrade", "").lower() == "websocket":
+            self.proxy_go2rtc_websocket(upstream_path)
+            return
+        request_headers = {"Accept": self.headers.get("Accept", "*/*")}
+        if self.headers.get("Range"):
+            request_headers["Range"] = self.headers["Range"]
+        request = urllib_request.Request(
+            f"http://{GO2RTC_API_HOST}:{GO2RTC_API_PORT}{upstream_path}",
+            method="HEAD" if head_only else "GET",
+            headers=request_headers,
+        )
+        try:
+            response = urllib_request.urlopen(request, timeout=10)
+        except urllib_error.HTTPError as exc:
+            response = exc
+        except (OSError, urllib_error.URLError) as exc:
+            self.send_error_json(HTTPStatus.BAD_GATEWAY, f"go2rtc proxy failed: {exc}")
+            return
+        with response:
+            self.send_response(response.status)
+            for key in (
+                "Content-Type",
+                "Content-Length",
+                "Content-Range",
+                "Accept-Ranges",
+                "Cache-Control",
+            ):
+                value = response.headers.get(key)
+                if value:
+                    self.send_header(key, value)
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            if not head_only:
+                shutil.copyfileobj(response, self.wfile, length=64 * 1024)
+
+    def proxy_go2rtc_websocket(self, upstream_path):
+        upstream = None
+        response_sent = False
+        try:
+            upstream = socket.create_connection(
+                (GO2RTC_API_HOST, GO2RTC_API_PORT),
+                timeout=10,
+            )
+            headers = [
+                f"GET {upstream_path} HTTP/1.1",
+                f"Host: {GO2RTC_API_HOST}:{GO2RTC_API_PORT}",
+                "Connection: Upgrade",
+                "Upgrade: websocket",
+            ]
+            for key in (
+                "Sec-WebSocket-Key",
+                "Sec-WebSocket-Version",
+                "Sec-WebSocket-Protocol",
+                "Sec-WebSocket-Extensions",
+                "Origin",
+                "User-Agent",
+            ):
+                value = self.headers.get(key)
+                if value:
+                    headers.append(f"{key}: {value}")
+            upstream.sendall(("\r\n".join(headers) + "\r\n\r\n").encode("latin-1"))
+
+            response = bytearray()
+            while b"\r\n\r\n" not in response and len(response) < 64 * 1024:
+                chunk = upstream.recv(4096)
+                if not chunk:
+                    break
+                response.extend(chunk)
+            if not response:
+                raise RuntimeError("go2rtc closed the WebSocket handshake.")
+            self.connection.sendall(response)
+            response_sent = True
+            status_line = bytes(response).split(b"\r\n", 1)[0]
+            if b" 101 " not in status_line:
+                return
+
+            self.close_connection = True
+            upstream.settimeout(None)
+            self.connection.settimeout(None)
+            sockets = (self.connection, upstream)
+            while True:
+                readable, _, exceptional = select.select(sockets, [], sockets, 30)
+                if exceptional:
+                    break
+                if not readable:
+                    continue
+                for source in readable:
+                    data = source.recv(64 * 1024)
+                    if not data:
+                        return
+                    target = upstream if source is self.connection else self.connection
+                    target.sendall(data)
+        except (OSError, RuntimeError) as exc:
+            if not response_sent:
+                self.send_error_json(
+                    HTTPStatus.BAD_GATEWAY,
+                    f"go2rtc WebSocket proxy failed: {exc}",
+                )
+        finally:
+            if upstream:
+                try:
+                    upstream.close()
+                except OSError:
+                    pass
 
     def handle_home_assistant(self, parsed):
         match = re.match(r"^/ha/([a-f0-9]+)/(snapshot\.jpg|stream\.mjpeg)$", parsed.path)
@@ -3384,6 +4071,7 @@ def main():
     LIVE_DIR.mkdir(parents=True, exist_ok=True)
     RELAY_DIR.mkdir(parents=True, exist_ok=True)
     init_db()
+    go2rtc.start(list_cameras())
     recorder.start()
     server = ThreadingHTTPServer((APP_HOST, APP_PORT), NvrHandler)
 
@@ -3400,6 +4088,7 @@ def main():
         live_hls.shutdown()
         recorder.shutdown()
         relay.shutdown()
+        go2rtc.shutdown()
         server.server_close()
 
 

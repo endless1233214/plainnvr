@@ -28,11 +28,15 @@ struct PTZCommandRequest: Encodable {
     let action: String
     let speed: Double
     let durationMs: Int
+    let continuous: Bool?
+    let presetToken: String?
 
     enum CodingKeys: String, CodingKey {
         case action
         case speed
         case durationMs = "duration_ms"
+        case continuous
+        case presetToken = "preset_token"
     }
 }
 
@@ -190,10 +194,23 @@ final class PlainNVRClient {
         try await cameraControl(cameraID: cameraID, target: "live", action: "restart")
     }
 
-    func sendPTZ(cameraID: String, action: String, speed: Double, durationMs: Int = 300) async throws {
+    func sendPTZ(
+        cameraID: String,
+        action: String,
+        speed: Double,
+        durationMs: Int = 300,
+        continuous: Bool = false,
+        presetToken: String? = nil
+    ) async throws {
         let _: OKResponse = try await post(
             "/api/cameras/\(cameraID)/ptz",
-            body: PTZCommandRequest(action: action, speed: speed, durationMs: durationMs)
+            body: PTZCommandRequest(
+                action: action,
+                speed: speed,
+                durationMs: durationMs,
+                continuous: continuous ? true : nil,
+                presetToken: presetToken
+            )
         )
     }
 

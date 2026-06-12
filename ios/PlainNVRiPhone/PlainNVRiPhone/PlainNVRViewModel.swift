@@ -215,7 +215,11 @@ final class PlainNVRViewModel: ObservableObject {
         }
     }
 
-    func sendPTZ(action: String) async {
+    func sendPTZ(
+        action: String,
+        continuous: Bool = false,
+        presetToken: String? = nil
+    ) async {
         do {
             guard let client, let camera = selectedCamera else {
                 throw PlainNVRClientError.invalidServerURL
@@ -228,11 +232,25 @@ final class PlainNVRViewModel: ObservableObject {
                 cameraID: camera.id,
                 action: action,
                 speed: camera.ptzSpeed ?? 0.55,
-                durationMs: durationMs
+                durationMs: durationMs,
+                continuous: continuous,
+                presetToken: presetToken
             )
         } catch {
             errorMessage = userFacingError(error)
         }
+    }
+
+    func beginPTZ(action: String) async {
+        await sendPTZ(action: action, continuous: true)
+    }
+
+    func stopPTZ() async {
+        await sendPTZ(action: "stop")
+    }
+
+    func goToPreset(_ preset: PTZPreset) async {
+        await sendPTZ(action: "preset", presetToken: preset.token)
     }
 
     func diagnoseLiveStream() async {

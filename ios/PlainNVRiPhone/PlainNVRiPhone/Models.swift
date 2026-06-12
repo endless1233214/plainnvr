@@ -41,6 +41,8 @@ struct Camera: Decodable, Identifiable, Hashable {
     let ptzProfileToken: String?
     let ptzZoomMode: String?
     let ptzSpeed: Double?
+    let ptzFeatures: [String]?
+    let ptzPresets: [PTZPreset]?
     let createdAt: String?
     let updatedAt: String?
 
@@ -54,6 +56,26 @@ struct Camera: Decodable, Identifiable, Hashable {
 
     var usesDirectStepperPTZ: Bool {
         ptzType == "victure_direct"
+    }
+
+    var hasDiscoveredPTZFeatures: Bool {
+        ptzType == "onvif" && !(ptzFeatures ?? []).isEmpty
+    }
+
+    func supportsPTZFeature(_ feature: String) -> Bool {
+        !hasDiscoveredPTZFeatures || (ptzFeatures ?? []).contains(feature)
+    }
+
+    var supportsPanTilt: Bool {
+        supportsPTZ && supportsPTZFeature("pt")
+    }
+
+    var supportsHomePosition: Bool {
+        supportsPTZ && !usesDirectStepperPTZ && supportsPTZFeature("home")
+    }
+
+    var usesContinuousONVIF: Bool {
+        ptzType == "onvif"
     }
 
     var usesLiveHLS: Bool {
@@ -78,8 +100,17 @@ struct Camera: Decodable, Identifiable, Hashable {
     }
 
     var usesHardwareZoom: Bool {
-        resolvedZoomMode == "hardware" && !usesDirectStepperPTZ
+        resolvedZoomMode == "hardware"
+            && !usesDirectStepperPTZ
+            && supportsPTZFeature("zoom")
     }
+}
+
+struct PTZPreset: Decodable, Identifiable, Hashable {
+    let name: String
+    let token: String
+
+    var id: String { token }
 }
 
 struct CameraSchedule: Decodable, Hashable {
