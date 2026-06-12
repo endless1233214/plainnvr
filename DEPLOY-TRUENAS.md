@@ -95,6 +95,12 @@ Open:
 http://TRUENAS-HOST:8787
 ```
 
+Type the complete `http://` address. PlainNVR does not enable TLS by default, so
+a browser that changes the address to `https://` will report
+`ERR_SSL_PROTOCOL_ERROR`. In Brave or Chrome, allow HTTP for the local address
+or disable **Always use secure connections** for local access. Keep HTTPS
+enabled when a reverse proxy is configured to provide it.
+
 The first visit creates the local administrator account. To create the account
 from YAML before the first launch, add these environment variables:
 

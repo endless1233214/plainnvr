@@ -12,6 +12,7 @@ const state = {
   ptzBusy: false,
   digitalZoom: 1,
   liveActive: false,
+  liveBackend: "",
   liveRetryTimer: null,
   liveWatchTimer: null,
   liveLastMediaTime: null,
@@ -448,14 +449,19 @@ function renderCameras() {
     const relay = state.relays[camera.id];
     const running = recorder?.running;
     const streamHealthy = relay?.healthy === true;
+    const recorderRecovering = Boolean(recorder && !recorder.paused && !running);
     const stateLabel = !camera.enabled
       ? "disabled"
-      : streamHealthy && running
+      : !streamHealthy || recorderRecovering
+        ? "recovering"
+        : running
         ? "recording"
-        : streamHealthy
-          ? "live"
-          : "recovering";
-    const stateClass = !camera.enabled ? "off" : streamHealthy ? "ok" : "warn";
+        : "live";
+    const stateClass = !camera.enabled
+      ? "off"
+      : streamHealthy && !recorderRecovering
+        ? "ok"
+        : "warn";
     const button = document.createElement("button");
     button.type = "button";
     button.className = `camera-item ${camera.id === state.selectedCameraId ? "active" : ""}`;
@@ -577,7 +583,9 @@ function renderLiveCameras() {
   $("startLive").disabled = !hasCameras;
   $("stopLive").disabled = !hasCameras;
   const selected = selectedLiveCamera();
-  $("liveSourceLabel").textContent = selected ? liveModeLabel(cameraLiveMode(selected)) : "";
+  if (!state.liveActive) {
+    $("liveSourceLabel").textContent = selected ? liveModeLabel(cameraLiveMode(selected)) : "";
+  }
   renderPtzPanel();
 }
 
@@ -924,21 +932,40 @@ function startLive(options = {}) {
       renderPtzPanel();
       return;
     }
+    state.liveBackend = "hls";
     video.onplaying = () => {
+      if (
+        !state.liveActive ||
+        state.liveCameraId !== camera.id ||
+        state.liveBackend !== "hls"
+      ) {
+        return;
+      }
       $("liveState").textContent = `${camera.name} HLS / H.264`;
       state.liveLastMediaTime = video.currentTime;
       state.liveLastProgressAt = Date.now();
     };
     video.onerror = () => {
-      startLiveMjpeg(camera, "MJPEG fallback");
-      $("liveState").textContent = `${camera.name} HLS failed; MJPEG fallback`;
-      scheduleLiveRetry(camera);
+      if (
+        !state.liveActive ||
+        state.liveCameraId !== camera.id ||
+        state.liveBackend !== "hls"
+      ) {
+        return;
+      }
+      startLiveMjpeg(camera, "HLS failed; MJPEG fallback");
     };
     video.src = cameraLiveHlsUrl(camera);
     video.hidden = false;
     video.play().catch(() => {
+      if (
+        !state.liveActive ||
+        state.liveCameraId !== camera.id ||
+        state.liveBackend !== "hls"
+      ) {
+        return;
+      }
       startLiveMjpeg(camera, "MJPEG fallback");
-      scheduleLiveRetry(camera);
     });
     $("liveState").textContent = `${camera.name} HLS starting`;
     startLiveWatchdog(camera);
@@ -955,14 +982,22 @@ function startLiveGo2RTC(camera, streamName) {
     startLive({ forceFallback: true });
     return;
   }
-  $("liveSourceLabel").textContent = "go2rtc / MSE";
+  state.liveBackend = "go2rtc";
+  $("liveSourceLabel").textContent = "go2rtc / connecting";
   $("liveState").textContent = `${camera.name} go2rtc starting`;
   $("liveEmpty").hidden = true;
   player.start(streamName);
   applyDigitalZoom();
   clearLiveWatchdog();
   state.liveWatchTimer = setTimeout(() => {
-    if (!state.liveActive || state.liveCameraId !== camera.id || player.ready) return;
+    if (
+      !state.liveActive ||
+      state.liveCameraId !== camera.id ||
+      state.liveBackend !== "go2rtc" ||
+      player.ready
+    ) {
+      return;
+    }
     $("liveState").textContent = `${camera.name} go2rtc timed out; HLS fallback`;
     startLive({ forceFallback: true });
   }, 12000);
@@ -970,6 +1005,8 @@ function startLiveGo2RTC(camera, streamName) {
 
 function startLiveMjpeg(camera, label) {
   clearLiveWatchdog();
+  clearLiveRetry();
+  state.liveBackend = "mjpeg";
   const video = $("liveVideo");
   video.pause();
   video.onplaying = null;
@@ -978,8 +1015,25 @@ function startLiveMjpeg(camera, label) {
   video.load();
   video.hidden = true;
   const image = $("liveImage");
+  image.onload = () => {
+    if (
+      !state.liveActive ||
+      state.liveCameraId !== camera.id ||
+      state.liveBackend !== "mjpeg"
+    ) {
+      return;
+    }
+    $("liveSourceLabel").textContent = "MJPEG";
+    $("liveState").textContent = `${camera.name} ${label}`;
+  };
   image.onerror = () => {
-    if (!state.liveActive || state.liveCameraId !== camera.id) return;
+    if (
+      !state.liveActive ||
+      state.liveCameraId !== camera.id ||
+      state.liveBackend !== "mjpeg"
+    ) {
+      return;
+    }
     image.removeAttribute("src");
     image.hidden = true;
     $("liveEmpty").hidden = false;
@@ -1041,7 +1095,6 @@ function startLiveWatchdog(camera) {
     }
     if (Date.now() - state.liveLastProgressAt > 15000) {
       startLiveMjpeg(camera, "HLS stalled; MJPEG fallback");
-      scheduleLiveRetry(camera);
     }
   }, 3000);
 }
@@ -1072,6 +1125,7 @@ function syncLiveHealth() {
 function stopLiveMedia() {
   clearLiveWatchdog();
   clearLiveRetry();
+  state.liveBackend = "";
   const video = $("liveVideo");
   video.pause();
   video.removeAttribute("src");
@@ -1080,6 +1134,7 @@ function stopLiveMedia() {
   video.onerror = null;
   video.hidden = true;
   const image = $("liveImage");
+  image.onload = null;
   image.onerror = null;
   image.removeAttribute("src");
   image.hidden = true;
@@ -1242,10 +1297,11 @@ document.addEventListener("DOMContentLoaded", () => {
   $("copyHaHlsUrl").addEventListener("click", () => copyValue("haHlsUrl"));
   $("copyHaSnapshotUrl").addEventListener("click", () => copyValue("haSnapshotUrl"));
   $("copyHaYaml").addEventListener("click", () => copyValue("haYaml"));
-  $("startLive").addEventListener("click", startLive);
+  $("startLive").addEventListener("click", () => startLive());
   $("stopLive").addEventListener("click", stopLive);
   $("go2rtcLive").addEventListener("plainnvr-stream-state", (event) => {
-    if (!state.liveActive) return;
+    const player = $("go2rtcLive");
+    if (!state.liveActive || state.liveBackend !== "go2rtc" || player.hidden) return;
     const camera = selectedLiveCamera();
     if (!camera) return;
     const { state: streamState, detail } = event.detail || {};

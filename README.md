@@ -35,6 +35,13 @@ docker compose up --build -d
 Open `http://localhost:8787`. The first visit opens account setup. Create the
 local administrator account with a password of at least 12 characters.
 
+PlainNVR serves plain HTTP by default. Include the full `http://` address when
+opening it from another computer, for example `http://192.168.1.50:8787`.
+If Brave or Chrome shows `ERR_SSL_PROTOCOL_ERROR`, the browser upgraded the
+address to HTTPS. Allow HTTP for the local address or turn off **Always use
+secure connections** for local access. Use `https://` only after placing
+PlainNVR behind an HTTPS reverse proxy.
+
 The default Compose configuration stores persistent files in:
 
 ```text

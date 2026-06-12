@@ -5,6 +5,7 @@ class PlainNVRLivePlayer extends VideoRTC {
     super();
     this.mode = "mse,hls,mjpeg";
     this.media = "video,audio";
+    this.RECONNECT_TIMEOUT = 3000;
     this.ready = false;
   }
 
@@ -43,7 +44,7 @@ class PlainNVRLivePlayer extends VideoRTC {
 
   onclose() {
     const reconnecting = super.onclose();
-    if (reconnecting) {
+    if (reconnecting && this.wsURL && !this.hidden) {
       this.ready = false;
       this.dispatchState("reconnecting", "go2rtc");
     }
@@ -59,6 +60,15 @@ class PlainNVRLivePlayer extends VideoRTC {
   stop() {
     this.ready = false;
     this.currentMode = "";
+    this.wsURL = "";
+    if (this.reconnectTID) {
+      clearTimeout(this.reconnectTID);
+      this.reconnectTID = 0;
+    }
+    if (this.disconnectTID) {
+      clearTimeout(this.disconnectTID);
+      this.disconnectTID = 0;
+    }
     if (this.video) {
       this.ondisconnect();
     }
