@@ -36,6 +36,7 @@ struct ContentView: View {
 
 struct SignInView: View {
     @EnvironmentObject private var viewModel: PlainNVRViewModel
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
         NavigationStack {
@@ -46,6 +47,21 @@ struct SignInView: View {
                         .textContentType(.URL)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
+
+                    Button {
+                        Task { await viewModel.testConnection() }
+                    } label: {
+                        Label("Test Connection", systemImage: "network")
+                    }
+                    .disabled(viewModel.isBusy)
+
+                    if let url = webURL {
+                        Button {
+                            openURL(url)
+                        } label: {
+                            Label("Open Web UI", systemImage: "safari")
+                        }
+                    }
                 }
 
                 Section(viewModel.setupRequired ? "Create Account" : "Sign In") {
@@ -72,6 +88,13 @@ struct SignInView: View {
                 }
             }
         }
+    }
+
+    private var webURL: URL? {
+        guard let normalized = try? PlainNVRClient.normalizedServerAddress(viewModel.serverAddress) else {
+            return nil
+        }
+        return URL(string: normalized)
     }
 }
 
@@ -212,7 +235,8 @@ struct CameraDetailView: View {
 struct LiveView: View {
     @EnvironmentObject private var viewModel: PlainNVRViewModel
     @Environment(\.verticalSizeClass) private var verticalSizeClass
-    @State private var landscapeDigitalZoom: CGFloat = 1
+    @State private var landscapePTZControlsVisible = false
+    @State private var landscapePTZHideTask: Task<Void, Never>?
 
     private var isLandscape: Bool {
         verticalSizeClass == .compact
@@ -276,19 +300,12 @@ struct LiveView: View {
 
             if let camera = viewModel.selectedCamera, viewModel.livePlaybackEnabled, let url = viewModel.liveURL(for: camera) {
                 landscapeSurface(camera: camera, url: url)
-                    .scaleEffect(landscapeDigitalZoom)
                     .ignoresSafeArea()
 
-                if camera.supportsPTZ {
-                    VStack {
-                        Spacer()
-                        HStack {
-                            PTZVideoOverlay(camera: camera, digitalZoomAction: applyLandscapeDigitalZoom)
-                                .padding(.leading, 14)
-                                .padding(.bottom, 14)
-                            Spacer()
-                        }
-                    }
+                if camera.supportsPTZ, landscapePTZControlsVisible {
+                    PTZVideoOverlay(camera: camera, layout: .landscape)
+                        .ignoresSafeArea()
+                        .transition(.opacity)
                 }
 
                 if let message = viewModel.liveStatusMessage, !message.isEmpty {
@@ -312,8 +329,13 @@ struct LiveView: View {
             }
         }
         .ignoresSafeArea()
+        .animation(.easeInOut(duration: 0.18), value: landscapePTZControlsVisible)
         .onChange(of: viewModel.selectedCamera?.id) { _, _ in
-            landscapeDigitalZoom = 1
+            hideLandscapePTZControls()
+        }
+        .onDisappear {
+            landscapePTZHideTask?.cancel()
+            landscapePTZHideTask = nil
         }
     }
 
@@ -322,21 +344,43 @@ struct LiveView: View {
         LivePlayerView(
             url: url,
             rotationDegrees: camera.normalizedViewRotation,
+            viewerZoomEnabled: !camera.usesHardwareZoom,
+            onZoomGesture: { action in
+                sendHardwareZoom(action, camera: camera)
+            },
+            onTap: {
+                revealLandscapePTZControls(for: camera)
+            },
             onStatus: viewModel.updateLivePlayerStatus,
             onFailure: viewModel.updateLivePlayerFailure
         )
     }
 
-    private func applyLandscapeDigitalZoom(_ action: String) {
-        withAnimation(.spring(response: 0.22, dampingFraction: 0.82)) {
-            switch action {
-            case "zoom_in":
-                landscapeDigitalZoom = min(4, landscapeDigitalZoom + 0.25)
-            case "zoom_out":
-                landscapeDigitalZoom = max(1, landscapeDigitalZoom - 0.25)
-            default:
-                landscapeDigitalZoom = 1
-            }
+    private func sendHardwareZoom(_ action: String, camera: Camera) {
+        guard camera.usesHardwareZoom else { return }
+        Task {
+            await viewModel.sendPTZ(action: action)
+        }
+    }
+
+    private func revealLandscapePTZControls(for camera: Camera) {
+        guard camera.supportsPTZ else { return }
+        withAnimation(.easeInOut(duration: 0.18)) {
+            landscapePTZControlsVisible = true
+        }
+        landscapePTZHideTask?.cancel()
+        landscapePTZHideTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled else { return }
+            hideLandscapePTZControls()
+        }
+    }
+
+    private func hideLandscapePTZControls() {
+        landscapePTZHideTask?.cancel()
+        landscapePTZHideTask = nil
+        withAnimation(.easeInOut(duration: 0.22)) {
+            landscapePTZControlsVisible = false
         }
     }
 }
@@ -398,9 +442,9 @@ struct PTZPressButton: View {
     var body: some View {
         Image(systemName: systemName)
             .font(.system(size: overlayStyle ? 15 : 17, weight: .semibold))
-            .foregroundStyle(.blue)
+            .foregroundStyle(overlayStyle ? .white : .blue)
             .frame(width: size, height: size)
-            .background(overlayStyle ? Color.black.opacity(0.62) : Color.secondary.opacity(0.08))
+            .background(overlayStyle ? Color.black.opacity(isPressed ? 0.72 : 0.46) : Color.secondary.opacity(0.08))
             .clipShape(RoundedRectangle(cornerRadius: overlayStyle ? size / 2 : 8))
             .overlay {
                 if !overlayStyle {
@@ -443,86 +487,16 @@ struct PTZPressButton: View {
     }
 }
 
-struct PTZControlPad: View {
-    @EnvironmentObject private var viewModel: PlainNVRViewModel
-
-    private let columns = Array(repeating: GridItem(.fixed(46), spacing: 8), count: 3)
-
-    var body: some View {
-        let camera = viewModel.selectedCamera
-        let directStepper = camera?.usesDirectStepperPTZ == true
-        let showHardwareZoom = camera?.usesHardwareZoom == true
-
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .center, spacing: 16) {
-                if camera?.supportsPanTilt == true {
-                    LazyVGrid(columns: columns, spacing: 8) {
-                        ptzButton("arrow.up.left", action: "up_left", label: "Up Left")
-                        ptzButton("arrow.up", action: "up", label: "Up")
-                        ptzButton("arrow.up.right", action: "up_right", label: "Up Right")
-                        ptzButton("arrow.left", action: "left", label: "Left")
-                        if directStepper || camera?.supportsHomePosition != true {
-                            Color.clear
-                                .frame(width: 42, height: 42)
-                                .accessibilityHidden(true)
-                        } else {
-                            ptzButton("house", action: "home", label: "Home")
-                        }
-                        ptzButton("arrow.right", action: "right", label: "Right")
-                        ptzButton("arrow.down.left", action: "down_left", label: "Down Left")
-                        ptzButton("arrow.down", action: "down", label: "Down")
-                        ptzButton("arrow.down.right", action: "down_right", label: "Down Right")
-                    }
-                }
-
-                if showHardwareZoom {
-                    VStack(spacing: 8) {
-                        ptzButton("plus.magnifyingglass", action: "zoom_in", label: "Zoom In")
-                        ptzButton("stop.fill", action: "stop", label: "Stop")
-                        ptzButton("minus.magnifyingglass", action: "zoom_out", label: "Zoom Out")
-                    }
-                }
-            }
-
-            if let presets = camera?.ptzPresets, !presets.isEmpty {
-                Menu {
-                    ForEach(presets) { preset in
-                        Button(preset.name) {
-                            Task { await viewModel.goToPreset(preset) }
-                        }
-                    }
-                } label: {
-                    Label("Go to Preset", systemImage: "viewfinder")
-                }
-                .buttonStyle(.bordered)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func ptzButton(_ systemName: String, action: String, label: String) -> some View {
-        let continuous = viewModel.selectedCamera?.usesContinuousONVIF == true
-            && !["home", "stop"].contains(action)
-        return PTZPressButton(
-            systemName: systemName,
-            action: action,
-            label: label,
-            size: 42,
-            continuous: continuous
-        )
-    }
-}
-
 struct LivePlayerSurface: View {
     @EnvironmentObject private var viewModel: PlainNVRViewModel
     let camera: Camera
-    @State private var digitalZoom: CGFloat = 1
+    @State private var ptzControlsVisible = false
+    @State private var ptzHideTask: Task<Void, Never>?
 
     var body: some View {
         VStack(spacing: 8) {
             if viewModel.livePlaybackEnabled, let url = viewModel.liveURL(for: camera) {
                 liveSurface(url: url)
-                .scaleEffect(digitalZoom)
                 .frame(maxWidth: .infinity)
                 .aspectRatio(16 / 9, contentMode: .fit)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -530,10 +504,10 @@ struct LivePlayerSurface: View {
                     RoundedRectangle(cornerRadius: 8)
                         .stroke(.quaternary, lineWidth: 1)
                 }
-                .overlay(alignment: .bottomLeading) {
-                    if camera.supportsPTZ {
-                        PTZVideoOverlay(camera: camera, digitalZoomAction: applyDigitalZoom)
-                            .padding(8)
+                .overlay {
+                    if camera.supportsPTZ, ptzControlsVisible {
+                        PTZVideoOverlay(camera: camera, layout: .portrait)
+                            .transition(.opacity)
                     }
                 }
 
@@ -558,8 +532,13 @@ struct LivePlayerSurface: View {
             }
         }
         .padding(.horizontal)
+        .animation(.easeInOut(duration: 0.18), value: ptzControlsVisible)
         .onChange(of: camera.id) { _, _ in
-            digitalZoom = 1
+            hidePTZControls()
+        }
+        .onDisappear {
+            ptzHideTask?.cancel()
+            ptzHideTask = nil
         }
     }
 
@@ -568,104 +547,138 @@ struct LivePlayerSurface: View {
         LivePlayerView(
             url: url,
             rotationDegrees: camera.normalizedViewRotation,
+            viewerZoomEnabled: !camera.usesHardwareZoom,
+            onZoomGesture: { action in
+                sendHardwareZoom(action)
+            },
+            onTap: {
+                revealPTZControls()
+            },
             onStatus: viewModel.updateLivePlayerStatus,
             onFailure: viewModel.updateLivePlayerFailure
         )
     }
 
-    private func applyDigitalZoom(_ action: String) {
-        withAnimation(.spring(response: 0.22, dampingFraction: 0.82)) {
-            switch action {
-            case "zoom_in":
-                digitalZoom = min(4, digitalZoom + 0.25)
-            case "zoom_out":
-                digitalZoom = max(1, digitalZoom - 0.25)
-            default:
-                digitalZoom = 1
-            }
+    private func sendHardwareZoom(_ action: String) {
+        guard camera.usesHardwareZoom else { return }
+        Task {
+            await viewModel.sendPTZ(action: action)
         }
     }
+
+    private func revealPTZControls() {
+        guard camera.supportsPTZ else { return }
+        withAnimation(.easeInOut(duration: 0.18)) {
+            ptzControlsVisible = true
+        }
+        ptzHideTask?.cancel()
+        ptzHideTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled else { return }
+            hidePTZControls()
+        }
+    }
+
+    private func hidePTZControls() {
+        ptzHideTask?.cancel()
+        ptzHideTask = nil
+        withAnimation(.easeInOut(duration: 0.22)) {
+            ptzControlsVisible = false
+        }
+    }
+}
+
+fileprivate enum PTZOverlayLayout {
+    case portrait
+    case landscape
 }
 
 struct PTZVideoOverlay: View {
     @EnvironmentObject private var viewModel: PlainNVRViewModel
     let camera: Camera
-    var digitalZoomAction: (String) -> Void = { _ in }
-
-    private let columns = Array(repeating: GridItem(.fixed(34), spacing: 4), count: 3)
+    fileprivate let layout: PTZOverlayLayout
 
     var body: some View {
-        let directStepper = camera.usesDirectStepperPTZ
-        let showZoom = camera.usesDigitalZoom || camera.usesHardwareZoom
-
-        HStack(alignment: .bottom, spacing: 8) {
+        GeometryReader { proxy in
             if camera.supportsPanTilt {
-                LazyVGrid(columns: columns, spacing: 4) {
-                    ptzButton("arrow.up.left", action: "up_left", label: "Up Left")
-                    ptzButton("arrow.up", action: "up", label: "Up")
-                    ptzButton("arrow.up.right", action: "up_right", label: "Up Right")
-                    ptzButton("arrow.left", action: "left", label: "Left")
-                    if directStepper || !camera.supportsHomePosition {
-                        Color.clear
-                            .frame(width: 34, height: 34)
-                            .accessibilityHidden(true)
-                    } else {
-                        ptzButton("house", action: "home", label: "Home")
-                    }
-                    ptzButton("arrow.right", action: "right", label: "Right")
-                    ptzButton("arrow.down.left", action: "down_left", label: "Down Left")
-                    ptzButton("arrow.down", action: "down", label: "Down")
-                    ptzButton("arrow.down.right", action: "down_right", label: "Down Right")
-                }
-            }
+                ZStack {
+                    Color.clear
+                        .allowsHitTesting(false)
 
-            if showZoom {
-                VStack(spacing: 4) {
-                    zoomButton("plus.magnifyingglass", action: "zoom_in", label: "Zoom In")
-                    zoomButton("stop.fill", action: "stop", label: camera.usesDigitalZoom ? "Reset Zoom" : "Stop")
-                    zoomButton("minus.magnifyingglass", action: "zoom_out", label: "Zoom Out")
+                    VStack {
+                        edgePTZButton("arrow.up", action: "up", label: "Tilt Up")
+                            .padding(.top, edgePadding(proxy).top)
+                        Spacer(minLength: 0)
+                        edgePTZButton("arrow.down", action: "down", label: "Tilt Down")
+                            .padding(.bottom, edgePadding(proxy).bottom)
+                    }
+
+                    HStack {
+                        edgePTZButton("arrow.left", action: "left", label: "Pan Left")
+                            .padding(.leading, edgePadding(proxy).leading)
+                        Spacer(minLength: 0)
+                        edgePTZButton("arrow.right", action: "right", label: "Pan Right")
+                            .padding(.trailing, edgePadding(proxy).trailing)
+                    }
+
+                    if camera.supportsHomePosition {
+                        VStack {
+                            HStack {
+                                Spacer(minLength: 0)
+                                cornerPTZButton("house", action: "home", label: "Home Position")
+                                    .padding(.top, edgePadding(proxy).top)
+                                    .padding(.trailing, edgePadding(proxy).trailing)
+                            }
+                            Spacer(minLength: 0)
+                        }
+                    }
                 }
             }
         }
-        .padding(6)
-        .background(.black.opacity(0.38), in: RoundedRectangle(cornerRadius: 8))
+        .accessibilityElement(children: .contain)
     }
 
-    private func ptzButton(_ systemName: String, action: String, label: String) -> some View {
+    private func edgePTZButton(_ systemName: String, action: String, label: String) -> some View {
         PTZPressButton(
             systemName: systemName,
             action: action,
             label: label,
-            size: 34,
-            continuous: camera.usesContinuousONVIF && !["home", "stop"].contains(action),
+            size: 42,
+            continuous: camera.usesContinuousONVIF,
             overlayStyle: true
         )
     }
 
-    @ViewBuilder
-    private func zoomButton(_ systemName: String, action: String, label: String) -> some View {
-        if camera.usesDigitalZoom {
-            Button {
-                digitalZoomAction(action)
-            } label: {
-                Image(systemName: systemName)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.blue)
-                    .frame(width: 34, height: 34)
-                    .background(.black.opacity(0.62), in: Circle())
-            }
-            .accessibilityLabel(label)
-            .buttonStyle(.plain)
-        } else {
-            PTZPressButton(
-                systemName: systemName,
-                action: action,
-                label: label,
-                size: 34,
-                continuous: camera.usesContinuousONVIF && action != "stop",
-                overlayStyle: true
-            )
+    private func cornerPTZButton(_ systemName: String, action: String, label: String) -> some View {
+        PTZPressButton(
+            systemName: systemName,
+            action: action,
+            label: label,
+            size: 36,
+            continuous: false,
+            overlayStyle: true
+        )
+    }
+
+    private func edgePadding(_ proxy: GeometryProxy) -> EdgeInsets {
+        let horizontalInset: CGFloat
+        let verticalInset: CGFloat
+
+        switch layout {
+        case .portrait:
+            horizontalInset = 18
+            verticalInset = 14
+        case .landscape:
+            horizontalInset = 78
+            verticalInset = 28
         }
+
+        return EdgeInsets(
+            top: max(proxy.safeAreaInsets.top + 10, verticalInset),
+            leading: max(proxy.safeAreaInsets.leading + 10, horizontalInset),
+            bottom: max(proxy.safeAreaInsets.bottom + 10, verticalInset),
+            trailing: max(proxy.safeAreaInsets.trailing + 10, horizontalInset)
+        )
     }
 }
 

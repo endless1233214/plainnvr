@@ -26,8 +26,6 @@ struct Camera: Decodable, Identifiable, Hashable {
     let id: String
     let name: String
     let slug: String?
-    let rtspUrl: String?
-    let audioUrl: String?
     let enabled: Bool
     let segmentSeconds: Int
     let retentionDays: Int
@@ -38,8 +36,6 @@ struct Camera: Decodable, Identifiable, Hashable {
     let rtspTransport: String?
     let ptzEnabled: Bool?
     let ptzType: String?
-    let ptzUrl: String?
-    let ptzProfileToken: String?
     let ptzZoomMode: String?
     let ptzSpeed: Double?
     let ptzFeatures: [String]?

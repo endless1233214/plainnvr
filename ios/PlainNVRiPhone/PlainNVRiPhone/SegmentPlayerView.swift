@@ -139,6 +139,9 @@ struct LivePlayerView: View {
     var isMuted = false
     var volume: Float = 0.85
     var rotationDegrees = 0
+    var viewerZoomEnabled = true
+    var onZoomGesture: (String) -> Void = { _ in }
+    var onTap: () -> Void = {}
     var onStatus: (String?) -> Void = { _ in }
     var onFailure: (String) -> Void = { _ in }
 
@@ -183,11 +186,19 @@ struct LivePlayerView: View {
             }
             .clipped()
             .contentShape(Rectangle())
-            .gesture(magnificationGesture(size: proxy.size))
+            .highPriorityGesture(magnificationGesture(size: proxy.size))
             .simultaneousGesture(dragGesture(size: proxy.size))
+            .simultaneousGesture(
+                TapGesture()
+                    .onEnded {
+                        onTap()
+                    }
+            )
             .onTapGesture(count: 2) {
-                withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
-                    resetZoom()
+                if viewerZoomEnabled {
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
+                        resetZoom()
+                    }
                 }
             }
         }
@@ -353,9 +364,18 @@ struct LivePlayerView: View {
     private func magnificationGesture(size: CGSize) -> some Gesture {
         MagnificationGesture()
             .updating($gestureScale) { value, state, _ in
-                state = value
+                state = viewerZoomEnabled ? value : 1
             }
             .onEnded { value in
+                guard viewerZoomEnabled else {
+                    if value > 1.12 {
+                        onZoomGesture("zoom_in")
+                    } else if value < 0.88 {
+                        onZoomGesture("zoom_out")
+                    }
+                    return
+                }
+
                 baseScale = clampedScale(baseScale * value)
                 if baseScale == 1 {
                     baseOffset = .zero
@@ -368,14 +388,14 @@ struct LivePlayerView: View {
     private func dragGesture(size: CGSize) -> some Gesture {
         DragGesture(minimumDistance: 0)
             .updating($dragOffset) { value, state, _ in
-                guard baseScale * gestureScale > 1 else {
+                guard viewerZoomEnabled, baseScale * gestureScale > 1 else {
                     state = .zero
                     return
                 }
                 state = value.translation
             }
             .onEnded { value in
-                guard baseScale > 1 else {
+                guard viewerZoomEnabled, baseScale > 1 else {
                     baseOffset = .zero
                     return
                 }

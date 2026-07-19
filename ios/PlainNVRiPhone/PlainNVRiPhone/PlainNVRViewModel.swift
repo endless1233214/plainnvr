@@ -68,6 +68,7 @@ final class PlainNVRViewModel: ObservableObject {
         await runBusy {
             do {
                 let client = try configuredClient()
+                _ = try await client.health()
                 let state = try await client.authState()
                 authState = state
                 username = state.username ?? username
@@ -87,6 +88,7 @@ final class PlainNVRViewModel: ObservableObject {
         await runBusy {
             do {
                 let client = try configuredClient()
+                _ = try await client.health()
                 let state = try await client.authState()
                 authState = state
 
@@ -113,6 +115,31 @@ final class PlainNVRViewModel: ObservableObject {
                 authState = AuthState(authenticated: true, setupRequired: false, username: response.username)
                 connectionState = .signedIn
                 try await refreshStatus(using: client)
+            } catch {
+                connectionState = .signedOut
+                errorMessage = userFacingError(error)
+            }
+        }
+    }
+
+    func testConnection() async {
+        await runBusy {
+            do {
+                let client = try configuredClient()
+                _ = try await client.health()
+                let state = try await client.authState()
+                authState = state
+                username = state.username ?? username
+                connectionState = state.authenticated ? .signedIn : (state.setupRequired ? .setupRequired : .signedOut)
+
+                if state.authenticated {
+                    try await refreshStatus(using: client)
+                    errorMessage = "PlainNVR is reachable and signed in."
+                } else if state.setupRequired {
+                    errorMessage = "PlainNVR is reachable. Create the first account to continue."
+                } else {
+                    errorMessage = "PlainNVR is reachable. Sign in to continue."
+                }
             } catch {
                 connectionState = .signedOut
                 errorMessage = userFacingError(error)

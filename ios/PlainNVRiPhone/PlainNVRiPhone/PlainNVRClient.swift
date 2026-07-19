@@ -58,8 +58,8 @@ final class PlainNVRClient {
         self.serverAddress = normalized
 
         let configuration = URLSessionConfiguration.default
-        configuration.waitsForConnectivity = false
-        configuration.timeoutIntervalForRequest = 6
+        configuration.waitsForConnectivity = true
+        configuration.timeoutIntervalForRequest = 12
         configuration.timeoutIntervalForResource = 120
         configuration.httpShouldSetCookies = true
         configuration.httpCookieAcceptPolicy = .always
@@ -114,6 +114,10 @@ final class PlainNVRClient {
 
     func authState() async throws -> AuthState {
         try await get("/api/auth/state")
+    }
+
+    func health() async throws -> OKResponse {
+        try await get("/api/health")
     }
 
     func login(username: String, password: String, setupRequired: Bool) async throws -> AuthResponse {
@@ -281,11 +285,7 @@ final class PlainNVRClient {
 
         let data: Data
         let response: URLResponse
-        do {
-            (data, response) = try await session.data(for: request)
-        } catch let error as URLError {
-            throw PlainNVRClientError.server(Self.userFacingNetworkMessage(error, serverAddress: serverAddress))
-        }
+        (data, response) = try await responseData(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw PlainNVRClientError.invalidResponse
         }
@@ -304,16 +304,66 @@ final class PlainNVRClient {
         return try decoder.decode(T.self, from: data)
     }
 
+    private func responseData(for request: URLRequest) async throws -> (Data, URLResponse) {
+        for attempt in 0..<2 {
+            do {
+                return try await session.data(for: request)
+            } catch let error as URLError {
+                if attempt == 0 && Self.shouldRetry(error) {
+                    try await Task.sleep(nanoseconds: 350_000_000)
+                    continue
+                }
+                throw PlainNVRClientError.server(Self.userFacingNetworkMessage(error, serverAddress: serverAddress))
+            }
+        }
+
+        throw PlainNVRClientError.invalidResponse
+    }
+
+    private static func shouldRetry(_ error: URLError) -> Bool {
+        switch error.code {
+        case .networkConnectionLost, .timedOut, .cannotConnectToHost:
+            return true
+        default:
+            return false
+        }
+    }
+
     private static func userFacingNetworkMessage(_ error: URLError, serverAddress: String) -> String {
         switch error.code {
         case .timedOut:
             return "PlainNVR did not answer at \(serverAddress). Check the server IP and Wi-Fi, then try again."
         case .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed:
             return "Could not reach PlainNVR at \(serverAddress)."
-        case .notConnectedToInternet, .networkConnectionLost:
+        case .notConnectedToInternet:
+            return "This iPhone is offline. Connect to Wi-Fi or cellular, then try PlainNVR again."
+        case .networkConnectionLost:
+            if isLocalNetworkAddress(serverAddress) {
+                return "iOS lost the local connection to PlainNVR at \(serverAddress). Make sure this iPhone is on the same Wi-Fi and that Settings > Privacy & Security > Local Network allows PlainNVR."
+            }
             return "The network connection dropped while talking to PlainNVR."
         default:
             return error.localizedDescription
+        }
+    }
+
+    private static func isLocalNetworkAddress(_ serverAddress: String) -> Bool {
+        guard let host = URLComponents(string: serverAddress)?.host?.lowercased() else {
+            return false
+        }
+        if host == "localhost" || host.hasSuffix(".local") {
+            return true
+        }
+
+        let octets = host.split(separator: ".").compactMap { Int($0) }
+        guard octets.count == 4 else { return false }
+        switch (octets[0], octets[1]) {
+        case (10, _), (127, _), (169, 254), (192, 168):
+            return true
+        case (172, 16...31):
+            return true
+        default:
+            return false
         }
     }
 }
