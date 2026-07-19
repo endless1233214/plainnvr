@@ -897,7 +897,7 @@ async function saveSettings(event) {
   }
 }
 
-function startLive(options = {}) {
+function startLive() {
   const cameraId = $("liveCamera").value;
   const camera = state.cameras.find((item) => item.id === cameraId);
   if (!camera) {
@@ -915,7 +915,6 @@ function startLive(options = {}) {
   $("liveSourceLabel").textContent = "go2rtc";
   const relay = state.relays[camera.id];
   if (
-    !options.forceFallback &&
     state.go2rtc?.running === true &&
     relay?.backend === "go2rtc" &&
     relay?.stream

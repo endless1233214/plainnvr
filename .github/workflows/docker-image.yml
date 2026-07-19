@@ -24,9 +24,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Read app version
+        id: version
+        run: echo "version=$(cat VERSION)" >> "$GITHUB_OUTPUT"
+
       - name: Build and publish image
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/plainnvr:latest
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/plainnvr:latest
+            ghcr.io/${{ github.repository_owner }}/plainnvr:${{ steps.version.outputs.version }}

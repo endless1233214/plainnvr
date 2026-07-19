@@ -64,8 +64,6 @@ APP_PORT = int(os.environ.get("NVR_PORT", "8787"))
 DATA_DIR = Path(os.environ.get("NVR_DATA_DIR", "/data")).expanduser()
 RECORDINGS_DIR = Path(os.environ.get("NVR_RECORDINGS_DIR", "/recordings")).expanduser()
 STATIC_DIR = Path(os.environ.get("NVR_STATIC_DIR", "/app/static")).expanduser()
-LIVE_DIR = Path(os.environ.get("NVR_LIVE_DIR", str(DATA_DIR / "live"))).expanduser()
-RELAY_DIR = Path(os.environ.get("NVR_RELAY_DIR", str(DATA_DIR / "relay"))).expanduser()
 FFMPEG_BIN = os.environ.get("FFMPEG_BIN", "ffmpeg")
 FFPROBE_BIN = os.environ.get("FFPROBE_BIN", "ffprobe")
 GO2RTC_BIN = os.environ.get("GO2RTC_BIN", "go2rtc")
@@ -86,30 +84,8 @@ RTSP_READ_TIMEOUT_SECONDS = max(3, env_float("NVR_RTSP_READ_TIMEOUT_SECONDS", 15
 SCAN_INTERVAL_SECONDS = int(os.environ.get("NVR_SCAN_INTERVAL_SECONDS", "10"))
 RETENTION_INTERVAL_SECONDS = int(os.environ.get("NVR_RETENTION_INTERVAL_SECONDS", "3600"))
 DEFAULT_SEGMENT_SECONDS = int(os.environ.get("NVR_DEFAULT_SEGMENT_SECONDS", "60"))
-LIVE_HLS_SEGMENT_SECONDS = env_float("NVR_LIVE_HLS_SEGMENT_SECONDS", 1)
-LIVE_HLS_LIST_SIZE = int(os.environ.get("NVR_LIVE_HLS_LIST_SIZE", "4"))
-LIVE_HLS_DELETE_THRESHOLD = int(os.environ.get("NVR_LIVE_HLS_DELETE_THRESHOLD", "4"))
-LIVE_HLS_START_OFFSET_SECONDS = max(0, env_float("NVR_LIVE_HLS_START_OFFSET_SECONDS", 1))
-LIVE_HLS_IDLE_SECONDS = int(os.environ.get("NVR_LIVE_HLS_IDLE_SECONDS", "90"))
-LIVE_HLS_DEFAULT_FPS = int(os.environ.get("NVR_LIVE_HLS_DEFAULT_FPS", "10"))
-LIVE_HLS_READY_TIMEOUT_SECONDS = int(os.environ.get("NVR_LIVE_HLS_READY_TIMEOUT_SECONDS", "25"))
-LIVE_HLS_STALE_SECONDS = env_float("NVR_LIVE_HLS_STALE_SECONDS", max(4, LIVE_HLS_SEGMENT_SECONDS * 2))
-LIVE_HLS_SEGMENT_TYPE = os.environ.get("NVR_LIVE_HLS_SEGMENT_TYPE", "fmp4").strip().lower()
-if LIVE_HLS_SEGMENT_TYPE not in ("fmp4", "mpegts"):
-    LIVE_HLS_SEGMENT_TYPE = "fmp4"
-RELAY_HLS_SEGMENT_SECONDS = int(os.environ.get("NVR_RELAY_HLS_SEGMENT_SECONDS", "2"))
-RELAY_HLS_LIST_SIZE = int(os.environ.get("NVR_RELAY_HLS_LIST_SIZE", "12"))
-RELAY_HLS_DELETE_THRESHOLD = int(os.environ.get("NVR_RELAY_HLS_DELETE_THRESHOLD", "18"))
-RELAY_READY_TIMEOUT_SECONDS = int(os.environ.get("NVR_RELAY_READY_TIMEOUT_SECONDS", "20"))
-RELAY_HLS_STALE_SECONDS = max(
-    6,
-    env_float("NVR_RELAY_HLS_STALE_SECONDS", RELAY_HLS_SEGMENT_SECONDS * 6),
-)
 RECORDER_START_GRACE_SECONDS = max(15, env_float("NVR_RECORDER_START_GRACE_SECONDS", 45))
 RECORDER_STALE_SECONDS = max(30, env_float("NVR_RECORDER_STALE_SECONDS", 90))
-LIVE_AUDIO_GAIN = os.environ.get("NVR_LIVE_AUDIO_GAIN", "4.0").strip() or "4.0"
-if not re.match(r"^\d+(\.\d+)?$", LIVE_AUDIO_GAIN):
-    LIVE_AUDIO_GAIN = "4.0"
 NIGHT_SAMPLE_INTERVAL_SECONDS = int(os.environ.get("NVR_NIGHT_SAMPLE_INTERVAL_SECONDS", "20"))
 NIGHT_ON_SECONDS = int(os.environ.get("NVR_NIGHT_ON_SECONDS", "45"))
 NIGHT_OFF_SECONDS = int(os.environ.get("NVR_NIGHT_OFF_SECONDS", "180"))
@@ -943,14 +919,12 @@ def update_camera(camera_id, payload):
             manager.configure_camera(camera)
         recorder.restart(camera_id)
         relay.stop(camera_id)
-        live_hls.stop(camera_id)
     return camera
 
 
 def delete_camera(camera_id):
     recorder.stop(camera_id)
     relay.stop(camera_id)
-    live_hls.stop(camera_id)
     manager = globals().get("go2rtc")
     if manager:
         manager.delete_camera(camera_id)
@@ -1258,20 +1232,7 @@ class Go2RTCManager:
 go2rtc = Go2RTCManager()
 
 
-class RelayManager:
-    def __init__(self):
-        self.lock = threading.RLock()
-        self.processes = {}
-        self.generations = {}
-        self.restart_counts = {}
-        self.last_errors = {}
-
-    def stream_dir(self, camera_id):
-        return RELAY_DIR / camera_id
-
-    def playlist_path(self, camera_id):
-        return self.stream_dir(camera_id) / "source.m3u8"
-
+class Go2RTCSourceManager:
     def source_camera(self, camera):
         if go2rtc.can_restream(camera):
             try:
@@ -1281,251 +1242,36 @@ class RelayManager:
         raise RuntimeError("go2rtc restream is unavailable for this camera.")
 
     def status(self, cameras=None):
-        with self.lock:
-            states = {}
-            camera_ids = set(self.processes) | set(self.generations) | set(self.last_errors)
-            for camera_id in camera_ids:
-                entry = self.processes.get(camera_id)
-                process = entry["process"] if entry else None
-                playlist_age = self._playlist_age(camera_id)
-                running = bool(process and process.poll() is None)
-                healthy = running and playlist_age is not None and playlist_age <= RELAY_HLS_STALE_SECONDS
-                states[camera_id] = {
-                    "running": running,
-                    "healthy": healthy,
-                    "pid": process.pid if running else None,
-                    "started_at": entry.get("started_at") if entry else None,
-                    "last_error": self.last_errors.get(camera_id),
-                    "source": str(self.playlist_path(camera_id)),
-                    "playlist_age_seconds": round(playlist_age, 1) if playlist_age is not None else None,
-                    "generation": self.generations.get(camera_id, 0),
-                    "restart_count": self.restart_counts.get(camera_id, 0),
-                    "backend": "ffmpeg-hls",
-                }
+        states = {}
         for camera in cameras or []:
             if go2rtc.can_restream(camera):
                 states[camera["id"]] = go2rtc.camera_status(camera)
             else:
-                states.setdefault(
-                    camera["id"],
-                    {
-                        "running": go2rtc.running(),
-                        "healthy": False,
-                        "pid": go2rtc.process.pid if go2rtc.running() else None,
-                        "started_at": None,
-                        "last_error": go2rtc.last_error
-                        or "go2rtc cannot restream this camera.",
-                        "source": None,
-                        "generation": go2rtc.generations.get(camera["id"], 0),
-                        "restart_count": 0,
-                        "backend": "go2rtc",
-                        "stream": go2rtc.stream_name(camera),
-                    },
-                )
+                states[camera["id"]] = {
+                    "running": go2rtc.running(),
+                    "healthy": False,
+                    "pid": go2rtc.process.pid if go2rtc.running() else None,
+                    "started_at": None,
+                    "last_error": go2rtc.last_error or "go2rtc cannot restream this camera.",
+                    "source": None,
+                    "generation": go2rtc.generations.get(camera["id"], 0),
+                    "restart_count": 0,
+                    "backend": "go2rtc",
+                    "stream": go2rtc.stream_name(camera),
+                }
         return states
 
-    def ensure_running(self, camera):
-        camera_id = camera["id"]
-        restart_reason = None
-        with self.lock:
-            entry = self.processes.get(camera_id)
-            source_matches = bool(entry and entry.get("source_key") == self.source_key(camera))
-            process_running = bool(entry and entry["process"].poll() is None)
-            if source_matches and process_running and self._playlist_is_fresh(camera_id):
-                entry["last_seen"] = time.time()
-                return entry["generation"]
-            if source_matches and process_running:
-                startup_age = time.time() - entry.get("started_wall", 0)
-                if startup_age <= max(5, RELAY_READY_TIMEOUT_SECONDS) and self.wait_ready(camera_id, locked=True):
-                    entry["last_seen"] = time.time()
-                    return entry["generation"]
-            if entry:
-                playlist_age = self._playlist_age(camera_id)
-                if source_matches and process_running:
-                    age_text = f"{playlist_age:.1f}s" if playlist_age is not None else "missing"
-                    restart_reason = f"Relay stalled; playlist age {age_text}. Restarting source."
-                elif not source_matches:
-                    restart_reason = "Relay source changed. Restarting source."
-                else:
-                    restart_reason = "Relay exited. Restarting source."
-            self._stop_locked(camera_id)
-            output_dir = self.stream_dir(camera_id)
-            shutil.rmtree(output_dir, ignore_errors=True)
-            output_dir.mkdir(parents=True, exist_ok=True)
-            log_file = output_dir / "ffmpeg.log"
-            log_handle = log_file.open("w", encoding="utf-8", errors="replace")
-            try:
-                process = subprocess.Popen(
-                    self.build_command(camera, output_dir),
-                    stdout=subprocess.DEVNULL,
-                    stderr=log_handle,
-                )
-            finally:
-                log_handle.close()
-            generation = self.generations.get(camera_id, 0) + 1
-            self.generations[camera_id] = generation
-            if restart_reason:
-                self.restart_counts[camera_id] = self.restart_counts.get(camera_id, 0) + 1
-            self.processes[camera_id] = {
-                "process": process,
-                "started_at": iso_now(),
-                "started_wall": time.time(),
-                "last_seen": time.time(),
-                "source_key": self.source_key(camera),
-                "log": log_file,
-                "generation": generation,
-            }
-
-        if not self.wait_ready(camera_id):
-            detail = self.log_tail(camera_id)
-            message = f"Relay did not become ready for {camera.get('name') or camera_id}."
-            if detail:
-                message = f"{message} {detail}"
-            with self.lock:
-                self.last_errors[camera_id] = redact_camera_text(message, camera)
-                self._stop_locked(camera_id)
-            raise RuntimeError(message)
-        with self.lock:
-            self.last_errors.pop(camera_id, None)
-        if restart_reason:
-            add_event(camera_id, "warn", restart_reason)
-            add_event(camera_id, "info", "Relay recovered with fresh media.")
-        return generation
-
-    def source_key(self, camera):
-        return (
-            str(camera.get("rtsp_url") or "").strip(),
-            str(camera.get("audio_url") or "").strip(),
-            bool(camera.get("record_audio", True)),
-            str(camera.get("rtsp_transport") or "tcp"),
-        )
-
-    def build_command(self, camera, output_dir):
-        audio_url = str(camera.get("audio_url") or "").strip()
-        record_audio = bool(camera.get("record_audio", True))
-        command = [
-            FFMPEG_BIN,
-            "-hide_banner",
-            "-nostdin",
-            "-loglevel",
-            "warning",
-        ]
-        command.extend(ffmpeg_input_args(camera, low_latency=False))
-        if record_audio and audio_url:
-            command.extend(ffmpeg_input_args(camera, "audio_url", low_latency=False))
-        command.extend(["-map", "0:v:0"])
-        if record_audio:
-            command.extend(["-map", "1:a:0?"] if audio_url else ["-map", "0:a?"])
-        command.extend(["-sn", "-dn", "-c:v", "copy"])
-        if record_audio:
-            command.extend(["-c:a", "aac", "-b:a", "128k", "-ac", "2"])
-        else:
-            command.append("-an")
-        command.extend(
-            [
-                "-max_interleave_delta",
-                "0",
-                "-muxdelay",
-                "0",
-                "-muxpreload",
-                "0",
-                "-avoid_negative_ts",
-                "make_zero",
-                "-flush_packets",
-                "1",
-                "-f",
-                "hls",
-                "-hls_time",
-                str(max(1, RELAY_HLS_SEGMENT_SECONDS)),
-                "-hls_list_size",
-                str(max(3, RELAY_HLS_LIST_SIZE)),
-                "-hls_delete_threshold",
-                str(max(1, RELAY_HLS_DELETE_THRESHOLD)),
-                "-hls_flags",
-                "delete_segments+omit_endlist+program_date_time+independent_segments",
-                "-hls_segment_filename",
-                str(output_dir / "source_%05d.ts"),
-                str(output_dir / "source.m3u8"),
-            ]
-        )
-        return command
-
-    def wait_ready(self, camera_id, locked=False):
-        deadline = time.time() + max(5, RELAY_READY_TIMEOUT_SECONDS)
-        while time.time() < deadline:
-            if not locked:
-                with self.lock:
-                    entry = self.processes.get(camera_id)
-                    process = entry["process"] if entry else None
-            else:
-                entry = self.processes.get(camera_id)
-                process = entry["process"] if entry else None
-            if process is None or process.poll() is not None:
-                return False
-            if self._playlist_is_fresh(camera_id):
-                return True
-            time.sleep(0.2)
-        return False
-
-    def generation(self, camera_id):
-        with self.lock:
-            return self.generations.get(camera_id, 0)
-
-    def _playlist_age(self, camera_id, now=None):
-        try:
-            return (now or time.time()) - self.playlist_path(camera_id).stat().st_mtime
-        except OSError:
-            return None
-
-    def _playlist_is_fresh(self, camera_id):
-        playlist = self.playlist_path(camera_id)
-        try:
-            stat = playlist.stat()
-        except OSError:
-            return False
-        return stat.st_size > 0 and time.time() - stat.st_mtime <= RELAY_HLS_STALE_SECONDS
-
-    def log_tail(self, camera_id, line_count=20):
-        with self.lock:
-            entry = self.processes.get(camera_id)
-            log_file = entry.get("log") if entry else self.stream_dir(camera_id) / "ffmpeg.log"
-        try:
-            lines = Path(log_file).read_text(encoding="utf-8", errors="replace").splitlines()
-        except OSError:
-            return ""
-        return "\n".join(lines[-line_count:]).strip()
-
     def stop(self, camera_id):
-        with self.lock:
-            self._stop_locked(camera_id)
-            self.last_errors.pop(camera_id, None)
-
-    def _stop_locked(self, camera_id):
-        entry = self.processes.pop(camera_id, None)
-        if not entry:
-            return
-        process = entry["process"]
-        if process.poll() is None:
-            process.terminate()
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                process.kill()
+        go2rtc.delete_camera(camera_id)
 
     def reconcile(self, cameras):
         go2rtc.reconcile(cameras)
-        with self.lock:
-            for camera_id in list(self.processes.keys()):
-                self._stop_locked(camera_id)
 
     def shutdown(self):
-        with self.lock:
-            camera_ids = list(self.processes.keys())
-        for camera_id in camera_ids:
-            self.stop(camera_id)
+        return None
 
 
-relay = RelayManager()
+relay = Go2RTCSourceManager()
 
 
 def build_ffmpeg_command(camera, source_camera=None):
@@ -2273,99 +2019,6 @@ def run_ptz_command(camera, payload):
     raise RuntimeError(f"PTZ command failed: {last_error}")
 
 
-def build_live_hls_command(camera, output_dir, grayscale=False, include_audio=True, source_camera=None):
-    camera = source_camera or relay.source_camera(camera)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    audio_url = str(camera.get("audio_url") or "").strip()
-    rtsp_url = str(camera.get("rtsp_url") or "").strip()
-    record_audio = bool(camera.get("record_audio", True)) and bool(include_audio)
-    separate_audio = record_audio and audio_url and audio_url != rtsp_url
-    command = [
-        FFMPEG_BIN,
-        "-hide_banner",
-        "-nostdin",
-        "-loglevel",
-        "warning",
-    ]
-    command.extend(ffmpeg_input_args(camera, low_latency=True))
-    if separate_audio:
-        command.extend(ffmpeg_input_args(camera, "audio_url", low_latency=True))
-    command.extend(["-map", "0:v:0"])
-    if record_audio:
-        command.extend(["-map", "1:a:0?"] if separate_audio else ["-map", "0:a?"])
-    command.extend(["-sn", "-dn"])
-    video_filters = []
-    if grayscale:
-        video_filters.append("hue=s=0")
-    if video_filters:
-        command.extend(
-            [
-                "-vf",
-                ",".join(video_filters),
-                "-c:v",
-                "libx264",
-                "-preset",
-                "veryfast",
-                "-tune",
-                "zerolatency",
-                "-pix_fmt",
-                "yuv420p",
-                "-bf",
-                "0",
-            ]
-        )
-    else:
-        command.extend(["-c:v", "copy"])
-    if record_audio:
-        audio_filters = []
-        if LIVE_AUDIO_GAIN not in ("1", "1.0", "1.00"):
-            audio_filters.append(f"volume={LIVE_AUDIO_GAIN}")
-        audio_filters.append("aresample=async=1:first_pts=0")
-        command.extend(["-filter:a", ",".join(audio_filters)])
-        command.extend(["-c:a", "aac", "-b:a", "128k", "-ac", "2"])
-    else:
-        command.append("-an")
-    command.extend(
-        [
-            "-max_interleave_delta",
-            "0",
-            "-muxdelay",
-            "0",
-            "-muxpreload",
-            "0",
-            "-avoid_negative_ts",
-            "make_zero",
-            "-flush_packets",
-            "1",
-            "-f",
-            "hls",
-            "-hls_time",
-            f"{max(0.5, LIVE_HLS_SEGMENT_SECONDS):g}",
-            "-hls_list_size",
-            str(max(3, LIVE_HLS_LIST_SIZE)),
-            "-hls_delete_threshold",
-            str(max(1, LIVE_HLS_DELETE_THRESHOLD)),
-            "-hls_flags",
-            "delete_segments+omit_endlist+program_date_time+independent_segments+temp_file",
-        ]
-    )
-    if LIVE_HLS_SEGMENT_TYPE == "fmp4":
-        command.extend(
-            [
-                "-hls_segment_type",
-                "fmp4",
-                "-hls_fmp4_init_filename",
-                "init.mp4",
-                "-hls_segment_filename",
-                str(output_dir / "segment_%05d.m4s"),
-            ]
-        )
-    else:
-        command.extend(["-hls_segment_filename", str(output_dir / "segment_%05d.ts")])
-    command.append(str(output_dir / "stream.m3u8"))
-    return command
-
-
 class NightModeManager:
     def __init__(self):
         self.lock = threading.RLock()
@@ -2508,163 +2161,6 @@ def analyze_rgb_frame(data):
 
 
 night_modes = NightModeManager()
-
-
-class LiveHLSManager:
-    def __init__(self):
-        self.lock = threading.RLock()
-        self.processes = {}
-
-    def stream_dir(self, camera_id):
-        return LIVE_DIR / camera_id
-
-    def start(self, camera, grayscale=None, include_audio=True):
-        camera_id = camera["id"]
-        grayscale = grayscale_enabled(camera) if grayscale is None else bool(grayscale)
-        include_audio = bool(include_audio)
-        try:
-            source_camera = relay.source_camera(camera)
-        except (OSError, RuntimeError):
-            self.stop(camera_id)
-            raise
-        profile = (
-            grayscale,
-            include_audio,
-            source_camera.get("_relay_generation"),
-        )
-        with self.lock:
-            self._sweep_idle_locked()
-            entry = self.processes.get(camera_id)
-            if entry and entry["process"].poll() is None and entry.get("profile") == profile:
-                playlist = entry["dir"] / "stream.m3u8"
-                if self._playlist_is_fresh(playlist):
-                    entry["last_seen"] = time.time()
-                    return playlist
-            self._stop_locked(camera_id)
-            output_dir = self.stream_dir(camera_id)
-            shutil.rmtree(output_dir, ignore_errors=True)
-            output_dir.mkdir(parents=True, exist_ok=True)
-            log_file = output_dir / "ffmpeg.log"
-            log_handle = log_file.open("w", encoding="utf-8", errors="replace")
-            try:
-                process = subprocess.Popen(
-                    build_live_hls_command(
-                        camera,
-                        output_dir,
-                        grayscale=grayscale,
-                        include_audio=include_audio,
-                        source_camera=source_camera,
-                    ),
-                    stdout=subprocess.DEVNULL,
-                    stderr=log_handle,
-                )
-            finally:
-                log_handle.close()
-            self.processes[camera_id] = {
-                "process": process,
-                "dir": output_dir,
-                "last_seen": time.time(),
-                "profile": profile,
-                "log": log_file,
-            }
-
-        playlist = self.stream_dir(camera_id) / "stream.m3u8"
-        deadline = time.time() + max(5, LIVE_HLS_READY_TIMEOUT_SECONDS)
-        while time.time() < deadline:
-            with self.lock:
-                entry = self.processes.get(camera_id)
-                process = entry["process"] if entry else None
-            if process is None or process.poll() is not None:
-                entry_log = entry.get("log") if entry else None
-                log_tail = self._read_log_tail(entry_log)
-                self.stop(camera_id)
-                detail = f" {log_tail}" if log_tail else ""
-                raise RuntimeError(f"Live stream exited before it produced a playlist.{detail}")
-            if self._playlist_is_fresh(playlist):
-                return playlist
-            time.sleep(0.2)
-        log_tail = self.log_tail(camera_id)
-        detail = f" {log_tail}" if log_tail else ""
-        raise RuntimeError(f"Live stream did not become ready in time.{detail}")
-
-    def stop(self, camera_id):
-        with self.lock:
-            self._stop_locked(camera_id)
-
-    def touch(self, camera_id):
-        with self.lock:
-            entry = self.processes.get(camera_id)
-            playlist = entry["dir"] / "stream.m3u8" if entry else None
-            if entry and entry["process"].poll() is None and self._playlist_is_fresh(playlist):
-                entry["last_seen"] = time.time()
-                return True
-            if entry:
-                self._stop_locked(camera_id)
-            return False
-
-    def log_tail(self, camera_id, line_count=20):
-        with self.lock:
-            entry = self.processes.get(camera_id)
-            log_file = entry.get("log") if entry else self.stream_dir(camera_id) / "ffmpeg.log"
-        return self._read_log_tail(log_file, line_count=line_count)
-
-    def _read_log_tail(self, log_file, line_count=20):
-        if not log_file:
-            return ""
-        try:
-            lines = Path(log_file).read_text(encoding="utf-8", errors="replace").splitlines()
-        except OSError:
-            return ""
-        return "\n".join(lines[-line_count:]).strip()
-
-    def _playlist_is_fresh(self, playlist):
-        try:
-            stat = playlist.stat()
-        except OSError:
-            return False
-        return stat.st_size > 0 and time.time() - stat.st_mtime <= max(4, LIVE_HLS_STALE_SECONDS)
-
-    def _playlist_age(self, playlist, now):
-        try:
-            return now - playlist.stat().st_mtime
-        except OSError:
-            return None
-
-    def _sweep_idle_locked(self):
-        now = time.time()
-        for camera_id, entry in list(self.processes.items()):
-            playlist = entry["dir"] / "stream.m3u8"
-            playlist_age = self._playlist_age(playlist, now)
-            if (
-                entry["process"].poll() is not None
-                or now - entry["last_seen"] > LIVE_HLS_IDLE_SECONDS
-                or (
-                    playlist_age is not None
-                    and playlist_age > LIVE_HLS_STALE_SECONDS
-                )
-            ):
-                self._stop_locked(camera_id)
-
-    def _stop_locked(self, camera_id):
-        entry = self.processes.pop(camera_id, None)
-        if not entry:
-            return
-        process = entry["process"]
-        if process.poll() is None:
-            process.terminate()
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                process.kill()
-
-    def shutdown(self):
-        with self.lock:
-            camera_ids = list(self.processes.keys())
-        for camera_id in camera_ids:
-            self.stop(camera_id)
-
-
-live_hls = LiveHLSManager()
 
 
 class RecorderSupervisor:
@@ -3273,47 +2769,6 @@ def valid_stream_auth(handler, parsed):
         return True
     username, password = basic_auth_credentials(handler.headers)
     return bool(username and authenticate_user(username, password))
-
-
-def rewrite_live_playlist(text, playlist_path, token=""):
-    raw_lines = text.splitlines()
-    has_live_start = any(line.startswith("#EXT-X-START:") for line in raw_lines)
-    start_line = None
-    if LIVE_HLS_START_OFFSET_SECONDS > 0 and not has_live_start:
-        start_line = f"#EXT-X-START:TIME-OFFSET=-{LIVE_HLS_START_OFFSET_SECONDS:g},PRECISE=YES"
-
-    version_present = any(line.startswith("#EXT-X-VERSION:") for line in raw_lines)
-    lines = []
-    start_inserted = False
-
-    def rewrite_uri(uri):
-        if not re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", uri) and not uri.startswith("/"):
-            uri = f"{playlist_path}/{uri}"
-        if token:
-            separator = "&" if "?" in uri else "?"
-            uri = f"{uri}{separator}token={quote(token)}"
-        return uri
-
-    for line in raw_lines:
-        if line.startswith("#EXT-X-MAP:"):
-            match = re.search(r'URI="([^"]+)"', line)
-            if match:
-                uri = rewrite_uri(match.group(1))
-                line = line[: match.start(1)] + uri + line[match.end(1) :]
-        elif line and not line.startswith("#"):
-            line = rewrite_uri(line)
-        lines.append(line)
-        if start_line and not start_inserted and (
-            line.startswith("#EXT-X-VERSION:") or (line == "#EXTM3U" and not version_present)
-        ):
-            lines.append(start_line)
-            start_inserted = True
-
-    if start_line and not start_inserted:
-        index = 1 if lines and lines[0] == "#EXTM3U" else 0
-        lines.insert(index, start_line)
-
-    return "\n".join(lines) + "\n"
 
 
 class NvrHandler(SimpleHTTPRequestHandler):
@@ -4145,8 +3600,6 @@ class NvrHandler(SimpleHTTPRequestHandler):
 def main():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
-    LIVE_DIR.mkdir(parents=True, exist_ok=True)
-    RELAY_DIR.mkdir(parents=True, exist_ok=True)
     init_db()
     go2rtc.start(list_cameras())
     recorder.start()
@@ -4162,9 +3615,7 @@ def main():
     try:
         server.serve_forever()
     finally:
-        live_hls.shutdown()
         recorder.shutdown()
-        relay.shutdown()
         go2rtc.shutdown()
         server.server_close()
 
