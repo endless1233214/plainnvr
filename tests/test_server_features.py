@@ -59,6 +59,12 @@ class ServerFeatureTests(unittest.TestCase):
         self.assertNotIn("probe-secret", redacted)
         self.assertIn("rtsp://<credentials>@127.0.0.1:9/test", redacted)
 
+    def test_view_rotation_allows_quarter_turns_only(self):
+        self.assertEqual(server.normalize_view_rotation("180"), 180)
+        self.assertEqual(server.normalize_view_rotation(270), 270)
+        with self.assertRaises(ValueError):
+            server.normalize_view_rotation(45)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -3,7 +3,7 @@ import { VideoRTC } from "./vendor/go2rtc/video-rtc.js";
 class PlainNVRLivePlayer extends VideoRTC {
   constructor() {
     super();
-    this.mode = "mse,hls,mjpeg";
+    this.mode = "mse,hls";
     this.media = "video,audio";
     this.RECONNECT_TIMEOUT = 3000;
     this.ready = false;
@@ -32,7 +32,7 @@ class PlainNVRLivePlayer extends VideoRTC {
   onopen() {
     const modes = super.onopen();
     this.onmessage.plainnvr = (message) => {
-      if (["mse", "hls", "mp4", "mjpeg"].includes(message.type)) {
+      if (["mse", "hls", "mp4"].includes(message.type)) {
         this.currentMode = message.type;
         this.dispatchState("mode", message.type);
       } else if (message.type === "error") {

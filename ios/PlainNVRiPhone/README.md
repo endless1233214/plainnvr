@@ -9,7 +9,7 @@ connection.
 
 - Sign in with an existing PlainNVR account
 - View camera status, recorder state, disk usage, and recorder events
-- Play HLS or MJPEG according to each camera's live-view setting
+- Play go2rtc-backed HLS live video
 - Restart or pause a selected live stream
 - Use capability-aware PTZ controls, press-and-hold ONVIF movement, home
   position, hardware or digital zoom, and discovered presets
@@ -18,9 +18,6 @@ connection.
 - Start, pause, or restart an individual camera recorder
 - Browse recording dates and MP4 segments
 - Play, share, or save recording clips to Photos
-
-The grayscale option is available for MJPEG live views. It changes only the
-viewer and does not alter stored recordings.
 
 ## Requirements
 
@@ -56,18 +53,10 @@ endpoints:
 - `POST /api/cameras/<id>/live/<action>` with `stop` or `restart` for
   live-stream recovery
 - `POST /api/cameras/<id>/ptz` for PTZ movement, stop, home, and preset commands
-- `GET /live/<camera_id>/stream.m3u8?token=<stream_token>` for HLS playback
-- `GET /ha/<camera_id>/stream.mjpeg?token=<stream_token>` for configured MJPEG
+- `GET /live/<camera_id>/stream.m3u8?token=<stream_token>` for go2rtc HLS
   playback
 - `GET /media/<camera_id>/<segment>.mp4?token=<stream_token>` for recording
   playback, sharing, and download
-
-HLS is the default because `AVPlayer` can play audio and video together. MJPEG
-is video-only and is used when that camera's live-view mode is set to MJPEG.
-
-PlainNVR applies `NVR_LIVE_AUDIO_GAIN=4.0` to live HLS audio by default. Lower
-the value when a microphone distorts or raise it when the source remains too
-quiet.
 
 The HLS player keeps a small forward buffer, seeks toward the live edge when
 latency grows, and reopens the stream when playback stops advancing.

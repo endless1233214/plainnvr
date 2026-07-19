@@ -12,14 +12,13 @@ Home Assistant, and the bundled go2rtc live-view layer.
 
 - Continuous or weekly scheduled recording
 - Configurable segment length and retention per camera
-- Low-latency web live view through go2rtc MSE
-- Supervised HLS and MJPEG fallback streams
+- Low-latency web live view through go2rtc MSE/HLS
 - ONVIF service, profile, stream, and PTZ capability discovery
 - Press-and-hold ONVIF movement, home position, hardware zoom, and presets
 - Downloadable redacted camera compatibility reports
-- Home Assistant HLS, MJPEG, and snapshot endpoints
+- Optional Home Assistant HLS and snapshot bridge
 - Native SwiftUI companion app for iPhone
-- Recorder, relay, and frozen-stream health monitoring
+- Recorder, go2rtc, and frozen-stream health monitoring
 
 ## Quick Start With Docker
 
@@ -64,15 +63,14 @@ the required media endpoints through its authenticated same-origin proxy.
 
 1. Open the **Cameras** panel and select **New**.
 2. Enter a descriptive name and the camera's main RTSP URL.
-3. Leave **Audio URL** empty when video and audio share the same RTSP stream.
-4. Select **Test Stream** and confirm that the probe detects the expected
+3. Select **Test Stream** and confirm that the probe detects the expected
    codecs.
-5. Choose the segment length, retention period, RTSP transport, and live-view
-   mode.
-6. Leave **Enabled** selected to start the recorder after saving. Select
+4. Choose the segment length, retention period, RTSP transport, and view
+   rotation.
+5. Leave **Enabled** selected to start the recorder after saving. Select
    **Audio** when audio should be recorded.
-7. Use **Always** for continuous recording or configure a weekly schedule.
-8. Select **Save Camera**.
+6. Use **Always** for continuous recording or configure a weekly schedule.
+7. Select **Save Camera**.
 
 Common RTSP URL shapes include:
 
@@ -82,9 +80,8 @@ rtsp://USERNAME:PASSWORD@CAMERA-HOST:554/h264Preview_01_main
 rtsp://USERNAME:PASSWORD@CAMERA-HOST:554/cam/realmonitor?channel=1&subtype=0
 ```
 
-The path varies by manufacturer and firmware. When a camera provides a separate
-audio-only stream, place the video stream in **Stream URL** and the audio stream
-in **Audio URL**.
+The path varies by manufacturer and firmware. PlainNVR's go2rtc-only restream
+path expects audio to be present on the main camera stream.
 
 ## Run Directly With Python
 
@@ -99,9 +96,9 @@ python3 app/server.py
 
 Open `http://localhost:8787`.
 
-The Python-only setup uses PlainNVR's FFmpeg live-stream fallback when a go2rtc
-binary is not installed. The Docker image includes the pinned go2rtc version
-used by the project.
+The Docker image includes the pinned go2rtc version used by the project. Direct
+Python runs also need a `go2rtc` binary in `PATH` for live viewing and
+restream-based recording.
 
 The initial administrator can also be created non-interactively:
 
@@ -131,50 +128,28 @@ the supplied YAML with datasets from the target TrueNAS system.
 
 ## Live Streaming
 
-The Docker image uses go2rtc as the primary live and restream layer. Recording,
+The Docker image uses go2rtc as the live and restream layer. Recording,
 snapshots, and live viewers can share a local RTSP restream instead of opening a
 separate connection to the camera for every consumer.
 
 The web viewer prefers go2rtc MSE for native frame rate, source resolution, and
-low latency. It automatically falls back through PlainNVR HLS and MJPEG when
-go2rtc is unavailable or the browser cannot use the preferred stream.
+low latency, with go2rtc HLS for clients that need an HLS URL.
 
-The iPhone app and Home Assistant HLS endpoint use PlainNVR's supervised HLS
-output. That output reads from the local go2rtc restream when possible, reducing
-camera connections even when the client cannot use browser MSE.
+The iPhone app and optional Home Assistant bridge use the go2rtc-backed HLS
+endpoint at `/live/<camera_id>/stream.m3u8`.
 
 PlainNVR checks for fresh media output rather than only checking whether a
-process exists. A stalled relay, recorder, playlist, or viewer is restarted
+process exists. A stalled go2rtc restream, recorder, or viewer is restarted
 instead of leaving a frozen final frame.
 
 ### Live Stream Tuning
 
-HLS uses fragmented MP4 segments by default. Set
-`NVR_LIVE_HLS_SEGMENT_TYPE=mpegts` for classic MPEG-TS segments.
+go2rtc and recorder supervision can be tuned with:
 
-The main HLS settings are:
-
-- `NVR_LIVE_HLS_SEGMENT_SECONDS`
-- `NVR_LIVE_HLS_LIST_SIZE`
-- `NVR_LIVE_HLS_DELETE_THRESHOLD`
-- `NVR_LIVE_HLS_START_OFFSET_SECONDS`
-- `NVR_LIVE_HLS_READY_TIMEOUT_SECONDS`
-- `NVR_LIVE_HLS_STALE_SECONDS`
-- `NVR_LIVE_AUDIO_GAIN`
-
-Relay and recorder supervision can be tuned with:
-
-- `NVR_RELAY_HLS_SEGMENT_SECONDS`
-- `NVR_RELAY_HLS_LIST_SIZE`
-- `NVR_RELAY_HLS_DELETE_THRESHOLD`
-- `NVR_RELAY_READY_TIMEOUT_SECONDS`
-- `NVR_RELAY_HLS_STALE_SECONDS`
+- `NVR_GO2RTC_WEBRTC_CANDIDATES`
 - `NVR_RTSP_READ_TIMEOUT_SECONDS`
 - `NVR_RECORDER_START_GRACE_SECONDS`
 - `NVR_RECORDER_STALE_SECONDS`
-
-The grayscale option affects only the selected live viewer. Stored recordings
-remain unchanged.
 
 ## ONVIF And PTZ
 
@@ -233,16 +208,18 @@ levels and verification procedure.
 
 ## Home Assistant
 
-Each saved camera exposes local HLS, MJPEG, and snapshot endpoints:
+The Home Assistant bridge is optional. Enable **Home Assistant** in **Server
+Settings** before using the generated camera URLs.
+
+Enabled cameras expose a go2rtc-backed HLS stream and snapshot endpoint:
 
 ```text
 http://PLAINNVR-HOST:8787/live/CAMERA_ID/stream.m3u8
-http://PLAINNVR-HOST:8787/ha/CAMERA_ID/stream.mjpeg
 http://PLAINNVR-HOST:8787/ha/CAMERA_ID/snapshot.jpg
 ```
 
-Use HLS when the integration or client accepts it. MJPEG is video-only and can
-be used with Home Assistant's MJPEG IP Camera integration.
+Use Home Assistant's Generic Camera integration with `stream_source` set to the
+HLS URL and `still_image_url` set to the snapshot URL.
 
 After a camera is saved, its editor displays complete URLs and example YAML.
 Generated URLs include a private stream token so Home Assistant can read media
@@ -252,8 +229,8 @@ authentication when an integration requires a username and password.
 ## iPhone Companion App
 
 [`ios/PlainNVRiPhone`](ios/PlainNVRiPhone) contains the source-distributed
-SwiftUI companion app. It supports authenticated server access, live HLS or
-MJPEG viewing, capability-aware PTZ controls, recorder controls, recording
+SwiftUI companion app. It supports authenticated server access, go2rtc HLS live
+viewing, capability-aware PTZ controls, recorder controls, recording
 browsing, and MP4 sharing or saving.
 
 See the [iPhone app README](ios/PlainNVRiPhone/README.md) for Xcode installation
@@ -276,8 +253,7 @@ filesystem overhead.
 - H.265 can record successfully but does not play in every browser.
 - WebRTC requires reachable port `8555` and suitable ICE candidates; MSE is the
   default low-latency web path.
-- A separate audio URL uses the FFmpeg relay until multi-source go2rtc
-  composition is configured.
+- Separate audio-only URLs are not supported in the go2rtc-only restream path.
 - Recordings are timestamped MP4 files stored under each camera directory.
 - The playback panel displays one date at a time with recording coverage and
   available-date summaries.

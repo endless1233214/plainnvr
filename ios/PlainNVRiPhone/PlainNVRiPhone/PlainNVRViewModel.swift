@@ -12,7 +12,6 @@ enum PlainNVRConnectionState: Equatable {
 @MainActor
 final class PlainNVRViewModel: ObservableObject {
     private static let serverDefaultsKey = "PlainNVRServerAddress"
-    private static let liveGrayscaleEnabledDefaultsKey = "PlainNVRLiveGrayscaleEnabled"
     private static let defaultServerAddress = "http://192.168.1.172:8787"
 
     @Published var serverAddress: String
@@ -30,11 +29,6 @@ final class PlainNVRViewModel: ObservableObject {
     @Published var activeSegment: RecordingSegment?
     @Published var livePlaybackEnabled = true
     @Published var liveStatusMessage: String?
-    @Published var liveGrayscaleEnabled: Bool {
-        didSet {
-            UserDefaults.standard.set(liveGrayscaleEnabled, forKey: Self.liveGrayscaleEnabledDefaultsKey)
-        }
-    }
     @Published private(set) var liveReloadID = 0
 
     private var client: PlainNVRClient?
@@ -47,7 +41,6 @@ final class PlainNVRViewModel: ObservableObject {
         } else {
             serverAddress = savedServerAddress ?? Self.defaultServerAddress
         }
-        liveGrayscaleEnabled = UserDefaults.standard.bool(forKey: Self.liveGrayscaleEnabledDefaultsKey)
     }
 
     var cameras: [Camera] {
@@ -254,11 +247,7 @@ final class PlainNVRViewModel: ObservableObject {
     }
 
     func diagnoseLiveStream() async {
-        if selectedCamera?.usesLiveHLS == true {
-            liveStatusMessage = "Using HLS from PlainNVR. H.264 video can stay compressed for lower CPU and smoother PTZ."
-        } else {
-            liveStatusMessage = "Using MJPEG video from PlainNVR. MJPEG does not carry audio."
-        }
+        liveStatusMessage = "Using go2rtc HLS from PlainNVR."
     }
 
     func updateLivePlayerStatus(_ message: String?) {
@@ -266,7 +255,7 @@ final class PlainNVRViewModel: ObservableObject {
     }
 
     func updateLivePlayerFailure(_ message: String) {
-        liveStatusMessage = "\(message)\nUsing \(selectedCamera?.liveModeLabel ?? "live video") from PlainNVR."
+        liveStatusMessage = "\(message)\nUsing go2rtc HLS from PlainNVR."
     }
 
     func setRecorderRunning(_ running: Bool, camera: Camera) async {

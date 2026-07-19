@@ -6,6 +6,7 @@ struct SegmentPlayerView: View {
     let url: URL
     let title: String
     let segment: RecordingSegment
+    let rotationDegrees: Int
 
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var viewModel: PlainNVRViewModel
@@ -21,7 +22,18 @@ struct SegmentPlayerView: View {
     }
 
     private var playerView: some View {
-        VideoPlayer(player: player)
+        GeometryReader { proxy in
+            let rotation = normalizedRotation(rotationDegrees)
+            let fitScale = rotationFitScale(rotation, size: proxy.size)
+
+            ZStack {
+                Color.black
+
+                VideoPlayer(player: player)
+                    .rotationEffect(.degrees(Double(rotation)))
+                    .scaleEffect(fitScale)
+            }
+        }
             .background(.black)
             .ignoresSafeArea(edges: .bottom)
             .navigationTitle(title)
@@ -126,6 +138,7 @@ struct LivePlayerView: View {
     let url: URL
     var isMuted = false
     var volume: Float = 0.85
+    var rotationDegrees = 0
     var onStatus: (String?) -> Void = { _ in }
     var onFailure: (String) -> Void = { _ in }
 
@@ -148,7 +161,9 @@ struct LivePlayerView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let scale = clampedScale(baseScale * gestureScale)
+            let rotation = normalizedRotation(rotationDegrees)
+            let fitScale = rotationFitScale(rotation, size: proxy.size)
+            let scale = clampedScale(baseScale * gestureScale) * fitScale
             let offset = clampedOffset(
                 CGSize(
                     width: baseOffset.width + dragOffset.width,
@@ -162,6 +177,7 @@ struct LivePlayerView: View {
                 Color.black
 
                 VideoPlayer(player: player)
+                    .rotationEffect(.degrees(Double(rotation)))
                     .scaleEffect(scale)
                     .offset(offset)
             }
@@ -392,6 +408,22 @@ struct LivePlayerView: View {
         baseScale = 1
         baseOffset = .zero
     }
+}
+
+private func normalizedRotation(_ value: Int) -> Int {
+    switch value {
+    case 90, 180, 270:
+        return value
+    default:
+        return 0
+    }
+}
+
+private func rotationFitScale(_ rotation: Int, size: CGSize) -> CGFloat {
+    guard (rotation == 90 || rotation == 270), size.width > 0, size.height > 0 else {
+        return 1
+    }
+    return max(0.35, min(size.width, size.height) / max(size.width, size.height))
 }
 
 struct ShareItem: Identifiable {

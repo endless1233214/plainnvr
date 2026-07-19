@@ -319,15 +319,12 @@ struct LiveView: View {
 
     @ViewBuilder
     private func landscapeSurface(camera: Camera, url: URL) -> some View {
-        if camera.usesLiveHLS {
-            LivePlayerView(
-                url: url,
-                onStatus: viewModel.updateLivePlayerStatus,
-                onFailure: viewModel.updateLivePlayerFailure
-            )
-        } else {
-            MJPEGStreamView(url: url, grayscale: viewModel.liveGrayscaleEnabled)
-        }
+        LivePlayerView(
+            url: url,
+            rotationDegrees: camera.normalizedViewRotation,
+            onStatus: viewModel.updateLivePlayerStatus,
+            onFailure: viewModel.updateLivePlayerFailure
+        )
     }
 
     private func applyLandscapeDigitalZoom(_ action: String) {
@@ -379,10 +376,6 @@ struct LiveControlsView: View {
                 .buttonStyle(.bordered)
             }
 
-            if viewModel.selectedCamera?.usesLiveHLS != true {
-                Toggle("Grayscale", isOn: $viewModel.liveGrayscaleEnabled)
-                    .toggleStyle(.switch)
-            }
         }
         .padding(12)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
@@ -572,15 +565,12 @@ struct LivePlayerSurface: View {
 
     @ViewBuilder
     private func liveSurface(url: URL) -> some View {
-        if camera.usesLiveHLS {
-            LivePlayerView(
-                url: url,
-                onStatus: viewModel.updateLivePlayerStatus,
-                onFailure: viewModel.updateLivePlayerFailure
-            )
-        } else {
-            MJPEGStreamView(url: url, grayscale: viewModel.liveGrayscaleEnabled)
-        }
+        LivePlayerView(
+            url: url,
+            rotationDegrees: camera.normalizedViewRotation,
+            onStatus: viewModel.updateLivePlayerStatus,
+            onFailure: viewModel.updateLivePlayerFailure
+        )
     }
 
     private func applyDigitalZoom(_ action: String) {
@@ -742,7 +732,12 @@ struct RecordingsView: View {
             }
             .sheet(item: $viewModel.activeSegment) { segment in
                 if let url = viewModel.playbackURL(for: segment) {
-                    SegmentPlayerView(url: url, title: PlainNVRFormat.displayTime(segment.start), segment: segment)
+                    SegmentPlayerView(
+                        url: url,
+                        title: PlainNVRFormat.displayTime(segment.start),
+                        segment: segment,
+                        rotationDegrees: viewModel.cameras.first { $0.id == segment.cameraId }?.normalizedViewRotation ?? 0
+                    )
                 } else {
                     ContentUnavailableView("Video Unavailable", systemImage: "exclamationmark.triangle")
                 }

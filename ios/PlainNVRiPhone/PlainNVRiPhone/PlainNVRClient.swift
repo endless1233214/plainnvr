@@ -151,7 +151,7 @@ final class PlainNVRClient {
         streamToken: String,
         reloadID: Int
     ) -> URL? {
-        let path = camera.usesLiveHLS ? "/live/\(camera.id)/stream.m3u8" : "/ha/\(camera.id)/stream.mjpeg"
+        let path = "/live/\(camera.id)/stream.m3u8"
         guard let rootURL = absoluteURL(for: path),
               var components = URLComponents(url: rootURL, resolvingAgainstBaseURL: false)
         else {

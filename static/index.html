@@ -59,10 +59,6 @@
             <input id="rtspUrl" autocomplete="off" placeholder="rtsp://user:pass@camera-ip:554/stream1" required />
           </label>
           <label>
-            Audio URL
-            <input id="audioUrl" autocomplete="off" placeholder="rtsp://user:pass@camera-ip:8554/cam-audio" />
-          </label>
-          <label>
             Segment Length
             <select id="segmentSeconds">
               <option value="30">30 seconds</option>
@@ -83,10 +79,12 @@
             </select>
           </label>
           <label>
-            Live View
-            <select id="liveViewMode">
-              <option value="hls" selected>HLS / H.264</option>
-              <option value="mjpeg">MJPEG</option>
+            Rotation
+            <select id="viewRotation">
+              <option value="0" selected>0 deg</option>
+              <option value="90">90 deg</option>
+              <option value="180">180 deg</option>
+              <option value="270">270 deg</option>
             </select>
           </label>
           <div class="toggles">
@@ -201,11 +199,6 @@
           <fieldset id="haPanel" class="ha-panel" hidden>
             <legend>Home Assistant</legend>
             <label>
-              MJPEG URL
-              <input id="haMjpegUrl" readonly />
-            </label>
-            <button id="copyHaMjpegUrl" type="button">Copy MJPEG URL</button>
-            <label>
               HLS URL
               <input id="haHlsUrl" readonly />
             </label>
@@ -235,7 +228,7 @@
               Camera
               <select id="liveCamera"></select>
             </label>
-            <span id="liveSourceLabel" class="live-source-label">HLS / H.264</span>
+            <span id="liveSourceLabel" class="live-source-label">go2rtc</span>
             <button id="startLive" type="button">Start</button>
             <button id="stopLive" type="button">Stop</button>
           </div>
@@ -267,8 +260,6 @@
           </div>
           <div class="live-frame">
             <plainnvr-live-player id="go2rtcLive" hidden></plainnvr-live-player>
-            <video id="liveVideo" controls playsinline muted></video>
-            <img id="liveImage" alt="" />
             <div id="liveEmpty" class="empty">No live stream selected.</div>
           </div>
         </section>
@@ -300,6 +291,20 @@
           <h2>Events</h2>
         </div>
         <div id="events" class="events"></div>
+      </section>
+
+      <section class="panel settings-panel">
+        <div class="panel-heading">
+          <h2>Server Settings</h2>
+          <span id="settingsState" class="muted"></span>
+        </div>
+        <form id="serverSettingsForm" class="server-settings">
+          <label>
+            <input id="homeAssistantEnabled" type="checkbox" />
+            Home Assistant
+          </label>
+          <button type="submit">Save Settings</button>
+        </form>
       </section>
 
       <section class="panel users-panel">

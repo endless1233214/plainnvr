@@ -107,7 +107,6 @@ RELAY_HLS_STALE_SECONDS = max(
 )
 RECORDER_START_GRACE_SECONDS = max(15, env_float("NVR_RECORDER_START_GRACE_SECONDS", 45))
 RECORDER_STALE_SECONDS = max(30, env_float("NVR_RECORDER_STALE_SECONDS", 90))
-MJPEG_STALE_SECONDS = max(5, env_float("NVR_MJPEG_STALE_SECONDS", 15))
 LIVE_AUDIO_GAIN = os.environ.get("NVR_LIVE_AUDIO_GAIN", "4.0").strip() or "4.0"
 if not re.match(r"^\d+(\.\d+)?$", LIVE_AUDIO_GAIN):
     LIVE_AUDIO_GAIN = "4.0"
@@ -355,6 +354,7 @@ def init_db():
                 record_audio INTEGER NOT NULL DEFAULT 1,
                 grayscale_mode TEXT NOT NULL DEFAULT 'off',
                 live_view_mode TEXT NOT NULL DEFAULT 'hls',
+                view_rotation INTEGER NOT NULL DEFAULT 0,
                 rtsp_transport TEXT NOT NULL DEFAULT 'tcp',
                 ptz_enabled INTEGER NOT NULL DEFAULT 0,
                 ptz_type TEXT NOT NULL DEFAULT 'onvif',
@@ -426,6 +426,8 @@ def ensure_camera_schema(conn):
         conn.execute("ALTER TABLE cameras ADD COLUMN grayscale_mode TEXT NOT NULL DEFAULT 'off'")
     if "live_view_mode" not in columns:
         conn.execute("ALTER TABLE cameras ADD COLUMN live_view_mode TEXT NOT NULL DEFAULT 'hls'")
+    if "view_rotation" not in columns:
+        conn.execute("ALTER TABLE cameras ADD COLUMN view_rotation INTEGER NOT NULL DEFAULT 0")
     if "rtsp_transport" not in columns:
         conn.execute("ALTER TABLE cameras ADD COLUMN rtsp_transport TEXT NOT NULL DEFAULT 'tcp'")
     if "ptz_enabled" not in columns:
@@ -485,6 +487,54 @@ def get_stream_token():
         return STREAM_TOKEN_OVERRIDE
     with db_conn() as conn:
         return ensure_stream_token(conn)
+
+
+def setting_bool(value, default=False):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    raw = str(value or "").strip().lower()
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    if raw in ("0", "false", "no", "off"):
+        return False
+    try:
+        return bool(json.loads(raw))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return default
+
+
+def get_app_settings():
+    settings = {"home_assistant_enabled": False}
+    with db_conn() as conn:
+        row = conn.execute(
+            "SELECT value FROM app_settings WHERE key = 'home_assistant_enabled'"
+        ).fetchone()
+    if row:
+        settings["home_assistant_enabled"] = setting_bool(row["value"])
+    return settings
+
+
+def home_assistant_enabled():
+    return bool(get_app_settings().get("home_assistant_enabled"))
+
+
+def update_app_settings(payload):
+    settings = get_app_settings()
+    if "home_assistant_enabled" in payload:
+        settings["home_assistant_enabled"] = setting_bool(payload.get("home_assistant_enabled"))
+    now = iso_now()
+    with db_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO app_settings (key, value, updated_at)
+            VALUES ('home_assistant_enabled', ?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+            """,
+            (json.dumps(bool(settings["home_assistant_enabled"])), now),
+        )
+    return settings
 
 
 def cleanup_expired_sessions(conn):
@@ -596,6 +646,7 @@ def camera_from_row(row):
     data["audio_url"] = data.get("audio_url") or ""
     data["grayscale_mode"] = normalize_grayscale_mode(data.get("grayscale_mode"))
     data["live_view_mode"] = normalize_live_view_mode(data.get("live_view_mode"))
+    data["view_rotation"] = normalize_view_rotation(data.get("view_rotation"))
     data["ptz_type"] = normalize_ptz_type(data.get("ptz_type"))
     data["ptz_url"] = data.get("ptz_url") or ""
     data["ptz_profile_token"] = normalize_ptz_profile_token(data.get("ptz_profile_token"))
@@ -680,10 +731,17 @@ def validate_camera_payload(payload, partial=False):
             errors["rtsp_url"] = "Use an rtsp://, rtsps://, http://, or https:// stream URL."
     if audio_url and not audio_url.startswith(STREAM_URL_PREFIXES):
         errors["audio_url"] = "Use an rtsp://, rtsps://, http://, or https:// audio URL."
+    if audio_url and normalize_bool(payload.get("record_audio", True)):
+        errors["audio_url"] = "Separate audio URLs are not supported by the go2rtc-only restream path."
     if "grayscale_mode" in payload and normalize_grayscale_mode(payload.get("grayscale_mode")) != str(payload.get("grayscale_mode") or "").strip().lower():
         errors["grayscale_mode"] = "Use off, always, or auto."
-    if "live_view_mode" in payload and normalize_live_view_mode(payload.get("live_view_mode")) != str(payload.get("live_view_mode") or "").strip().lower():
-        errors["live_view_mode"] = "Use hls or mjpeg."
+    if "live_view_mode" in payload and str(payload.get("live_view_mode") or "hls").strip().lower() != "hls":
+        errors["live_view_mode"] = "Use hls."
+    if "view_rotation" in payload:
+        try:
+            normalize_view_rotation(payload.get("view_rotation"))
+        except ValueError:
+            errors["view_rotation"] = "Use 0, 90, 180, or 270."
     ptz_type = normalize_ptz_type(payload.get("ptz_type"))
     if ptz_url and ptz_type == "onvif" and not ptz_url.startswith(CONTROL_URL_PREFIXES):
         errors["ptz_url"] = "Use an http:// or https:// ONVIF endpoint URL."
@@ -713,7 +771,17 @@ def normalize_grayscale_mode(value):
 
 def normalize_live_view_mode(value):
     value = str(value or "hls").strip().lower()
-    return value if value in ("hls", "mjpeg") else "hls"
+    return "hls"
+
+
+def normalize_view_rotation(value):
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Invalid view rotation.") from exc
+    if parsed not in (0, 90, 180, 270):
+        raise ValueError("Invalid view rotation.")
+    return parsed
 
 
 def normalize_ptz_type(value):
@@ -741,6 +809,10 @@ def normalize_ptz_speed(value):
     return round(parsed, 2)
 
 
+def stable_camera_value(value):
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+
+
 def create_camera(payload):
     validate_camera_payload(payload)
     now = iso_now()
@@ -757,9 +829,9 @@ def create_camera(payload):
             INSERT INTO cameras (
                 id, name, slug, rtsp_url, audio_url, enabled, segment_seconds, retention_days,
                 schedule_json, record_audio, grayscale_mode, live_view_mode, rtsp_transport, ptz_enabled, ptz_type,
-                ptz_url, ptz_profile_token, ptz_zoom_mode, ptz_speed, created_at, updated_at
+                view_rotation, ptz_url, ptz_profile_token, ptz_zoom_mode, ptz_speed, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 camera_id,
@@ -777,6 +849,7 @@ def create_camera(payload):
                 payload.get("rtsp_transport", "tcp") if payload.get("rtsp_transport") in ("tcp", "udp") else "tcp",
                 normalize_bool(payload.get("ptz_enabled", False)),
                 ptz_type,
+                normalize_view_rotation(payload.get("view_rotation", 0)),
                 str(payload.get("ptz_url", "")).strip(),
                 normalize_ptz_profile_token(payload.get("ptz_profile_token")),
                 normalize_ptz_zoom_mode(payload.get("ptz_zoom_mode")),
@@ -803,6 +876,23 @@ def update_camera(camera_id, payload):
     retention_days = max(1, int(merged.get("retention_days") or 14))
     ptz_type = normalize_ptz_type(merged.get("ptz_type"))
     ptz_speed = normalize_ptz_speed(merged.get("ptz_speed", DEFAULT_PTZ_SPEED))
+    restart_fields = (
+        "name",
+        "rtsp_url",
+        "audio_url",
+        "enabled",
+        "segment_seconds",
+        "retention_days",
+        "schedule",
+        "record_audio",
+        "grayscale_mode",
+        "live_view_mode",
+        "rtsp_transport",
+    )
+    restart_required = any(
+        stable_camera_value(existing.get(key)) != stable_camera_value(merged.get(key))
+        for key in restart_fields
+    )
     discovery_changed = any(
         str(existing.get(key) or "") != str(merged.get(key) or "")
         for key in ("rtsp_url", "ptz_url", "ptz_profile_token", "ptz_type")
@@ -816,8 +906,8 @@ def update_camera(camera_id, payload):
             UPDATE cameras
             SET name = ?, slug = ?, rtsp_url = ?, audio_url = ?, enabled = ?, segment_seconds = ?,
                 retention_days = ?, schedule_json = ?, record_audio = ?, grayscale_mode = ?,
-                live_view_mode = ?, rtsp_transport = ?, ptz_enabled = ?, ptz_type = ?, ptz_url = ?, ptz_profile_token = ?,
-                ptz_zoom_mode = ?, ptz_speed = ?, onvif_json = ?, onvif_updated_at = ?, updated_at = ?
+                live_view_mode = ?, view_rotation = ?, rtsp_transport = ?, ptz_enabled = ?, ptz_type = ?, ptz_url = ?,
+                ptz_profile_token = ?, ptz_zoom_mode = ?, ptz_speed = ?, onvif_json = ?, onvif_updated_at = ?, updated_at = ?
             WHERE id = ?
             """,
             (
@@ -832,6 +922,7 @@ def update_camera(camera_id, payload):
                 normalize_bool(merged.get("record_audio")),
                 normalize_grayscale_mode(merged.get("grayscale_mode")),
                 normalize_live_view_mode(merged.get("live_view_mode")),
+                normalize_view_rotation(merged.get("view_rotation", 0)),
                 merged.get("rtsp_transport") if merged.get("rtsp_transport") in ("tcp", "udp") else "tcp",
                 normalize_bool(merged.get("ptz_enabled")),
                 ptz_type,
@@ -845,13 +936,15 @@ def update_camera(camera_id, payload):
                 camera_id,
             ),
         )
-    manager = globals().get("go2rtc")
-    if manager:
-        manager.configure_camera(get_camera(camera_id))
-    recorder.restart(camera_id)
-    relay.stop(camera_id)
-    live_hls.stop(camera_id)
-    return get_camera(camera_id)
+    camera = get_camera(camera_id)
+    if restart_required:
+        manager = globals().get("go2rtc")
+        if manager:
+            manager.configure_camera(camera)
+        recorder.restart(camera_id)
+        relay.stop(camera_id)
+        live_hls.stop(camera_id)
+    return camera
 
 
 def delete_camera(camera_id):
@@ -971,9 +1064,7 @@ class Go2RTCManager:
     def start(self, cameras):
         binary = self.binary_path()
         if not binary:
-            self.last_error = (
-                f"{GO2RTC_BIN} is not installed; using PlainNVR's FFmpeg relay fallback."
-            )
+            self.last_error = f"{GO2RTC_BIN} is not installed; live restreaming is unavailable."
             print(self.last_error)
             return False
         DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -1019,7 +1110,10 @@ class Go2RTCManager:
         if not self.running():
             return False
         source = self.source_key(camera)
-        if not source:
+        if not source.startswith(STREAM_URL_PREFIXES):
+            return False
+        audio_url = str(camera.get("audio_url") or "").strip()
+        if camera.get("record_audio", True) and audio_url and audio_url != source:
             return False
         name = self.stream_name(camera)
         source_key = self.source_key(camera)
@@ -1052,10 +1146,28 @@ class Go2RTCManager:
         except (OSError, urllib_error.URLError, urllib_error.HTTPError):
             pass
 
+    def restart_camera(self, camera):
+        if not self.can_restream(camera):
+            return False
+        camera_id = camera["id"]
+        name = self.stream_name(camera)
+        with self.lock:
+            previous_generation = self.generations.get(camera_id, 0)
+            self.stream_keys.pop(camera_id, None)
+            self.generations[camera_id] = previous_generation
+        try:
+            self._request(
+                f"/api/streams?{urlencode({'src': name})}",
+                method="DELETE",
+            )
+        except (OSError, urllib_error.URLError, urllib_error.HTTPError):
+            pass
+        return self.configure_camera(camera)
+
     def reconcile(self, cameras):
         active_ids = set()
         for camera in cameras:
-            if not camera.get("enabled"):
+            if not camera.get("enabled") or not self.can_restream(camera):
                 continue
             active_ids.add(camera["id"])
             self.configure_camera(camera)
@@ -1097,7 +1209,7 @@ class Go2RTCManager:
         }
 
     def stream_info(self, camera):
-        if not self.running() or not self.configure_camera(camera):
+        if not self.can_restream(camera) or not self.configure_camera(camera):
             return None
         try:
             raw = self._request(
@@ -1166,14 +1278,7 @@ class RelayManager:
                 return go2rtc.source_camera(camera)
             except RuntimeError as exc:
                 go2rtc.last_error = str(exc)
-        generation = self.ensure_running(camera)
-        cloned = dict(camera)
-        cloned["rtsp_url"] = str(self.playlist_path(camera["id"]))
-        cloned["audio_url"] = ""
-        cloned["record_audio"] = bool(camera.get("record_audio", True))
-        cloned["rtsp_transport"] = "tcp"
-        cloned["_relay_generation"] = generation
-        return cloned
+        raise RuntimeError("go2rtc restream is unavailable for this camera.")
 
     def status(self, cameras=None):
         with self.lock:
@@ -1200,6 +1305,23 @@ class RelayManager:
         for camera in cameras or []:
             if go2rtc.can_restream(camera):
                 states[camera["id"]] = go2rtc.camera_status(camera)
+            else:
+                states.setdefault(
+                    camera["id"],
+                    {
+                        "running": go2rtc.running(),
+                        "healthy": False,
+                        "pid": go2rtc.process.pid if go2rtc.running() else None,
+                        "started_at": None,
+                        "last_error": go2rtc.last_error
+                        or "go2rtc cannot restream this camera.",
+                        "source": None,
+                        "generation": go2rtc.generations.get(camera["id"], 0),
+                        "restart_count": 0,
+                        "backend": "go2rtc",
+                        "stream": go2rtc.stream_name(camera),
+                    },
+                )
         return states
 
     def ensure_running(self, camera):
@@ -1392,24 +1514,9 @@ class RelayManager:
 
     def reconcile(self, cameras):
         go2rtc.reconcile(cameras)
-        fallback_cameras = [
-            camera
-            for camera in cameras
-            if camera.get("enabled") and not go2rtc.can_restream(camera)
-        ]
-        enabled = {camera["id"] for camera in fallback_cameras}
         with self.lock:
             for camera_id in list(self.processes.keys()):
-                if camera_id not in enabled:
-                    self._stop_locked(camera_id)
-        for camera in fallback_cameras:
-            try:
-                self.ensure_running(camera)
-            except Exception as exc:
-                message = f"Relay failed: {redact_camera_text(str(exc), camera)}"
-                with self.lock:
-                    self.last_errors[camera["id"]] = message
-                add_event(camera["id"], "error", message)
+                self._stop_locked(camera_id)
 
     def shutdown(self):
         with self.lock:
@@ -2166,25 +2273,6 @@ def run_ptz_command(camera, payload):
     raise RuntimeError(f"PTZ command failed: {last_error}")
 
 
-def build_mjpeg_command(camera, grayscale=False):
-    camera = relay.source_camera(camera)
-    command = [
-        FFMPEG_BIN,
-        "-hide_banner",
-        "-nostdin",
-        "-loglevel",
-        "error",
-    ]
-    command.extend(ffmpeg_input_args(camera))
-    video_filters = []
-    if grayscale:
-        video_filters.append("hue=s=0")
-    command.append("-an")
-    add_video_filters(command, video_filters)
-    command.extend(["-q:v", "6", "-f", "mpjpeg", "pipe:1"])
-    return command
-
-
 def build_live_hls_command(camera, output_dir, grayscale=False, include_audio=True, source_camera=None):
     camera = source_camera or relay.source_camera(camera)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -2668,7 +2756,7 @@ class RecorderSupervisor:
                 entry = self.processes.pop(camera["id"], None)
             if entry:
                 self._terminate_entry(entry)
-            add_event(camera["id"], "error", f"Recorder waiting for relay: {redact_camera_text(str(exc), camera)}")
+            add_event(camera["id"], "error", f"Recorder waiting for go2rtc: {redact_camera_text(str(exc), camera)}")
             return
 
         relay_generation = source_camera.get("_relay_generation")
@@ -2988,7 +3076,7 @@ def stream_summary(probe):
 
 def live_diagnostics(camera, include_audio=True):
     include_audio = bool(include_audio)
-    profile = f"source / {'audio' if include_audio else 'video only'}"
+    profile = f"go2rtc / {'audio' if include_audio else 'video only'}"
     video = probe_stream_url(
         camera["rtsp_url"],
         camera,
@@ -3007,27 +3095,30 @@ def live_diagnostics(camera, include_audio=True):
             low_latency=False,
         )
 
-    hls = {"ok": True, "message": "Playlist became ready."}
-    try:
-        playlist = live_hls.start(camera, include_audio=include_audio)
-        hls["bytes"] = playlist.stat().st_size if playlist.exists() else 0
-    except RuntimeError as exc:
-        hls = {"ok": False, "message": redact_camera_text(str(exc), camera)}
+    configured = go2rtc.can_restream(camera) and go2rtc.configure_camera(camera)
+    stream = go2rtc.stream_info(camera) if configured else None
+    go2rtc_result = {
+        "ok": bool(go2rtc.running() and configured and stream is not None),
+        "message": "go2rtc stream is configured."
+        if configured
+        else (go2rtc.last_error or "go2rtc stream is unavailable."),
+        "stream": stream,
+    }
 
-    log_tail = redact_camera_text(live_hls.log_tail(camera["id"], line_count=12), camera)
+    log_tail = redact_camera_text(go2rtc.log_tail(12), camera)
     parts = [
         f"Profile: {profile}.",
         f"Video: {stream_summary(video)}.",
     ]
     if audio:
         parts.append(f"Audio: {stream_summary(audio)}.")
-    parts.append(f"HLS: {hls['message']}")
+    parts.append(f"go2rtc: {go2rtc_result['message']}")
     return {
-        "ok": bool(hls.get("ok")),
+        "ok": bool(go2rtc_result.get("ok")),
         "message": " ".join(parts),
         "video": video,
         "audio": audio,
-        "hls": hls,
+        "go2rtc": go2rtc_result,
         "log": log_tail,
     }
 
@@ -3432,6 +3523,9 @@ class NvrHandler(SimpleHTTPRequestHandler):
         except ValueError as exc:
             self.send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
             return
+        if parsed.path == "/api/settings":
+            self.send_json({"settings": update_app_settings(payload)})
+            return
         match = re.match(r"^/api/cameras/([a-f0-9]+)$", parsed.path)
         if match:
             try:
@@ -3521,8 +3615,8 @@ class NvrHandler(SimpleHTTPRequestHandler):
         self.send_json({"ok": True, "recorders": recorder.status(), "events": get_recent_events()})
 
     def handle_live_control(self, camera, action):
-        if action in ("stop", "restart"):
-            live_hls.stop(camera["id"])
+        if action == "restart":
+            go2rtc.restart_camera(camera)
         elif action == "start":
             pass
         self.send_json({"ok": True})
@@ -3621,6 +3715,9 @@ class NvrHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/cameras":
             self.send_json({"cameras": list_cameras()})
             return
+        if parsed.path == "/api/settings":
+            self.send_json({"settings": get_app_settings()})
+            return
         match = re.match(r"^/api/cameras/([a-f0-9]+)/time$", parsed.path)
         if match:
             self.handle_camera_time(match.group(1))
@@ -3658,6 +3755,7 @@ class NvrHandler(SimpleHTTPRequestHandler):
                     "relays": relay.status(cameras),
                     "go2rtc": go2rtc.status(),
                     "night_modes": night_modes.status(),
+                    "settings": get_app_settings(),
                     "users": list_users(),
                     "username": self.auth_user(),
                     "now": iso_now(),
@@ -3803,6 +3901,9 @@ class NvrHandler(SimpleHTTPRequestHandler):
         if not match:
             self.send_error(HTTPStatus.NOT_FOUND)
             return
+        if not home_assistant_enabled():
+            self.send_error(HTTPStatus.NOT_FOUND, "Home Assistant bridge is disabled.")
+            return
         camera = get_camera(match.group(1))
         if not camera:
             self.send_error(HTTPStatus.NOT_FOUND)
@@ -3811,11 +3912,14 @@ class NvrHandler(SimpleHTTPRequestHandler):
         if match.group(2) == "snapshot.jpg":
             self.handle_snapshot(camera, grayscale=query_bool(query, "grayscale"))
             return
-        self.handle_mjpeg(camera, grayscale=query_bool(query, "grayscale"))
+        self.send_error(
+            HTTPStatus.GONE,
+            "MJPEG live streaming is disabled. Use the go2rtc-backed HLS URL under /live/.",
+        )
 
     def handle_home_assistant_head(self, parsed):
         match = re.match(r"^/ha/([a-f0-9]+)/(snapshot\.jpg|stream\.mjpeg)$", parsed.path)
-        if not match:
+        if not match or not home_assistant_enabled():
             self.send_response(HTTPStatus.NOT_FOUND)
             self.send_header("Content-Length", "0")
             self.end_headers()
@@ -3825,17 +3929,18 @@ class NvrHandler(SimpleHTTPRequestHandler):
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
-        self.send_response(HTTPStatus.OK)
         if match.group(2) == "snapshot.jpg":
+            self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "image/jpeg")
         else:
-            self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=ffmpeg")
+            self.send_response(HTTPStatus.GONE)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", "0")
         self.end_headers()
 
     def handle_live_hls(self, parsed):
-        match = re.match(r"^/live/([a-f0-9]+)/(stream\.m3u8|init\.mp4|segment_\d+\.(?:ts|m4s))$", parsed.path)
+        match = re.match(r"^/live/([a-f0-9]+)/(stream\.m3u8|hls/.+)$", parsed.path)
         if not match:
             self.send_error(HTTPStatus.NOT_FOUND)
             return
@@ -3843,74 +3948,94 @@ class NvrHandler(SimpleHTTPRequestHandler):
         if not camera:
             self.send_error(HTTPStatus.NOT_FOUND)
             return
-        filename = match.group(2)
-        if filename == "stream.m3u8":
-            query = parse_qs(parsed.query)
-            try:
-                live_hls.start(
-                    camera,
-                    include_audio=query_bool(query, "audio", default=True),
-                )
-            except RuntimeError as exc:
-                print(f"Live HLS startup failed for {camera['id']}: {exc}", file=sys.stderr)
+        token = parse_qs(parsed.query).get("token", [""])[0]
+        if match.group(2) == "stream.m3u8":
+            if not go2rtc.can_restream(camera) or not go2rtc.configure_camera(camera):
                 self.send_error(
-                    HTTPStatus.BAD_GATEWAY,
-                    "Live stream did not become ready. Check the PlainNVR logs for details.",
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                    "go2rtc stream is unavailable.",
                 )
                 return
+            upstream_path = f"/api/stream.m3u8?{urlencode({'src': go2rtc.stream_name(camera)})}"
         else:
-            if not live_hls.touch(camera["id"]):
-                self.send_error(HTTPStatus.SERVICE_UNAVAILABLE, "Live stream is restarting.")
-                return
-        target = (live_hls.stream_dir(camera["id"]) / filename).resolve()
-        root = live_hls.stream_dir(camera["id"]).resolve()
-        if root not in target.parents:
-            self.send_error(HTTPStatus.NOT_FOUND)
-            return
-        if not target.exists() and filename != "stream.m3u8":
-            deadline = time.time() + 2
-            while time.time() < deadline and not target.exists():
-                time.sleep(0.1)
-        if not target.exists():
-            self.send_error(HTTPStatus.NOT_FOUND)
-            return
-        if filename == "stream.m3u8":
-            self.send_live_playlist(target, parsed)
-            return
-        if filename.endswith(".m4s"):
-            self.send_live_file(target, "video/iso.segment")
-        elif filename == "init.mp4":
-            self.send_live_file(target, "video/mp4")
-        else:
-            self.send_live_file(target, "video/mp2t")
+            rest = match.group(2)[len("hls/") :]
+            query = parse_qs(parsed.query, keep_blank_values=True)
+            query.pop("token", None)
+            upstream_path = f"/api/hls/{rest}"
+            encoded_query = urlencode(query, doseq=True)
+            if encoded_query:
+                upstream_path = f"{upstream_path}?{encoded_query}"
+        self.proxy_go2rtc_live_hls(upstream_path, camera["id"], token)
 
     def handle_live_hls_head(self, parsed):
-        match = re.match(r"^/live/([a-f0-9]+)/(stream\.m3u8|init\.mp4|segment_\d+\.(?:ts|m4s))$", parsed.path)
+        match = re.match(r"^/live/([a-f0-9]+)/(stream\.m3u8|hls/.+)$", parsed.path)
         if not match or not get_camera(match.group(1)):
             self.send_response(HTTPStatus.NOT_FOUND)
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
-        filename = match.group(2)
-        if filename == "stream.m3u8":
-            content_type = "application/vnd.apple.mpegurl"
-        elif filename == "init.mp4":
-            content_type = "video/mp4"
-        elif filename.endswith(".m4s"):
-            content_type = "video/iso.segment"
-        else:
-            content_type = "video/mp2t"
         self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Type", "application/vnd.apple.mpegurl")
         self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", "0")
         self.end_headers()
 
-    def send_live_playlist(self, target, parsed):
-        text = target.read_text(encoding="utf-8", errors="replace")
-        token = parse_qs(parsed.query).get("token", [""])[0]
-        playlist_path = parsed.path.rsplit("/", 1)[0]
-        text = rewrite_live_playlist(text, playlist_path, token)
+    def proxy_go2rtc_live_hls(self, upstream_path, camera_id, token=""):
+        request = urllib_request.Request(
+            f"http://{GO2RTC_API_HOST}:{GO2RTC_API_PORT}{upstream_path}",
+            headers={"Accept": self.headers.get("Accept", "*/*")},
+        )
+        try:
+            response = urllib_request.urlopen(request, timeout=10)
+        except urllib_error.HTTPError as exc:
+            response = exc
+        except (OSError, urllib_error.URLError) as exc:
+            self.send_error(HTTPStatus.BAD_GATEWAY, f"go2rtc HLS proxy failed: {exc}")
+            return
+        with response:
+            content_type = response.headers.get("Content-Type", "")
+            is_playlist = "mpegurl" in content_type or upstream_path.split("?", 1)[0].endswith(".m3u8")
+            if is_playlist:
+                text = response.read().decode("utf-8", "replace")
+                self.send_go2rtc_live_playlist(text, camera_id, token)
+                return
+            self.send_response(response.status)
+            for key in ("Content-Type", "Content-Length", "Accept-Ranges", "Cache-Control"):
+                value = response.headers.get(key)
+                if value:
+                    self.send_header(key, value)
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            shutil.copyfileobj(response, self.wfile, length=64 * 1024)
+
+    def send_go2rtc_live_playlist(self, text, camera_id, token=""):
+        def rewrite_uri(uri):
+            if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", uri):
+                return uri
+            if uri.startswith("/api/hls/"):
+                uri = uri[len("/api/hls/") :]
+            elif uri.startswith("hls/"):
+                uri = uri[len("hls/") :]
+            uri = f"/live/{camera_id}/hls/{uri}"
+            if token:
+                separator = "&" if "?" in uri else "?"
+                uri = f"{uri}{separator}token={quote(token)}"
+            return uri
+
+        lines = []
+        for line in text.splitlines():
+            if line.startswith("#") and 'URI="' in line:
+                line = re.sub(
+                    r'URI="([^"]+)"',
+                    lambda match: f'URI="{rewrite_uri(match.group(1))}"',
+                    line,
+                )
+                lines.append(line)
+            elif not line or line.startswith("#"):
+                lines.append(line)
+            else:
+                lines.append(rewrite_uri(line.strip()))
+        text = "\n".join(lines) + "\n"
         payload = text.encode("utf-8")
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "application/vnd.apple.mpegurl")
@@ -3918,15 +4043,6 @@ class NvrHandler(SimpleHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(payload)
-
-    def send_live_file(self, target, content_type):
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(target.stat().st_size))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        with target.open("rb") as src:
-            shutil.copyfileobj(src, self.wfile)
 
     def handle_snapshot(self, camera, grayscale=False):
         try:
@@ -3950,45 +4066,6 @@ class NvrHandler(SimpleHTTPRequestHandler):
             self.wfile.write(result.stdout)
         except (BrokenPipeError, ConnectionResetError):
             pass
-
-    def handle_mjpeg(self, camera, grayscale=False):
-        try:
-            process = subprocess.Popen(
-                build_mjpeg_command(camera, grayscale=grayscale),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-            )
-        except (OSError, RuntimeError) as exc:
-            self.send_error(HTTPStatus.BAD_GATEWAY, f"Could not start FFmpeg: {redact_camera_text(str(exc), camera)}")
-            return
-
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=ffmpeg")
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        last_output = time.monotonic()
-        try:
-            while True:
-                readable, _, _ = select.select([process.stdout], [], [], 1)
-                if not readable:
-                    if process.poll() is not None or time.monotonic() - last_output > MJPEG_STALE_SECONDS:
-                        break
-                    continue
-                chunk = os.read(process.stdout.fileno(), 8192)
-                if not chunk:
-                    break
-                last_output = time.monotonic()
-                self.wfile.write(chunk)
-                self.wfile.flush()
-        except (BrokenPipeError, ConnectionResetError):
-            pass
-        finally:
-            if process.poll() is None:
-                process.terminate()
-                try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    process.kill()
 
     def handle_media(self, path, head_only=False):
         parts = path.split("/")

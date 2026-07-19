@@ -13,7 +13,6 @@
 		B00000000000000000000013 /* PlainNVRClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000003 /* PlainNVRClient.swift */; };
 		B00000000000000000000014 /* PlainNVRViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000004 /* PlainNVRViewModel.swift */; };
 		B00000000000000000000015 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000005 /* ContentView.swift */; };
-		B00000000000000000000016 /* MJPEGStreamView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000006 /* MJPEGStreamView.swift */; };
 		B00000000000000000000017 /* SegmentPlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000007 /* SegmentPlayerView.swift */; };
 /* End PBXBuildFile section */
 
@@ -24,7 +23,6 @@
 		B00000000000000000000003 /* PlainNVRClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlainNVRClient.swift; sourceTree = "<group>"; };
 		B00000000000000000000004 /* PlainNVRViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlainNVRViewModel.swift; sourceTree = "<group>"; };
 		B00000000000000000000005 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
-		B00000000000000000000006 /* MJPEGStreamView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MJPEGStreamView.swift; sourceTree = "<group>"; };
 		B00000000000000000000007 /* SegmentPlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SegmentPlayerView.swift; sourceTree = "<group>"; };
 		B00000000000000000000008 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		B00000000000000000000009 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -65,7 +63,6 @@
 				B00000000000000000000003 /* PlainNVRClient.swift */,
 				B00000000000000000000004 /* PlainNVRViewModel.swift */,
 				B00000000000000000000005 /* ContentView.swift */,
-				B00000000000000000000006 /* MJPEGStreamView.swift */,
 				B00000000000000000000007 /* SegmentPlayerView.swift */,
 				B00000000000000000000008 /* Info.plist */,
 				B00000000000000000000009 /* Assets.xcassets */,
@@ -147,7 +144,6 @@
 				B00000000000000000000013 /* PlainNVRClient.swift in Sources */,
 				B00000000000000000000014 /* PlainNVRViewModel.swift in Sources */,
 				B00000000000000000000015 /* ContentView.swift in Sources */,
-				B00000000000000000000016 /* MJPEGStreamView.swift in Sources */,
 				B00000000000000000000017 /* SegmentPlayerView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

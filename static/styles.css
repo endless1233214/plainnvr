@@ -167,6 +167,7 @@ h2 {
 }
 
 .events-panel,
+.settings-panel,
 .users-panel {
   grid-column: 1 / -1;
 }
@@ -314,6 +315,7 @@ legend {
 .mode-row,
 .day-row,
 .button-row,
+.server-settings,
 .live-controls,
 .playback-controls {
   display: flex;
@@ -332,9 +334,20 @@ legend {
 
 .toggles input,
 .mode-row input,
-.day-row input {
+.day-row input,
+.server-settings input {
   width: auto;
   min-height: 0;
+}
+
+.server-settings {
+  padding: 16px;
+}
+
+.server-settings label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 fieldset {
@@ -545,8 +558,6 @@ fieldset {
   color: #c0c7c3;
 }
 
-#liveVideo,
-#liveImage,
 #go2rtcLive {
   display: block;
   width: 100%;
@@ -557,12 +568,6 @@ fieldset {
   transition: transform 120ms ease;
 }
 
-#liveVideo {
-  background: #000;
-}
-
-#liveVideo[hidden],
-#liveImage[hidden],
 #go2rtcLive[hidden] {
   display: none;
 }
@@ -629,6 +634,9 @@ fieldset {
   margin: 16px;
   border: 1px solid var(--line);
   border-radius: 8px;
+  object-fit: contain;
+  transform-origin: center center;
+  transition: transform 120ms ease;
   background: var(--video-bg);
 }
 

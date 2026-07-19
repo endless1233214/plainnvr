@@ -34,6 +34,7 @@ struct Camera: Decodable, Identifiable, Hashable {
     let schedule: CameraSchedule?
     let recordAudio: Bool?
     let liveViewMode: String?
+    let viewRotation: Int?
     let rtspTransport: String?
     let ptzEnabled: Bool?
     let ptzType: String?
@@ -79,11 +80,20 @@ struct Camera: Decodable, Identifiable, Hashable {
     }
 
     var usesLiveHLS: Bool {
-        liveViewMode != "mjpeg"
+        true
     }
 
     var liveModeLabel: String {
-        usesLiveHLS ? "HLS / H.264" : "MJPEG"
+        "go2rtc HLS"
+    }
+
+    var normalizedViewRotation: Int {
+        switch viewRotation ?? 0 {
+        case 90, 180, 270:
+            return viewRotation ?? 0
+        default:
+            return 0
+        }
     }
 
     var resolvedZoomMode: String {

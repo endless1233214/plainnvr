@@ -3,6 +3,7 @@ const state = {
   recorders: {},
   relays: {},
   go2rtc: {},
+  settings: { home_assistant_enabled: false },
   users: [],
   username: "",
   coverage: {},
@@ -156,45 +157,28 @@ function applyScheduleToForm(schedule) {
 
 function cameraHaUrls(camera) {
   const base = window.location.origin;
-  const token = state.streamToken ? `token=${encodeURIComponent(state.streamToken)}` : "";
-  const hlsParams = new URLSearchParams();
+  const params = new URLSearchParams();
   if (state.streamToken) {
-    hlsParams.set("token", state.streamToken);
+    params.set("token", state.streamToken);
   }
-  const hlsQuery = hlsParams.toString();
+  const query = params.toString();
   return {
-    mjpeg: `${base}/ha/${camera.id}/stream.mjpeg${token ? `?${token}` : ""}`,
-    hls: `${base}/live/${camera.id}/stream.m3u8${hlsQuery ? `?${hlsQuery}` : ""}`,
-    snapshot: `${base}/ha/${camera.id}/snapshot.jpg${token ? `?${token}` : ""}`,
+    hls: `${base}/live/${camera.id}/stream.m3u8${query ? `?${query}` : ""}`,
+    snapshot: `${base}/ha/${camera.id}/snapshot.jpg${query ? `?${query}` : ""}`,
   };
 }
 
-function cameraLiveMjpegUrl(camera) {
-  const token = state.streamToken || "";
-  const params = new URLSearchParams();
-  if (token) {
-    params.set("token", token);
-  }
-  const query = params.toString();
-  return `/ha/${camera.id}/stream.mjpeg${query ? `?${query}` : ""}`;
-}
-
-function cameraLiveHlsUrl(camera) {
-  const token = state.streamToken || "";
-  const params = new URLSearchParams();
-  if (token) {
-    params.set("token", token);
-  }
-  const query = params.toString();
-  return `/live/${camera.id}/stream.m3u8${query ? `?${query}` : ""}`;
-}
-
 function cameraLiveMode(camera) {
-  return camera?.live_view_mode === "mjpeg" ? "mjpeg" : "hls";
+  return "go2rtc";
+}
+
+function cameraViewRotation(camera) {
+  const value = Number(camera?.view_rotation || 0);
+  return [0, 90, 180, 270].includes(value) ? value : 0;
 }
 
 function liveModeLabel(mode) {
-  return mode === "mjpeg" ? "MJPEG" : "HLS / H.264";
+  return "go2rtc";
 }
 
 function cameraZoomMode(camera) {
@@ -226,20 +210,11 @@ function cameraSupportsPtzFeature(camera, feature) {
   return cameraPtzFeatures(camera).has(feature);
 }
 
-function browserCanPlayHls() {
-  const video = $("liveVideo");
-  return Boolean(
-    video.canPlayType("application/vnd.apple.mpegurl") ||
-      video.canPlayType("application/x-mpegURL")
-  );
-}
-
 function renderHaPanel(camera) {
   const panel = $("haPanel");
-  const copyButtons = ["copyHaMjpegUrl", "copyHaHlsUrl", "copyHaSnapshotUrl", "copyHaYaml"];
-  if (!camera?.id) {
+  const copyButtons = ["copyHaHlsUrl", "copyHaSnapshotUrl", "copyHaYaml"];
+  if (!state.settings.home_assistant_enabled || !camera?.id) {
     panel.hidden = true;
-    $("haMjpegUrl").value = "";
     $("haHlsUrl").value = "";
     $("haSnapshotUrl").value = "";
     $("haYaml").value = "";
@@ -250,14 +225,13 @@ function renderHaPanel(camera) {
   }
   const urls = cameraHaUrls(camera);
   panel.hidden = false;
-  $("haMjpegUrl").value = urls.mjpeg;
   $("haHlsUrl").value = urls.hls;
   $("haSnapshotUrl").value = urls.snapshot;
   $("haYaml").value = [
     "camera:",
-    "  - platform: mjpeg",
+    "  - platform: generic",
     `    name: ${camera.name}`,
-    `    mjpeg_url: ${urls.mjpeg}`,
+    `    stream_source: ${urls.hls}`,
     `    still_image_url: ${urls.snapshot}`,
   ].join("\n");
   copyButtons.forEach((id) => {
@@ -269,13 +243,14 @@ function cameraPayloadFromForm() {
   return {
     name: $("cameraName").value.trim(),
     rtsp_url: $("rtspUrl").value.trim(),
-    audio_url: $("audioUrl").value.trim(),
+    audio_url: "",
     enabled: $("enabled").checked,
     segment_seconds: Number($("segmentSeconds").value),
     retention_days: Number($("retentionDays").value),
     record_audio: $("recordAudio").checked,
     rtsp_transport: $("rtspTransport").value,
-    live_view_mode: $("liveViewMode").value,
+    live_view_mode: "hls",
+    view_rotation: Number($("viewRotation").value),
     ptz_enabled: $("ptzEnabled").checked,
     ptz_type: $("ptzType").value,
     ptz_url: $("ptzUrl").value.trim(),
@@ -292,13 +267,12 @@ function resetForm() {
   $("cameraId").value = "";
   $("cameraName").value = "";
   $("rtspUrl").value = "";
-  $("audioUrl").value = "";
   $("enabled").checked = true;
   $("recordAudio").checked = true;
   $("segmentSeconds").value = "60";
   $("retentionDays").value = "14";
   $("rtspTransport").value = "tcp";
-  $("liveViewMode").value = "hls";
+  $("viewRotation").value = "0";
   $("ptzEnabled").checked = false;
   $("ptzType").value = "onvif";
   $("ptzUrl").value = "";
@@ -323,13 +297,12 @@ function editCamera(camera) {
   $("cameraId").value = camera.id;
   $("cameraName").value = camera.name;
   $("rtspUrl").value = camera.rtsp_url;
-  $("audioUrl").value = camera.audio_url || "";
   $("enabled").checked = camera.enabled;
   $("recordAudio").checked = camera.record_audio;
   $("segmentSeconds").value = String(camera.segment_seconds);
   $("retentionDays").value = String(camera.retention_days);
   $("rtspTransport").value = camera.rtsp_transport || "tcp";
-  $("liveViewMode").value = cameraLiveMode(camera);
+  $("viewRotation").value = String(cameraViewRotation(camera));
   $("ptzEnabled").checked = Boolean(camera.ptz_enabled);
   $("ptzType").value = camera.ptz_type || "onvif";
   $("ptzUrl").value = camera.ptz_url || "";
@@ -472,6 +445,7 @@ function renderCameras() {
         <span class="chip">${camera.segment_seconds}s</span>
         <span class="chip">${camera.retention_days}d</span>
         <span class="chip">${liveModeLabel(cameraLiveMode(camera))}</span>
+        ${cameraViewRotation(camera) ? `<span class="chip">${cameraViewRotation(camera)} deg</span>` : ""}
         ${camera.ptz_enabled ? '<span class="chip ok">ptz</span>' : ""}
       </div>
     `;
@@ -495,6 +469,7 @@ function renderPlaybackCameras() {
   } else if (state.cameras.length) {
     select.value = state.cameras[0].id;
   }
+  applyPlaybackViewTransform();
 }
 
 function renderCoverage() {
@@ -594,6 +569,11 @@ function selectedLiveCamera() {
   return state.cameras.find((item) => item.id === cameraId) || null;
 }
 
+function selectedPlaybackCamera() {
+  const cameraId = $("playbackCamera").value;
+  return state.cameras.find((item) => item.id === cameraId) || null;
+}
+
 function renderPtzPanel() {
   const camera = selectedLiveCamera();
   const panel = $("ptzPanel");
@@ -687,6 +667,10 @@ function renderUsers() {
   });
 }
 
+function renderSettings() {
+  $("homeAssistantEnabled").checked = Boolean(state.settings.home_assistant_enabled);
+}
+
 function updateDiskLine(disk) {
   const used = formatBytes(disk.used);
   const total = formatBytes(disk.total);
@@ -700,6 +684,7 @@ async function loadStatus() {
   state.recorders = data.recorders;
   state.relays = data.relays || {};
   state.go2rtc = data.go2rtc || {};
+  state.settings = data.settings || { home_assistant_enabled: false };
   state.users = data.users || [];
   state.username = data.username || "";
   state.streamToken = data.stream_token || "";
@@ -709,6 +694,7 @@ async function loadStatus() {
   renderPlaybackCameras();
   renderCoverage();
   renderEvents(data.events);
+  renderSettings();
   renderUsers();
   syncLiveHealth();
 }
@@ -864,6 +850,7 @@ async function loadSegments() {
       <button type="button">Play</button>
     `;
     row.querySelector("button").addEventListener("click", () => {
+      applyPlaybackViewTransform();
       $("player").src = segment.url;
       $("player").play().catch(() => {});
     });
@@ -891,6 +878,25 @@ async function saveUser(event) {
   }
 }
 
+async function saveSettings(event) {
+  event.preventDefault();
+  $("settingsState").textContent = "Saving...";
+  try {
+    const result = await api("/api/settings", {
+      method: "PUT",
+      body: JSON.stringify({
+        home_assistant_enabled: $("homeAssistantEnabled").checked,
+      }),
+    });
+    state.settings = result.settings || state.settings;
+    renderSettings();
+    renderHaPanel(state.cameras.find((camera) => camera.id === $("cameraId").value));
+    $("settingsState").textContent = "Saved";
+  } catch (error) {
+    $("settingsState").textContent = error.message;
+  }
+}
+
 function startLive(options = {}) {
   const cameraId = $("liveCamera").value;
   const camera = state.cameras.find((item) => item.id === cameraId);
@@ -903,75 +909,26 @@ function startLive(options = {}) {
   state.liveActive = true;
   state.digitalZoom = 1;
   stopLiveMedia();
-  const image = $("liveImage");
-  const video = $("liveVideo");
   $("liveEmpty").hidden = true;
-  image.hidden = true;
-  video.hidden = true;
+  applyLiveViewTransform();
 
-  const mode = cameraLiveMode(camera);
-  $("liveSourceLabel").textContent = liveModeLabel(mode);
+  $("liveSourceLabel").textContent = "go2rtc";
   const relay = state.relays[camera.id];
-  const useGo2RTC =
+  if (
     !options.forceFallback &&
-    mode === "hls" &&
     state.go2rtc?.running === true &&
     relay?.backend === "go2rtc" &&
-    relay?.stream;
-  if (useGo2RTC) {
+    relay?.stream
+  ) {
     startLiveGo2RTC(camera, relay.stream);
     $("stopLive").disabled = false;
     renderPtzPanel();
     return;
   }
-  if (mode === "hls") {
-    if (!browserCanPlayHls()) {
-      startLiveMjpeg(camera, "MJPEG fallback");
-      $("liveState").textContent = `${camera.name} MJPEG fallback`;
-      $("stopLive").disabled = false;
-      renderPtzPanel();
-      return;
-    }
-    state.liveBackend = "hls";
-    video.onplaying = () => {
-      if (
-        !state.liveActive ||
-        state.liveCameraId !== camera.id ||
-        state.liveBackend !== "hls"
-      ) {
-        return;
-      }
-      $("liveState").textContent = `${camera.name} HLS / H.264`;
-      state.liveLastMediaTime = video.currentTime;
-      state.liveLastProgressAt = Date.now();
-    };
-    video.onerror = () => {
-      if (
-        !state.liveActive ||
-        state.liveCameraId !== camera.id ||
-        state.liveBackend !== "hls"
-      ) {
-        return;
-      }
-      startLiveMjpeg(camera, "HLS failed; MJPEG fallback");
-    };
-    video.src = cameraLiveHlsUrl(camera);
-    video.hidden = false;
-    video.play().catch(() => {
-      if (
-        !state.liveActive ||
-        state.liveCameraId !== camera.id ||
-        state.liveBackend !== "hls"
-      ) {
-        return;
-      }
-      startLiveMjpeg(camera, "MJPEG fallback");
-    });
-    $("liveState").textContent = `${camera.name} HLS starting`;
-    startLiveWatchdog(camera);
-  } else {
-    startLiveMjpeg(camera, "MJPEG");
-  }
+  $("liveEmpty").hidden = false;
+  $("liveEmpty").textContent = "go2rtc stream is not ready.";
+  $("liveState").textContent = `${camera.name} waiting for go2rtc`;
+  scheduleLiveRetry(camera, 3000);
   $("stopLive").disabled = false;
   renderPtzPanel();
 }
@@ -979,7 +936,9 @@ function startLive(options = {}) {
 function startLiveGo2RTC(camera, streamName) {
   const player = $("go2rtcLive");
   if (!player || typeof player.start !== "function") {
-    startLive({ forceFallback: true });
+    $("liveEmpty").hidden = false;
+    $("liveEmpty").textContent = "go2rtc player is unavailable.";
+    $("liveState").textContent = `${camera.name} cannot start go2rtc`;
     return;
   }
   state.liveBackend = "go2rtc";
@@ -987,7 +946,7 @@ function startLiveGo2RTC(camera, streamName) {
   $("liveState").textContent = `${camera.name} go2rtc starting`;
   $("liveEmpty").hidden = true;
   player.start(streamName);
-  applyDigitalZoom();
+  applyLiveViewTransform();
   clearLiveWatchdog();
   state.liveWatchTimer = setTimeout(() => {
     if (
@@ -998,56 +957,9 @@ function startLiveGo2RTC(camera, streamName) {
     ) {
       return;
     }
-    $("liveState").textContent = `${camera.name} go2rtc timed out; HLS fallback`;
-    startLive({ forceFallback: true });
-  }, 12000);
-}
-
-function startLiveMjpeg(camera, label) {
-  clearLiveWatchdog();
-  clearLiveRetry();
-  state.liveBackend = "mjpeg";
-  const video = $("liveVideo");
-  video.pause();
-  video.onplaying = null;
-  video.onerror = null;
-  video.removeAttribute("src");
-  video.load();
-  video.hidden = true;
-  const image = $("liveImage");
-  image.onload = () => {
-    if (
-      !state.liveActive ||
-      state.liveCameraId !== camera.id ||
-      state.liveBackend !== "mjpeg"
-    ) {
-      return;
-    }
-    $("liveSourceLabel").textContent = "MJPEG";
-    $("liveState").textContent = `${camera.name} ${label}`;
-  };
-  image.onerror = () => {
-    if (
-      !state.liveActive ||
-      state.liveCameraId !== camera.id ||
-      state.liveBackend !== "mjpeg"
-    ) {
-      return;
-    }
-    image.removeAttribute("src");
-    image.hidden = true;
-    $("liveEmpty").hidden = false;
-    $("liveEmpty").textContent = "Stream unavailable. Retrying...";
-    $("liveState").textContent = `${camera.name} stream offline`;
+    $("liveState").textContent = `${camera.name} go2rtc timed out; retrying`;
     scheduleLiveRetry(camera, 3000);
-  };
-  const separator = cameraLiveMjpegUrl(camera).includes("?") ? "&" : "?";
-  image.src = `${cameraLiveMjpegUrl(camera)}${separator}reload=${Date.now()}`;
-  image.hidden = false;
-  $("liveEmpty").hidden = true;
-  $("liveSourceLabel").textContent = "MJPEG";
-  $("liveState").textContent = `${camera.name} ${label}`;
-  applyDigitalZoom();
+  }, 12000);
 }
 
 function clearLiveWatchdog() {
@@ -1081,24 +993,6 @@ function scheduleLiveRetry(camera, delay = 10000) {
   }, delay);
 }
 
-function startLiveWatchdog(camera) {
-  clearLiveWatchdog();
-  state.liveLastProgressAt = Date.now();
-  state.liveWatchTimer = setInterval(() => {
-    if (!state.liveActive || state.liveCameraId !== camera.id) return;
-    const video = $("liveVideo");
-    const current = video.currentTime;
-    if (Number.isFinite(current) && (state.liveLastMediaTime === null || current > state.liveLastMediaTime + 0.05)) {
-      state.liveLastMediaTime = current;
-      state.liveLastProgressAt = Date.now();
-      return;
-    }
-    if (Date.now() - state.liveLastProgressAt > 15000) {
-      startLiveMjpeg(camera, "HLS stalled; MJPEG fallback");
-    }
-  }, 3000);
-}
-
 function syncLiveHealth() {
   if (!state.liveActive) return;
   const camera = selectedLiveCamera();
@@ -1107,15 +1001,13 @@ function syncLiveHealth() {
   if (relay && !relay.healthy) {
     stopLiveMedia();
     $("liveEmpty").hidden = false;
-    $("liveEmpty").textContent = "Stream offline. Relay is recovering...";
-    $("liveState").textContent = `${camera.name} recovering`;
+    $("liveEmpty").textContent = "go2rtc stream is recovering...";
+    $("liveState").textContent = `${camera.name} recovering go2rtc`;
     scheduleLiveRetry(camera, 3000);
     return;
   }
   const hasMedia = Boolean(
-    !$("go2rtcLive").hidden ||
-      $("liveVideo").getAttribute("src") ||
-      $("liveImage").getAttribute("src")
+    !$("go2rtcLive").hidden
   );
   if (relay?.healthy && !hasMedia) {
     startLive();
@@ -1126,18 +1018,6 @@ function stopLiveMedia() {
   clearLiveWatchdog();
   clearLiveRetry();
   state.liveBackend = "";
-  const video = $("liveVideo");
-  video.pause();
-  video.removeAttribute("src");
-  video.load();
-  video.onplaying = null;
-  video.onerror = null;
-  video.hidden = true;
-  const image = $("liveImage");
-  image.onload = null;
-  image.onerror = null;
-  image.removeAttribute("src");
-  image.hidden = true;
   const go2rtcPlayer = $("go2rtcLive");
   if (go2rtcPlayer && typeof go2rtcPlayer.stop === "function") {
     go2rtcPlayer.stop();
@@ -1226,12 +1106,31 @@ function adjustDigitalZoom(action) {
   applyDigitalZoom();
 }
 
-function applyDigitalZoom() {
-  const transform = `scale(${state.digitalZoom})`;
-  ["go2rtcLive", "liveVideo", "liveImage"].forEach((id) => {
-    const element = $(id);
-    element.style.transform = transform;
+function rotationFitScale(rotation) {
+  return rotation === 90 || rotation === 270 ? 0.56 : 1;
+}
+
+function applyMediaViewTransform(element, camera, zoom = 1) {
+  if (!element) return;
+  const rotation = cameraViewRotation(camera);
+  const scale = Math.max(0.1, Number(zoom) || 1) * rotationFitScale(rotation);
+  element.dataset.viewRotation = String(rotation);
+  element.style.transform = `rotate(${rotation}deg) scale(${scale})`;
+}
+
+function applyLiveViewTransform() {
+  const camera = selectedLiveCamera();
+  ["go2rtcLive"].forEach((id) => {
+    applyMediaViewTransform($(id), camera, state.digitalZoom);
   });
+}
+
+function applyPlaybackViewTransform() {
+  applyMediaViewTransform($("player"), selectedPlaybackCamera(), 1);
+}
+
+function applyDigitalZoom() {
+  applyLiveViewTransform();
 }
 
 async function logout() {
@@ -1293,7 +1192,7 @@ document.addEventListener("DOMContentLoaded", () => {
   $("logoutButton").addEventListener("click", logout);
   $("loadSegments").addEventListener("click", loadSegments);
   $("userForm").addEventListener("submit", saveUser);
-  $("copyHaMjpegUrl").addEventListener("click", () => copyValue("haMjpegUrl"));
+  $("serverSettingsForm").addEventListener("submit", saveSettings);
   $("copyHaHlsUrl").addEventListener("click", () => copyValue("haHlsUrl"));
   $("copyHaSnapshotUrl").addEventListener("click", () => copyValue("haSnapshotUrl"));
   $("copyHaYaml").addEventListener("click", () => copyValue("haYaml"));
@@ -1363,6 +1262,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
   $("playbackCamera").addEventListener("change", () => {
+    applyPlaybackViewTransform();
     loadCoverage().catch((error) => {
       $("coverageSummary").textContent = error.message;
     });
