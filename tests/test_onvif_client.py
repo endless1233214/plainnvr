@@ -1,14 +1,18 @@
 import unittest
 
 from app.onvif_client import (
+    OnvifError,
+    allowed_endpoint_hosts,
     cacheable_discovery,
     device_url_candidates,
     parse_device_information,
     parse_profiles,
+    parse_service_addresses,
     parse_ptz_features,
     parse_presets,
     redact_url,
     select_profile,
+    validated_onvif_url,
 )
 
 
@@ -97,6 +101,40 @@ class OnvifParsingTests(unittest.TestCase):
         )
         self.assertNotIn("stream_uri", cached["profiles"][0])
         self.assertNotIn("endpoint_attempts", cached)
+
+    def test_validated_onvif_urls_stay_on_configured_camera_host(self):
+        payload = {
+            "rtsp_url": "rtsp://user:secret@192.168.1.50:554/stream",
+            "ptz_url": "",
+        }
+        allowed = allowed_endpoint_hosts(payload)
+        self.assertEqual(
+            validated_onvif_url(
+                "http://user:secret@192.168.1.50/onvif/device_service",
+                allowed_hosts=allowed,
+            ),
+            "http://192.168.1.50/onvif/device_service",
+        )
+
+        with self.assertRaises(OnvifError):
+            validated_onvif_url(
+                "http://192.168.1.51/onvif/device_service",
+                allowed_hosts=allowed,
+            )
+        with self.assertRaises(OnvifError):
+            validated_onvif_url("http://127.0.0.1/onvif/device_service")
+
+    def test_service_discovery_ignores_untrusted_xaddrs(self):
+        data = b"""<Envelope><Body><GetCapabilitiesResponse>
+          <Device><XAddr>http://192.168.1.50/onvif/device_service</XAddr></Device>
+          <Media><XAddr>http://127.0.0.1/admin</XAddr></Media>
+          <PTZ><XAddr>http://192.168.1.51/onvif/ptz_service</XAddr></PTZ>
+        </GetCapabilitiesResponse></Body></Envelope>"""
+        services = parse_service_addresses(data, allowed_hosts={"192.168.1.50"})
+        self.assertEqual(
+            services,
+            {"device": "http://192.168.1.50/onvif/device_service"},
+        )
 
 
 if __name__ == "__main__":

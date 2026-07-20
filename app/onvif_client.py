@@ -1,8 +1,10 @@
 import base64
 import hashlib
 from html import escape as html_escape
+import ipaddress
 import re
 import secrets
+import socket
 from datetime import datetime, timezone
 from urllib import error as urllib_error
 from urllib import request as urllib_request
@@ -18,6 +20,8 @@ SOAP_NS = "http://www.w3.org/2003/05/soap-envelope"
 
 DEVICE_PATHS = ("/onvif/device_service", "/onvif/device", "/onvif/services")
 DEVICE_PORTS = (80, 8080, 8000, 8899)
+ONVIF_HTTP_SCHEMES = ("http", "https")
+BLOCKED_ONVIF_HOSTS = ("localhost",)
 
 
 class OnvifError(RuntimeError):
@@ -82,6 +86,75 @@ def netloc_without_credentials(parsed):
     if ":" in host and not host.startswith("["):
         host = f"[{host}]"
     return f"{host}:{parsed.port}" if parsed.port else host
+
+
+def normalized_host(host):
+    return str(host or "").strip().rstrip(".").lower()
+
+
+def allowed_endpoint_hosts(payload):
+    hosts = set()
+    for key in ("ptz_url", "rtsp_url"):
+        value = str((payload or {}).get(key) or "").strip()
+        if not value:
+            continue
+        parsed = urlparse(value if "://" in value else f"http://{value}")
+        if parsed.hostname:
+            hosts.add(normalized_host(parsed.hostname))
+    return hosts
+
+
+def _blocked_onvif_ip(address):
+    ip = ipaddress.ip_address(address)
+    return (
+        ip.is_loopback
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+    )
+
+
+def _validate_onvif_host(host):
+    normalized = normalized_host(host)
+    if not normalized:
+        raise OnvifError("ONVIF endpoint must include a host.")
+    if normalized in BLOCKED_ONVIF_HOSTS or normalized.endswith(".localhost"):
+        raise OnvifError("ONVIF endpoint host is not allowed.")
+
+    try:
+        if _blocked_onvif_ip(normalized):
+            raise OnvifError("ONVIF endpoint IP address is not allowed.")
+        return
+    except ValueError:
+        pass
+
+    try:
+        addresses = socket.getaddrinfo(normalized, None, type=socket.SOCK_STREAM)
+    except socket.gaierror as exc:
+        raise OnvifError(f"Could not resolve ONVIF endpoint host: {normalized}") from exc
+
+    for item in addresses:
+        address = item[4][0]
+        try:
+            if _blocked_onvif_ip(address):
+                raise OnvifError("ONVIF endpoint resolved to a blocked address.")
+        except ValueError:
+            raise OnvifError("ONVIF endpoint resolved to an invalid address.")
+
+
+def validated_onvif_url(value, allowed_hosts=None):
+    parsed = urlparse(str(value or ""))
+    if parsed.scheme not in ONVIF_HTTP_SCHEMES or not parsed.hostname:
+        raise OnvifError("ONVIF endpoint must be an http or https URL.")
+
+    host = normalized_host(parsed.hostname)
+    allowed = {normalized_host(item) for item in (allowed_hosts or []) if item}
+    if allowed and host not in allowed:
+        raise OnvifError("ONVIF endpoint host must match the configured camera host.")
+
+    _validate_onvif_host(host)
+    return clean_url(value)
 
 
 def clean_url(value):
@@ -171,6 +244,10 @@ def security_header(credentials, password_mode="digest"):
         )
         password_value = html_escape(password)
     else:
+        # ONVIF WS-Security UsernameToken PasswordDigest is fixed by spec:
+        # Base64(SHA-1(nonce + created + password)). It is a wire-format
+        # compatibility digest, not PlainNVR password storage.
+        # codeql[py/weak-sensitive-data-hashing]
         digest = hashlib.sha1(
             nonce + created.encode("utf-8") + password.encode("utf-8")
         ).digest()
@@ -215,14 +292,18 @@ def _http_open(request, url, credentials, timeout):
         return opener.open(request, timeout=timeout)
 
 
-def soap_post(url, body, credentials=None, timeout=5):
+def soap_post(url, body, credentials=None, timeout=5, allowed_hosts=None):
     first_fault = None
     for password_mode in ("digest", "text"):
+        safe_url = validated_onvif_url(url, allowed_hosts=allowed_hosts)
         payload = envelope(body, credentials=credentials, password_mode=password_mode).encode(
             "utf-8"
         )
+        # URL is validated above against the configured camera host and blocked
+        # local/meta-address ranges before any outbound request is created.
+        # codeql[py/full-ssrf]
         request = urllib_request.Request(
-            clean_url(url),
+            safe_url,
             data=payload,
             headers={
                 "Content-Type": "application/soap+xml; charset=utf-8",
@@ -237,7 +318,7 @@ def soap_post(url, body, credentials=None, timeout=5):
             )
             request.add_header("Authorization", f"Basic {token}")
         try:
-            with _http_open(request, clean_url(url), credentials, timeout) as response:
+            with _http_open(request, safe_url, credentials, timeout) as response:
                 data = response.read(256 * 1024)
         except urllib_error.HTTPError as exc:
             detail = exc.read(8192).decode("utf-8", errors="replace").strip()
@@ -357,15 +438,21 @@ def parse_device_information(data):
     }
 
 
-def parse_service_addresses(data):
+def parse_service_addresses(data, allowed_hosts=None):
     root = parse_xml(data)
     services = {}
     for service_name in ("Device", "Media", "PTZ", "Imaging", "Events"):
         for element in descendants(root, service_name):
             address = child_text(element, "XAddr")
             if address:
-                services[service_name.lower()] = clean_url(address)
-                break
+                try:
+                    services[service_name.lower()] = validated_onvif_url(
+                        address,
+                        allowed_hosts=allowed_hosts,
+                    )
+                    break
+                except OnvifError:
+                    continue
     return services
 
 
@@ -504,6 +591,7 @@ def select_profile(profiles, requested=""):
 
 def discover(payload, timeout=5):
     credentials = payload_credentials(payload)
+    allowed_hosts = allowed_endpoint_hosts(payload)
     attempts = []
     device_url = None
     device_data = None
@@ -511,7 +599,11 @@ def discover(payload, timeout=5):
     for candidate in device_url_candidates(payload):
         try:
             device_data = soap_post(
-                candidate, get_device_information_body(), credentials=credentials, timeout=timeout
+                candidate,
+                get_device_information_body(),
+                credentials=credentials,
+                timeout=timeout,
+                allowed_hosts=allowed_hosts,
             )
             device_url = candidate
             attempts.append({"endpoint": clean_url(candidate), "ok": True})
@@ -530,9 +622,13 @@ def discover(payload, timeout=5):
     errors = []
     try:
         capability_data = soap_post(
-            device_url, get_capabilities_body(), credentials=credentials, timeout=timeout
+            device_url,
+            get_capabilities_body(),
+            credentials=credentials,
+            timeout=timeout,
+            allowed_hosts=allowed_hosts,
         )
-        services.update(parse_service_addresses(capability_data))
+        services.update(parse_service_addresses(capability_data, allowed_hosts=allowed_hosts))
     except OnvifError as exc:
         errors.append(f"Capabilities: {exc}")
 
@@ -544,7 +640,13 @@ def discover(payload, timeout=5):
     profiles = []
     try:
         profiles = parse_profiles(
-            soap_post(media_url, get_profiles_body(), credentials=credentials, timeout=timeout)
+            soap_post(
+                media_url,
+                get_profiles_body(),
+                credentials=credentials,
+                timeout=timeout,
+                allowed_hosts=allowed_hosts,
+            )
         )
     except OnvifError as exc:
         errors.append(f"Profiles: {exc}")
@@ -557,6 +659,7 @@ def discover(payload, timeout=5):
                     get_stream_uri_body(profile["token"]),
                     credentials=credentials,
                     timeout=timeout,
+                    allowed_hosts=allowed_hosts,
                 )
             )
             profile["stream_uri"] = inject_credentials(stream_uri, credentials)
@@ -577,6 +680,7 @@ def discover(payload, timeout=5):
                 get_ptz_capabilities_body(),
                 credentials=credentials,
                 timeout=timeout,
+                allowed_hosts=allowed_hosts,
             )
         except OnvifError as exc:
             errors.append(f"PTZ capabilities: {exc}")
@@ -586,6 +690,7 @@ def discover(payload, timeout=5):
                 get_ptz_options_body(selected["ptz_configuration_token"]),
                 credentials=credentials,
                 timeout=timeout,
+                allowed_hosts=allowed_hosts,
             )
         except OnvifError as exc:
             errors.append(f"PTZ options: {exc}")
@@ -595,6 +700,7 @@ def discover(payload, timeout=5):
                 get_ptz_nodes_body(),
                 credentials=credentials,
                 timeout=timeout,
+                allowed_hosts=allowed_hosts,
             )
         except OnvifError as exc:
             errors.append(f"PTZ nodes: {exc}")
@@ -611,6 +717,7 @@ def discover(payload, timeout=5):
                     get_presets_body(selected["token"]),
                     credentials=credentials,
                     timeout=timeout,
+                    allowed_hosts=allowed_hosts,
                 )
             )
         except OnvifError as exc:

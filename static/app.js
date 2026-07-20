@@ -782,7 +782,9 @@ function useDiscoveredStream() {
 function downloadCompatibilityReport() {
   const cameraId = $("cameraId").value;
   if (!cameraId) return;
-  window.location.href = `/api/cameras/${cameraId}/compatibility-report`;
+  window.location.assign(
+    `/api/cameras/${encodeURIComponent(cameraId)}/compatibility-report`
+  );
 }
 
 function applyCameraTimeResult(result) {
