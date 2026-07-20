@@ -1,3 +1,6 @@
+import os
+from pathlib import Path
+import tempfile
 import unittest
 
 from app import server
@@ -64,6 +67,33 @@ class ServerFeatureTests(unittest.TestCase):
         self.assertEqual(server.normalize_view_rotation(270), 270)
         with self.assertRaises(ValueError):
             server.normalize_view_rotation(45)
+
+    def test_recording_directory_probe_reports_permission_errors(self):
+        original_recordings_dir = server.RECORDINGS_DIR
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            camera_dir = root / "cam"
+            camera_dir.mkdir()
+            camera_dir.chmod(0o555)
+            server.RECORDINGS_DIR = root
+            try:
+                if os.access(camera_dir, os.W_OK):
+                    self.skipTest("current user can write to read-only directories")
+                with self.assertRaisesRegex(RuntimeError, "Recording directory is not writable"):
+                    server.ensure_recording_directory({"slug": "cam"})
+            finally:
+                camera_dir.chmod(0o755)
+                server.RECORDINGS_DIR = original_recordings_dir
+
+    def test_recording_directory_probe_creates_missing_directory(self):
+        original_recordings_dir = server.RECORDINGS_DIR
+        with tempfile.TemporaryDirectory() as tmp:
+            server.RECORDINGS_DIR = Path(tmp)
+            try:
+                target = server.ensure_recording_directory({"slug": "cam"})
+                self.assertTrue(target.is_dir())
+            finally:
+                server.RECORDINGS_DIR = original_recordings_dir
 
 
 if __name__ == "__main__":

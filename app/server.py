@@ -974,6 +974,27 @@ def camera_dir(camera):
     return RECORDINGS_DIR / camera["slug"]
 
 
+def ensure_recording_directory(camera):
+    target_dir = camera_dir(camera)
+    probe_path = target_dir / f".plainnvr-write-test-{uuid.uuid4().hex}"
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        with probe_path.open("wb") as handle:
+            handle.write(b"")
+        probe_path.unlink()
+    except OSError as exc:
+        try:
+            probe_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise RuntimeError(
+            "Recording directory is not writable: "
+            f"{target_dir}. Check storage ownership or ACLs for UID {os.getuid()} "
+            f"and GID {os.getgid()}."
+        ) from exc
+    return target_dir
+
+
 class Go2RTCManager:
     def __init__(self):
         self.lock = threading.RLock()
@@ -1273,8 +1294,7 @@ relay = Go2RTCSourceManager()
 
 def build_ffmpeg_command(camera, source_camera=None):
     camera = source_camera or relay.source_camera(camera)
-    target_dir = camera_dir(camera)
-    target_dir.mkdir(parents=True, exist_ok=True)
+    target_dir = ensure_recording_directory(camera)
     output_pattern = str(target_dir / "%Y%m%dT%H%M%S.mp4")
     audio_url = str(camera.get("audio_url") or "").strip()
     record_audio = camera.get("record_audio", True)
