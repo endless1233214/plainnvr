@@ -411,17 +411,3 @@ For normal PlainNVR use, start with the Web UI and HLS/MSE live view first.
 Only troubleshoot WebRTC Candidates if you are intentionally using direct
 go2rtc WebRTC or a remote setup that needs advertised media candidates.
 
-## What To Show In A Setup Video
-
-This guide can be used as a simple video outline:
-
-1. Show PlainNVR in the TrueNAS Community app catalog.
-2. Explain that camera IPs are added after install, not in the TrueNAS form.
-3. Walk through the recommended install settings.
-4. Point out the Host IPs fields and explain that they are TrueNAS bind IPs.
-5. Choose app data and recordings storage.
-6. Install the app.
-7. Open the PlainNVR web portal.
-8. Create the first admin account.
-9. Add one camera with an RTSP URL.
-10. Test live view and confirm recordings.
