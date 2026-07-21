@@ -26,6 +26,10 @@ connection.
 - An Apple account selected as the project's signing team
 - Camera streams configured in the PlainNVR web interface
 
+## PlainNVR - Companion is now on testflight!
+Use this invite link to download PlainNVR - Companion, https://testflight.apple.com/join/m6RS5bnh
+
+
 ## Install With Xcode
 
 1. Open `PlainNVRiPhone.xcodeproj` in Xcode.

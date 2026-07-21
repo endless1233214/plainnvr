@@ -118,13 +118,7 @@ currently have full PlainNVR access.
 
 The recommended TrueNAS deployment pulls the public image:
 
-```text
-ghcr.io/endless1233214/plainnvr:latest
-```
-
-Use [`DEPLOY-TRUENAS.md`](DEPLOY-TRUENAS.md) for both the registry-based
-installation and the local-build alternative. Replace the example host paths in
-the supplied YAML with datasets from the target TrueNAS system.
+PlainNVR is now a community app. You can install on truenas simply by searching for the app on truenas under Discover Apps.
 
 ## Live Streaming
 
