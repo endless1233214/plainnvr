@@ -118,7 +118,7 @@ currently have full PlainNVR access.
 
 The recommended TrueNAS deployment pulls the public image:
 
-PlainNVR is now a community app. You can install on truenas simply by searching for the app on truenas under Discover Apps.
+PlainNVR is now a community app. You can install the app on TrueNAS simply by searching for it under Discover Apps.
 
 ## Live Streaming
 
