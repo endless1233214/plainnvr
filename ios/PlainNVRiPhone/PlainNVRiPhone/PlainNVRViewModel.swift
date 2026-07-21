@@ -12,7 +12,7 @@ enum PlainNVRConnectionState: Equatable {
 @MainActor
 final class PlainNVRViewModel: ObservableObject {
     private static let serverDefaultsKey = "PlainNVRServerAddress"
-    private static let defaultServerAddress = "http://192.168.1.172:8787"
+    private static let defaultServerAddress = ""
 
     @Published var serverAddress: String
     @Published var username = ""
@@ -34,13 +34,9 @@ final class PlainNVRViewModel: ObservableObject {
     private var client: PlainNVRClient?
 
     init() {
-        let savedServerAddress = UserDefaults.standard.string(forKey: Self.serverDefaultsKey)
-        if savedServerAddress == nil || savedServerAddress?.contains("192.168.1.0") == true {
-            serverAddress = Self.defaultServerAddress
-            UserDefaults.standard.set(Self.defaultServerAddress, forKey: Self.serverDefaultsKey)
-        } else {
-            serverAddress = savedServerAddress ?? Self.defaultServerAddress
-        }
+        serverAddress = UserDefaults.standard.string(
+            forKey: Self.serverDefaultsKey
+        ) ?? ""
     }
 
     var cameras: [Camera] {
@@ -65,6 +61,16 @@ final class PlainNVRViewModel: ObservableObject {
     }
 
     func bootstrap() async {
+        let trimmedServerAddress = serverAddress.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+
+        guard !trimmedServerAddress.isEmpty else {
+            connectionState = .signedOut
+            errorMessage = nil
+            return
+        }
+
         await runBusy {
             do {
                 let client = try configuredClient()
