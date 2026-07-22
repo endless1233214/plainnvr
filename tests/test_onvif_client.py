@@ -1,4 +1,5 @@
 import unittest
+from unittest import mock
 
 from app.onvif_client import (
     OnvifError,
@@ -12,7 +13,9 @@ from app.onvif_client import (
     parse_presets,
     redact_url,
     select_profile,
+    soap_post,
     validated_onvif_url,
+    wsse_password_digest,
 )
 
 
@@ -135,6 +138,29 @@ class OnvifParsingTests(unittest.TestCase):
             services,
             {"device": "http://192.168.1.50/onvif/device_service"},
         )
+
+    def test_wsse_password_digest_matches_onvif_wire_format(self):
+        digest = wsse_password_digest(
+            b"\x01\x02\x03\x04",
+            "2026-07-22T15:00:00Z",
+            "camera-secret",
+        )
+
+        self.assertEqual(digest, "MuJp+1aWEtAhLy+dM1EOi9N/Rx0=")
+
+    def test_blocked_onvif_url_is_rejected_before_request_is_built(self):
+        with mock.patch("app.onvif_client.urllib_request.Request") as request:
+            with self.assertRaises(OnvifError):
+                soap_post(
+                    "http://127.0.0.1/onvif/device_service",
+                    "<tds:GetDeviceInformation/>",
+                )
+
+        request.assert_not_called()
+
+    def test_metadata_service_onvif_url_is_rejected(self):
+        with self.assertRaises(OnvifError):
+            validated_onvif_url("http://169.254.169.254/latest/meta-data")
 
 
 if __name__ == "__main__":

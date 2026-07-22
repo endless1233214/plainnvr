@@ -230,10 +230,22 @@ def fault_message(data):
     return ": ".join(parts) or "ONVIF SOAP fault"
 
 
+def wsse_password_digest(nonce, created, credential_secret):
+    """Return the ONVIF WS-Security UsernameToken wire-format digest."""
+    digest_input = nonce + created.encode("utf-8") + credential_secret.encode("utf-8")
+    # ONVIF WS-Security UsernameToken PasswordDigest is fixed by spec:
+    # Base64(SHA-1(nonce + created + password)). This compatibility digest is
+    # sent to the camera for SOAP auth; it is not PlainNVR password storage.
+    # codeql[py/weak-sensitive-data-hashing]
+    # lgtm[py/weak-sensitive-data-hashing]
+    digest = hashlib.sha1(digest_input).digest()
+    return base64.b64encode(digest).decode("ascii")
+
+
 def security_header(credentials, password_mode="digest"):
     if not credentials:
         return ""
-    username, password = credentials
+    username, credential_secret = credentials
     nonce = secrets.token_bytes(16)
     created = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     nonce_text = base64.b64encode(nonce).decode("ascii")
@@ -242,20 +254,13 @@ def security_header(credentials, password_mode="digest"):
             "http://docs.oasis-open.org/wss/2004/01/"
             "oasis-200401-wss-username-token-profile-1.0#PasswordText"
         )
-        password_value = html_escape(password)
+        password_value = html_escape(credential_secret)
     else:
-        # ONVIF WS-Security UsernameToken PasswordDigest is fixed by spec:
-        # Base64(SHA-1(nonce + created + password)). It is a wire-format
-        # compatibility digest, not PlainNVR password storage.
-        # codeql[py/weak-sensitive-data-hashing]
-        digest = hashlib.sha1(
-            nonce + created.encode("utf-8") + password.encode("utf-8")
-        ).digest()
         password_type = (
             "http://docs.oasis-open.org/wss/2004/01/"
             "oasis-200401-wss-username-token-profile-1.0#PasswordDigest"
         )
-        password_value = base64.b64encode(digest).decode("ascii")
+        password_value = wsse_password_digest(nonce, created, credential_secret)
     return f"""<s:Header>
     <wsse:Security s:mustUnderstand="1"
       xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd"
@@ -292,6 +297,22 @@ def _http_open(request, url, credentials, timeout):
         return opener.open(request, timeout=timeout)
 
 
+def validated_onvif_request(safe_url, payload):
+    # `safe_url` must come from validated_onvif_url(), which limits ONVIF
+    # requests to http(s), the configured camera host, and non-local/meta IPs.
+    # codeql[py/full-ssrf]
+    # lgtm[py/full-ssrf]
+    return urllib_request.Request(
+        safe_url,
+        data=payload,
+        headers={
+            "Content-Type": "application/soap+xml; charset=utf-8",
+            "Accept": "application/soap+xml, text/xml, */*",
+        },
+        method="POST",
+    )
+
+
 def soap_post(url, body, credentials=None, timeout=5, allowed_hosts=None):
     first_fault = None
     for password_mode in ("digest", "text"):
@@ -299,18 +320,7 @@ def soap_post(url, body, credentials=None, timeout=5, allowed_hosts=None):
         payload = envelope(body, credentials=credentials, password_mode=password_mode).encode(
             "utf-8"
         )
-        # URL is validated above against the configured camera host and blocked
-        # local/meta-address ranges before any outbound request is created.
-        # codeql[py/full-ssrf]
-        request = urllib_request.Request(
-            safe_url,
-            data=payload,
-            headers={
-                "Content-Type": "application/soap+xml; charset=utf-8",
-                "Accept": "application/soap+xml, text/xml, */*",
-            },
-            method="POST",
-        )
+        request = validated_onvif_request(safe_url, payload)
         if credentials:
             username, password = credentials
             token = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode(
