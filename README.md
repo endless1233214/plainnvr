@@ -256,6 +256,13 @@ filesystem overhead.
   available-date summaries.
 - Deleting a camera does not delete its existing recordings.
 
+## Support Development
+
+PlainNVR is free and open source. Support helps cover testing hardware, hosting,
+Apple developer fees for the companion app, and continued development.
+
+[Support EndlessDev on Buy Me a Coffee](https://buymeacoffee.com/endlessdev)
+
 ## Upstream Components
 
 - go2rtc `v1.9.13` provides restreaming and the vendored MIT-licensed browser
