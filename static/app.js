@@ -1143,11 +1143,58 @@ async function logout() {
   window.location.href = "/login.html";
 }
 
+function legacyCopyText(value) {
+  const textarea = document.createElement("textarea");
+
+  textarea.value = value;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  textarea.setSelectionRange(0, textarea.value.length);
+
+  let copied = false;
+
+  try {
+    copied = document.execCommand("copy");
+  } finally {
+    textarea.remove();
+  }
+
+  return copied;
+}
+
 async function copyValue(elementId) {
-  const value = $(elementId).value;
-  if (!value) return;
-  await navigator.clipboard.writeText(value);
-  setSaveState("Copied");
+  const element = $(elementId);
+  const value = element?.value;
+
+  if (!value) {
+    setSaveState("Nothing to copy");
+    return;
+  }
+
+  try {
+    if (window.isSecureContext && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+    } else if (!legacyCopyText(value)) {
+      throw new Error("Browser rejected the copy command");
+    }
+
+    setSaveState("Copied");
+  } catch (error) {
+    console.error("Clipboard copy failed:", error);
+
+    // Leave the text selected so the user can press Ctrl+C manually.
+    element.focus();
+    element.select();
+    element.setSelectionRange?.(0, value.length);
+
+    setSaveState("Copy failed — press Ctrl+C");
+  }
 }
 
 function escapeHtml(value) {
