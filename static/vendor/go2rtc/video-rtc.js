@@ -249,7 +249,22 @@ export class VideoRTC extends HTMLElement {
         this.appendChild(this.video);
 
         this.video.addEventListener('error', ev => {
-            console.warn(ev);
+            const err = this.video.error;
+            // https://developer.mozilla.org/en-US/docs/Web/API/MediaError/code
+            const MEDIA_ERRORS = {
+                1: 'MEDIA_ERR_ABORTED',
+                2: 'MEDIA_ERR_NETWORK',
+                3: 'MEDIA_ERR_DECODE',
+                4: 'MEDIA_ERR_SRC_NOT_SUPPORTED'
+            };
+            console.error('[VideoRTC] Video error:', {
+                error: err ? MEDIA_ERRORS[err.code] : 'unknown',
+                message: err ? err.message : 'unknown',
+                codecs: this.mseCodecs || 'not set',
+                readyState: this.video.readyState,
+                networkState: this.video.networkState,
+                currentTime: this.video.currentTime
+            });
             if (this.ws) this.ws.close(); // run reconnect for broken MSE stream
         });
 
@@ -430,6 +445,14 @@ export class VideoRTC extends HTMLElement {
         this.play();
 
         this.mseCodecs = '';
+        let failed = false;
+        const fail = () => {
+            if (failed) return;
+            failed = true;
+            // Reconnect for fresh initialization; dropping encoded bytes
+            // would corrupt decoding.
+            this.ws?.close();
+        };
 
         this.onmessage['mse'] = msg => {
             if (msg.type !== 'mse') return;
@@ -445,7 +468,7 @@ export class VideoRTC extends HTMLElement {
                         sb.appendBuffer(data);
                         bufLen = 0;
                     } catch (e) {
-                        // console.debug(e);
+                        fail();
                     }
                 }
 
@@ -470,8 +493,13 @@ export class VideoRTC extends HTMLElement {
             let bufLen = 0;
 
             this.ondata = data => {
+                if (failed) return;
                 if (sb.updating || bufLen > 0) {
                     const b = new Uint8Array(data);
+                    if (b.byteLength > buf.byteLength - bufLen) {
+                        fail();
+                        return;
+                    }
                     buf.set(b, bufLen);
                     bufLen += b.byteLength;
                     // console.debug('VideoRTC.buffer', b.byteLength, bufLen);
@@ -479,7 +507,7 @@ export class VideoRTC extends HTMLElement {
                     try {
                         sb.appendBuffer(data);
                     } catch (e) {
-                        // console.debug(e);
+                        fail();
                     }
                 }
             };

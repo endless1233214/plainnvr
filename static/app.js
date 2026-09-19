@@ -948,19 +948,41 @@ function startLiveGo2RTC(camera, streamName) {
   $("liveEmpty").hidden = true;
   player.start(streamName);
   applyLiveViewTransform();
+  startLiveWatchdog(camera);
+}
+
+function startLiveWatchdog(camera) {
   clearLiveWatchdog();
-  state.liveWatchTimer = setTimeout(() => {
+  state.liveLastProgressAt = performance.now();
+  state.liveWatchTimer = setInterval(() => {
+    const player = $("go2rtcLive");
     if (
       !state.liveActive ||
       state.liveCameraId !== camera.id ||
-      state.liveBackend !== "go2rtc" ||
-      player.ready
+      state.liveBackend !== "go2rtc"
     ) {
+      clearLiveWatchdog();
       return;
     }
-    $("liveState").textContent = `${camera.name} go2rtc timed out; retrying`;
-    scheduleLiveRetry(camera, 3000);
-  }, 12000);
+    const now = performance.now();
+    const video = player.video;
+    if (document.hidden || (player.ready && video?.paused)) {
+      state.liveLastProgressAt = now;
+      state.liveLastMediaTime = video?.currentTime ?? null;
+      return;
+    }
+    const mediaTime = video?.currentTime;
+    if (Number.isFinite(mediaTime) && mediaTime !== state.liveLastMediaTime) {
+      state.liveLastMediaTime = mediaTime;
+      state.liveLastProgressAt = now;
+    }
+    const timeout = player.ready ? 6000 : 12000;
+    if (now - state.liveLastProgressAt < timeout) return;
+    clearLiveWatchdog();
+    player.stop();
+    $("liveState").textContent = `${camera.name} video stopped advancing; reconnecting`;
+    scheduleLiveRetry(camera, 1000);
+  }, 1000);
 }
 
 function clearLiveWatchdog() {
@@ -985,7 +1007,7 @@ function scheduleLiveRetry(camera, delay = 10000) {
     state.liveRetryTimer = null;
     if (state.liveActive && state.liveCameraId === camera.id) {
       const relay = state.relays[camera.id];
-      if (relay && !relay.healthy) {
+      if (relay && !relay.running) {
         scheduleLiveRetry(camera, 3000);
         return;
       }
@@ -999,7 +1021,7 @@ function syncLiveHealth() {
   const camera = selectedLiveCamera();
   if (!camera) return;
   const relay = state.relays[camera.id];
-  if (relay && !relay.healthy) {
+  if (relay && !relay.running) {
     stopLiveMedia();
     $("liveEmpty").hidden = false;
     $("liveEmpty").textContent = "go2rtc stream is recovering...";
@@ -1010,7 +1032,7 @@ function syncLiveHealth() {
   const hasMedia = Boolean(
     !$("go2rtcLive").hidden
   );
-  if (relay?.healthy && !hasMedia) {
+  if (relay?.running && !hasMedia && !state.liveRetryTimer) {
     startLive();
   }
 }
@@ -1253,7 +1275,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!camera) return;
     const { state: streamState, detail } = event.detail || {};
     if (streamState === "playing") {
-      clearLiveWatchdog();
+      startLiveWatchdog(camera);
       const mode = String(detail || "go2rtc").toUpperCase();
       $("liveSourceLabel").textContent = `go2rtc / ${mode}`;
       $("liveState").textContent = `${camera.name} ${mode}`;

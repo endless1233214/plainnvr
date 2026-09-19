@@ -1,0 +1,6 @@
+**
+!Dockerfile
+!app/
+!app/*.py
+!static/
+!static/**

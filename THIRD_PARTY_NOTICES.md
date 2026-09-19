@@ -10,7 +10,7 @@ PlainNVR's container build downloads and includes go2rtc.
 
 Project: go2rtc  
 Upstream: https://github.com/AlexxIT/go2rtc  
-Version currently referenced by PlainNVR: 1.9.13  
+Version currently referenced by PlainNVR: 1.9.14
 License: MIT License
 
 Copyright (c) 2022 Alexey Khit

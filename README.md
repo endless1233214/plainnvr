@@ -144,9 +144,18 @@ instead of leaving a frozen final frame.
 go2rtc and recorder supervision can be tuned with:
 
 - `NVR_GO2RTC_WEBRTC_CANDIDATES`
+- `NVR_GO2RTC_WEBRTC_NETWORKS` (default `udp4,tcp4`; use `udp4,tcp4,udp6,tcp6` for a verified dual-stack deployment)
 - `NVR_RTSP_READ_TIMEOUT_SECONDS`
 - `NVR_RECORDER_START_GRACE_SECONDS`
 - `NVR_RECORDER_STALE_SECONDS`
+
+WebRTC defaults to IPv4. Older go2rtc 1.9.13 builds could abort their WebRTC module
+when binding an IPv6 link-local address inside a Docker/TrueNAS container.
+PlainNVR 0.1.3 upgrades to go2rtc 1.9.14, which also fixes listener initialization.
+The web server could remain healthy in that state while native clients received
+no WebRTC signaling answer. When using published container ports, also set
+`NVR_GO2RTC_WEBRTC_CANDIDATES` to a reachable server address and media port
+(for example, `192.0.2.1:8555`), and publish that port for both TCP and UDP.
 
 ## ONVIF And PTZ
 
@@ -270,3 +279,25 @@ Apple developer fees for the companion app, and continued development.
 - Frigate's public ONVIF probe, capability-driven PTZ interface, and live-view
   architecture served as behavioral references. PlainNVR's discovery and
   integration code is independently implemented for this smaller codebase.
+
+## Server security and deployment
+
+The go2rtc management API and RTSP relay bind to localhost by default. Native
+and browser playback use authenticated PlainNVR routes; only the WebRTC media
+port needs external TCP/UDP access. Publishing the RTSP container port alone
+no longer exposes the relay. An administrator can explicitly set
+`NVR_GO2RTC_RTSP_HOST=0.0.0.0` for trusted-network RTSP integrations, but that
+relay has no authentication: restrict access with the network firewall.
+Keep `NVR_GO2RTC_API_HOST` on localhost.
+
+Treat every PlainNVR account as an administrator. Camera credentials are stored
+in the data volume; restrict filesystem access and protect backups. For remote
+access, use HTTPS through a trusted reverse proxy or a VPN; direct HTTP sends
+login credentials and session cookies without transport encryption. Do not
+expose an unconfigured instance: first-run setup creates the administrator.
+
+Mutations accept JSON objects up to 1 MiB, reject foreign browser origins, and
+login/setup attempts are limited to 20 per minute per network peer. Behind a
+reverse proxy, users share that limit unless the proxy connects from different
+addresses. Playback WebSockets accept configured camera IDs only. The HLS
+proxy exposes only fixed playlist and segment routes.
