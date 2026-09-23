@@ -27,6 +27,10 @@
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>PlainNVR connects to your local NVR server on your home network.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>PlainNVR's video library can access the iPhone camera, but this app only receives video from your NVR and does not capture video from this device.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>PlainNVR's audio library can access the iPhone microphone, but this app only plays camera audio and does not record audio from this device.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>PlainNVR saves selected recording clips to your photo library.</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
