@@ -217,16 +217,9 @@ final class PlainNVRViewModel: ObservableObject {
     }
 
     func restartLiveStream() async {
-        do {
-            if let client, let camera = selectedCamera {
-                try await client.restartLive(cameraID: camera.id)
-            }
-            livePlaybackEnabled = true
-            liveStatusMessage = "Restarting live stream..."
-            bumpLiveReload()
-        } catch {
-            errorMessage = userFacingError(error)
-        }
+        livePlaybackEnabled = true
+        liveStatusMessage = "Reconnecting live view..."
+        bumpLiveReload()
     }
 
     func stopLiveStream() async {
@@ -280,7 +273,7 @@ final class PlainNVRViewModel: ObservableObject {
     }
 
     func diagnoseLiveStream() async {
-        liveStatusMessage = "Using go2rtc HLS from PlainNVR."
+        liveStatusMessage = "Live view prefers native WebRTC and falls back to HLS when needed."
     }
 
     func updateLivePlayerStatus(_ message: String?) {
@@ -288,7 +281,7 @@ final class PlainNVRViewModel: ObservableObject {
     }
 
     func updateLivePlayerFailure(_ message: String) {
-        liveStatusMessage = "\(message)\nUsing go2rtc HLS from PlainNVR."
+        liveStatusMessage = message
     }
 
     func setRecorderRunning(_ running: Bool, camera: Camera) async {
