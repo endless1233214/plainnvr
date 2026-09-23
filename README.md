@@ -56,11 +56,11 @@ It publishes these ports:
 | Port | Purpose |
 | --- | --- |
 | `8787/tcp` | PlainNVR web interface and API |
-| `8554/tcp` | go2rtc RTSP restreams |
 | `8555/tcp` and `8555/udp` | go2rtc WebRTC media |
 
-The go2rtc management API on port `1984` is not published. PlainNVR exposes only
-the required media endpoints through its authenticated same-origin proxy.
+The default Compose file does not publish the RTSP relay. go2rtc's management API
+on port `1984` also stays internal. PlainNVR exposes signaling and HLS through
+its authenticated web interface instead of exposing the go2rtc API directly.
 
 ## Add The First Camera
 
@@ -119,9 +119,11 @@ currently have full PlainNVR access.
 
 ## TrueNAS
 
-The recommended TrueNAS deployment pulls the public image:
+PlainNVR is available in the TrueNAS Community catalog. Install it from
+**Discover Apps** instead of maintaining a separate custom Compose deployment.
 
-PlainNVR is now a community app. You can install the app on TrueNAS simply by searching for it under Discover Apps.
+See [the TrueNAS setup guide](docs/truenas-setup.md) for the recommended storage,
+network, and WebRTC settings.
 
 ## Live Streaming
 
@@ -132,8 +134,10 @@ separate connection to the camera for every consumer.
 The web viewer prefers go2rtc MSE for native frame rate, source resolution, and
 low latency, with go2rtc HLS for clients that need an HLS URL.
 
-The iPhone app and optional Home Assistant bridge use the go2rtc-backed HLS
-endpoint at `/live/<camera_id>/stream.m3u8`.
+The iPhone app starts HLS immediately while it negotiates native WebRTC, then
+switches to WebRTC when the first video frame arrives. If WebRTC is unavailable,
+HLS stays active. The optional Home Assistant bridge uses the authenticated HLS
+and snapshot endpoints.
 
 PlainNVR checks for fresh media output rather than only checking whether a
 process exists. A stalled go2rtc restream, recorder, or viewer is restarted
@@ -149,13 +153,15 @@ go2rtc and recorder supervision can be tuned with:
 - `NVR_RECORDER_START_GRACE_SECONDS`
 - `NVR_RECORDER_STALE_SECONDS`
 
-WebRTC defaults to IPv4. Older go2rtc 1.9.13 builds could abort their WebRTC module
-when binding an IPv6 link-local address inside a Docker/TrueNAS container.
-PlainNVR 0.1.3 upgrades to go2rtc 1.9.14, which also fixes listener initialization.
-The web server could remain healthy in that state while native clients received
-no WebRTC signaling answer. When using published container ports, also set
-`NVR_GO2RTC_WEBRTC_CANDIDATES` to a reachable server address and media port
-(for example, `192.0.2.1:8555`), and publish that port for both TCP and UDP.
+WebRTC defaults to IPv4. In container deployments, publish the WebRTC media port
+for both TCP and UDP and set `NVR_GO2RTC_WEBRTC_CANDIDATES` to an address the
+client can actually reach when go2rtc would otherwise advertise only a container
+address (for example, `192.0.2.1:8555`). Enable IPv6 only after verifying the
+host and container networking path.
+
+Release-specific streaming fixes and validation are kept in
+[the 0.1.3 release audit](docs/RELEASE-0.1.3-AUDIT.md) instead of this evergreen
+setup guide.
 
 ## ONVIF And PTZ
 
@@ -241,13 +247,14 @@ authentication when an integration requires a username and password.
 
 ## iPhone Companion App
 
-[`ios/PlainNVRiPhone`](ios/PlainNVRiPhone) contains the source-distributed
-SwiftUI companion app. It supports authenticated server access, go2rtc HLS live
-viewing, capability-aware PTZ controls, recorder controls, recording
+[`ios/PlainNVRiPhone`](ios/PlainNVRiPhone) contains the SwiftUI companion app.
+It supports authenticated server access, low-latency WebRTC with HLS fallback,
+camera audio, capability-aware PTZ controls, recorder controls, recording
 browsing, and MP4 sharing or saving.
 
-See the [iPhone app README](ios/PlainNVRiPhone/README.md) for Xcode installation
-and server requirements.
+The app is also available through TestFlight. See the
+[iPhone app README](ios/PlainNVRiPhone/README.md) for the invite link, Xcode
+installation, and server/network requirements.
 
 ## Storage Estimate
 
@@ -287,7 +294,7 @@ Apple developer fees for the companion app, and continued development.
   architecture served as behavioral references. PlainNVR's discovery and
   integration code is independently implemented for this smaller codebase.
 
-## Server security and deployment
+## Server Security And Deployment
 
 The go2rtc management API and RTSP relay bind to localhost by default. Native
 and browser playback use authenticated PlainNVR routes; only the WebRTC media
@@ -315,10 +322,7 @@ user. HTTP connections are capped at 128 and slow requests time out after 30
 seconds. Failed Basic streaming logins also have a per-peer limit; successful
 stream requests do not consume it.
 
-Version 0.1.3 uses Python 3.14, Alpine 3.24, source-built go2rtc with updated Go
-dependencies, and FFmpeg 9.0.2 with a MOV bounds-check patch. The FFmpeg build
-supports camera playback/probing, video-copy MP4 recording with AAC audio,
-snapshots and night sampling. It excludes unrelated subtitle/game codecs,
-DASH/XML, device capture and hardware acceleration. See the
-[release audit](docs/RELEASE-0.1.3-AUDIT.md) for scan scope, compatibility and
-verification, and [third-party notices](THIRD_PARTY_NOTICES.md) for source details.
+Dependency versions, security review notes, and release-specific validation live
+in the [release audit](docs/RELEASE-0.1.3-AUDIT.md),
+[FFmpeg security notes](docs/FFMPEG-SECURITY.md), and
+[third-party notices](THIRD_PARTY_NOTICES.md).
