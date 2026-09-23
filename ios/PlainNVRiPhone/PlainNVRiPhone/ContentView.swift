@@ -237,6 +237,7 @@ struct LiveView: View {
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @State private var landscapePTZControlsVisible = false
     @State private var landscapePTZHideTask: Task<Void, Never>?
+    @State private var isMuted = false
 
     private var isLandscape: Bool {
         verticalSizeClass == .compact
@@ -276,11 +277,11 @@ struct LiveView: View {
             if viewModel.cameras.isEmpty {
                 ContentUnavailableView("No Cameras", systemImage: "video.slash")
             } else {
-                LiveControlsView()
+                LiveControlsView(isMuted: $isMuted)
                     .padding(.horizontal)
 
                 if let camera = viewModel.selectedCamera {
-                    LivePlayerSurface(camera: camera)
+                    LivePlayerSurface(camera: camera, isMuted: isMuted)
 
                     CameraRow(camera: camera, recorder: viewModel.status?.recorders[camera.id])
                         .padding(.horizontal)
@@ -299,7 +300,7 @@ struct LiveView: View {
             Color.black.ignoresSafeArea()
 
             if let camera = viewModel.selectedCamera, viewModel.livePlaybackEnabled, let url = viewModel.liveURL(for: camera) {
-                landscapeSurface(camera: camera, url: url)
+                landscapeSurface(camera: camera, url: url, isMuted: isMuted)
                     .ignoresSafeArea()
 
                 if camera.supportsPTZ, landscapePTZControlsVisible {
@@ -307,6 +308,17 @@ struct LiveView: View {
                         .ignoresSafeArea()
                         .transition(.opacity)
                 }
+
+                VStack {
+                    HStack {
+                        MuteButton(isMuted: $isMuted, overlayStyle: true)
+                            .padding(.top, 34)
+                            .padding(.leading, 78)
+                        Spacer()
+                    }
+                    Spacer()
+                }
+                .ignoresSafeArea()
 
                 if let message = viewModel.liveStatusMessage, !message.isEmpty {
                     VStack {
@@ -340,9 +352,11 @@ struct LiveView: View {
     }
 
     @ViewBuilder
-    private func landscapeSurface(camera: Camera, url: URL) -> some View {
+    private func landscapeSurface(camera: Camera, url: URL, isMuted: Bool) -> some View {
         LivePlayerView(
             url: url,
+            relayPort: viewModel.status?.go2rtc?.webrtcPort,
+            isMuted: isMuted,
             rotationDegrees: camera.normalizedViewRotation,
             viewerZoomEnabled: !camera.usesHardwareZoom,
             onZoomGesture: { action in
@@ -387,6 +401,7 @@ struct LiveView: View {
 
 struct LiveControlsView: View {
     @EnvironmentObject private var viewModel: PlainNVRViewModel
+    @Binding var isMuted: Bool
 
     var body: some View {
         VStack(spacing: 12) {
@@ -418,11 +433,40 @@ struct LiveControlsView: View {
                 }
                 .accessibilityLabel("Restart Live")
                 .buttonStyle(.bordered)
+
+                MuteButton(isMuted: $isMuted)
             }
 
         }
         .padding(12)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+struct MuteButton: View {
+    @Binding var isMuted: Bool
+    var overlayStyle = false
+
+    var body: some View {
+        Button {
+            isMuted.toggle()
+        } label: {
+            Image(systemName: isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                .font(.system(size: overlayStyle ? 15 : 17, weight: .semibold))
+                .foregroundStyle(overlayStyle ? .white : .blue)
+                .frame(width: overlayStyle ? 42 : 34, height: overlayStyle ? 42 : 34)
+                .background(overlayStyle ? Color.black.opacity(0.46) : Color.secondary.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: overlayStyle ? 21 : 8))
+                .overlay {
+                    if !overlayStyle {
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(.quaternary, lineWidth: 1)
+                    }
+                }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(isMuted ? "Unmute" : "Mute")
+        .accessibilityAddTraits(.isButton)
     }
 }
 
@@ -490,6 +534,7 @@ struct PTZPressButton: View {
 struct LivePlayerSurface: View {
     @EnvironmentObject private var viewModel: PlainNVRViewModel
     let camera: Camera
+    var isMuted = false
     @State private var ptzControlsVisible = false
     @State private var ptzHideTask: Task<Void, Never>?
 
@@ -546,6 +591,8 @@ struct LivePlayerSurface: View {
     private func liveSurface(url: URL) -> some View {
         LivePlayerView(
             url: url,
+            relayPort: viewModel.status?.go2rtc?.webrtcPort,
+            isMuted: isMuted,
             rotationDegrees: camera.normalizedViewRotation,
             viewerZoomEnabled: !camera.usesHardwareZoom,
             onZoomGesture: { action in

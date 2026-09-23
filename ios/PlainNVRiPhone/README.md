@@ -9,7 +9,8 @@ connection.
 
 - Sign in with an existing PlainNVR account
 - View camera status, recorder state, disk usage, and recorder events
-- Play go2rtc-backed HLS live video
+- Play low-latency WebRTC live video with HLS fallback
+- Mute or unmute camera audio during live playback
 - Restart or pause a selected live stream
 - Use capability-aware PTZ controls, press-and-hold ONVIF movement, home
   position, hardware or digital zoom, and discovered presets
@@ -21,7 +22,7 @@ connection.
 
 ## Requirements
 
-- A running PlainNVR server reachable from the iPhone
+- A running PlainNVR server reachable from the iPhone (0.1.3 or newer for WebRTC)
 - A current Xcode installation with the required iOS platform
 - An Apple account selected as the project's signing team
 - Camera streams configured in the PlainNVR web interface
@@ -62,5 +63,7 @@ endpoints:
 - `GET /media/<camera_id>/<segment>.mp4?token=<stream_token>` for recording
   playback, sharing, and download
 
-The HLS player keeps a small forward buffer, seeks toward the live edge when
-latency grows, and reopens the stream when playback stops advancing.
+The app starts HLS while negotiating native WebRTC, then switches to WebRTC
+when the first video frame arrives. HLS remains available when a server or
+connection cannot support WebRTC. The HLS player keeps a small forward buffer,
+seeks toward the live edge when latency grows, and reopens a stalled stream.

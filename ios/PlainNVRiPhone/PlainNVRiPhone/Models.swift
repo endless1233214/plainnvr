@@ -20,6 +20,11 @@ struct StatusResponse: Decodable {
     let users: [UserAccount]?
     let username: String?
     let now: String?
+    let go2rtc: LiveRelayStatus?
+}
+
+struct LiveRelayStatus: Decodable {
+    let webrtcPort: Int?
 }
 
 struct Camera: Decodable, Identifiable, Hashable {
@@ -80,7 +85,7 @@ struct Camera: Decodable, Identifiable, Hashable {
     }
 
     var liveModeLabel: String {
-        "go2rtc HLS"
+        "WebRTC / HLS"
     }
 
     var normalizedViewRotation: Int {
