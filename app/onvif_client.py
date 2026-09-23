@@ -19,7 +19,7 @@ SCHEMA_NS = "http://www.onvif.org/ver10/schema"
 SOAP_NS = "http://www.w3.org/2003/05/soap-envelope"
 
 DEVICE_PATHS = ("/onvif/device_service", "/onvif/device", "/onvif/services")
-DEVICE_PORTS = (80, 8080, 8000, 8899)
+DEVICE_PORTS = (80, 2020, 8080, 8000, 8899)
 ONVIF_HTTP_SCHEMES = ("http", "https")
 BLOCKED_ONVIF_HOSTS = ("localhost",)
 
@@ -94,7 +94,7 @@ def normalized_host(host):
 
 def allowed_endpoint_hosts(payload):
     hosts = set()
-    for key in ("ptz_url", "rtsp_url"):
+    for key in ("onvif_url", "ptz_url", "rtsp_url"):
         value = str((payload or {}).get(key) or "").strip()
         if not value:
             continue
@@ -346,8 +346,9 @@ def soap_post(url, body, credentials=None, timeout=5, allowed_hosts=None):
 
 def device_url_candidates(payload):
     stream_url = str(payload.get("rtsp_url") or "").strip()
+    device_url = str(payload.get("onvif_url") or "").strip()
     control_url = str(payload.get("ptz_url") or "").strip()
-    sources = [value for value in (control_url, stream_url) if value]
+    sources = [value for value in (device_url, control_url, stream_url) if value]
     candidates = []
 
     def add(value):
@@ -363,8 +364,8 @@ def device_url_candidates(payload):
         host = parsed.hostname
         if ":" in host and not host.startswith("["):
             host = f"[{host}]"
-        if control_url and source == control_url and parsed.path not in ("", "/"):
-            if "device" in parsed.path.lower():
+        if source in (device_url, control_url) and parsed.path not in ("", "/"):
+            if source == device_url or "device" in parsed.path.lower():
                 add(source)
             base_port = f":{parsed.port}" if parsed.port else ""
             add(f"{scheme}://{host}{base_port}/onvif/device_service")
@@ -376,8 +377,10 @@ def device_url_candidates(payload):
 
 
 def payload_credentials(payload):
-    return credentials_from_url(payload.get("ptz_url")) or credentials_from_url(
-        payload.get("rtsp_url")
+    return (
+        credentials_from_url(payload.get("onvif_url"))
+        or credentials_from_url(payload.get("ptz_url"))
+        or credentials_from_url(payload.get("rtsp_url"))
     )
 
 
@@ -645,7 +648,7 @@ def discover(payload, timeout=5):
     parsed_device = urlparse(device_url)
     base = f"{parsed_device.scheme}://{netloc_without_credentials(parsed_device)}"
     media_url = services.get("media") or f"{base}/onvif/media_service"
-    ptz_url = services.get("ptz") or f"{base}/onvif/ptz_service"
+    ptz_url = services.get("ptz")
 
     profiles = []
     try:
@@ -681,6 +684,10 @@ def discover(payload, timeout=5):
     features = []
     presets = []
     if selected and selected.get("ptz_configuration_token"):
+        # Some older cameras omit the PTZ XAddr even though their media profile
+        # carries a PTZ configuration. Retain the legacy path only for those
+        # devices; fixed Profile-S cameras must not gain a fabricated PTZ service.
+        ptz_url = ptz_url or f"{base}/onvif/ptz_service"
         capabilities_data = None
         options_data = None
         nodes_data = None

@@ -1,0 +1,16 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://github.com/endless1233214/plainnvr/blob/main/build/security/go2rtc.openvex.json",
+  "author": "PlainNVR maintainers",
+  "timestamp": "2026-09-19T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": { "name": "GO-2026-5932" },
+      "products": [ { "@id": "pkg:golang/golang.org/x/crypto@v0.57.0" } ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The advisory concerns golang.org/x/crypto/openpgp. The pinned go2rtc build does not import that package; go list -deps . confirms its absence. This assertion is limited to the PlainNVR go2rtc executable and must be rechecked when its dependency graph changes."
+    }
+  ]
+}

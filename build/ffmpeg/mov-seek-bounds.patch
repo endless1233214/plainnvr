@@ -1,0 +1,6 @@
+--- a/libavformat/mov.c
++++ b/libavformat/mov.c
+@@ -11982 +11982,2 @@
+-    if (sample >= sc->sample_offsets_count)
++    if (sample < 0 || sample >= sti->nb_index_entries ||
++        sample >= sc->sample_offsets_count)

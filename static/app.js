@@ -253,6 +253,7 @@ function cameraPayloadFromForm() {
     view_rotation: Number($("viewRotation").value),
     ptz_enabled: $("ptzEnabled").checked,
     ptz_type: $("ptzType").value,
+    onvif_url: $("onvifUrl").value.trim(),
     ptz_url: $("ptzUrl").value.trim(),
     ptz_profile_token: $("ptzProfileToken").value.trim(),
     ptz_zoom_mode: $("ptzZoomMode").value,
@@ -275,6 +276,7 @@ function resetForm() {
   $("viewRotation").value = "0";
   $("ptzEnabled").checked = false;
   $("ptzType").value = "onvif";
+  $("onvifUrl").value = "";
   $("ptzUrl").value = "";
   $("ptzProfileToken").value = "Profile_1";
   $("ptzZoomMode").value = "auto";
@@ -305,6 +307,7 @@ function editCamera(camera) {
   $("viewRotation").value = String(cameraViewRotation(camera));
   $("ptzEnabled").checked = Boolean(camera.ptz_enabled);
   $("ptzType").value = camera.ptz_type || "onvif";
+  $("onvifUrl").value = camera.onvif_url || "";
   $("ptzUrl").value = camera.ptz_url || "";
   $("ptzProfileToken").value = camera.ptz_profile_token || "Profile_1";
   $("ptzZoomMode").value = camera.ptz_zoom_mode || "auto";
@@ -384,11 +387,17 @@ function renderOnvifDiscovery(discovery) {
   }
 
   const device = discovery.device || {};
-  const features = (discovery.features || []).join(", ") || "stream discovery only";
+  const audioProfiles = profiles.filter((profile) => profile.audio?.encoding).length;
+  const features = discovery.ptz_supported
+    ? (discovery.features || []).join(", ") || "PTZ profile"
+    : "PTZ unavailable";
   $("onvifState").textContent = `${device.manufacturer || "ONVIF"} ${
     device.model || "camera"
-  }: ${profiles.length} profile(s); ${features}`;
+  }: ${profiles.length} media profile(s), ${audioProfiles} with audio; ${features}`;
 
+  if (discovery.services?.device) {
+    $("onvifUrl").value = discovery.services.device;
+  }
   if (discovery.services?.ptz) {
     $("ptzUrl").value = discovery.services.ptz;
   }
@@ -398,6 +407,8 @@ function renderOnvifDiscovery(discovery) {
   if (discovery.ptz_supported) {
     $("ptzEnabled").checked = true;
     $("ptzType").value = "onvif";
+  } else if ($("ptzType").value === "onvif") {
+    $("ptzEnabled").checked = false;
   }
   if ((discovery.features || []).includes("zoom")) {
     $("ptzZoomMode").value = "hardware";
@@ -740,7 +751,7 @@ async function testStream() {
 async function discoverOnvif() {
   const cameraId = $("cameraId").value;
   $("discoverOnvif").disabled = true;
-  $("onvifState").textContent = "Discovering device services, profiles, streams, and PTZ...";
+  $("onvifState").textContent = "Discovering ONVIF device services and media profiles...";
   try {
     const result = await api(
       cameraId ? `/api/cameras/${cameraId}/onvif/discover` : "/api/onvif/discover",
@@ -948,19 +959,41 @@ function startLiveGo2RTC(camera, streamName) {
   $("liveEmpty").hidden = true;
   player.start(streamName);
   applyLiveViewTransform();
+  startLiveWatchdog(camera);
+}
+
+function startLiveWatchdog(camera) {
   clearLiveWatchdog();
-  state.liveWatchTimer = setTimeout(() => {
+  state.liveLastProgressAt = performance.now();
+  state.liveWatchTimer = setInterval(() => {
+    const player = $("go2rtcLive");
     if (
       !state.liveActive ||
       state.liveCameraId !== camera.id ||
-      state.liveBackend !== "go2rtc" ||
-      player.ready
+      state.liveBackend !== "go2rtc"
     ) {
+      clearLiveWatchdog();
       return;
     }
-    $("liveState").textContent = `${camera.name} go2rtc timed out; retrying`;
-    scheduleLiveRetry(camera, 3000);
-  }, 12000);
+    const now = performance.now();
+    const video = player.video;
+    if (document.hidden || (player.ready && video?.paused)) {
+      state.liveLastProgressAt = now;
+      state.liveLastMediaTime = video?.currentTime ?? null;
+      return;
+    }
+    const mediaTime = video?.currentTime;
+    if (Number.isFinite(mediaTime) && mediaTime !== state.liveLastMediaTime) {
+      state.liveLastMediaTime = mediaTime;
+      state.liveLastProgressAt = now;
+    }
+    const timeout = player.ready ? 6000 : 12000;
+    if (now - state.liveLastProgressAt < timeout) return;
+    clearLiveWatchdog();
+    player.stop();
+    $("liveState").textContent = `${camera.name} video stopped advancing; reconnecting`;
+    scheduleLiveRetry(camera, 1000);
+  }, 1000);
 }
 
 function clearLiveWatchdog() {
@@ -985,7 +1018,7 @@ function scheduleLiveRetry(camera, delay = 10000) {
     state.liveRetryTimer = null;
     if (state.liveActive && state.liveCameraId === camera.id) {
       const relay = state.relays[camera.id];
-      if (relay && !relay.healthy) {
+      if (relay && !relay.running) {
         scheduleLiveRetry(camera, 3000);
         return;
       }
@@ -999,7 +1032,7 @@ function syncLiveHealth() {
   const camera = selectedLiveCamera();
   if (!camera) return;
   const relay = state.relays[camera.id];
-  if (relay && !relay.healthy) {
+  if (relay && !relay.running) {
     stopLiveMedia();
     $("liveEmpty").hidden = false;
     $("liveEmpty").textContent = "go2rtc stream is recovering...";
@@ -1010,7 +1043,7 @@ function syncLiveHealth() {
   const hasMedia = Boolean(
     !$("go2rtcLive").hidden
   );
-  if (relay?.healthy && !hasMedia) {
+  if (relay?.running && !hasMedia && !state.liveRetryTimer) {
     startLive();
   }
 }
@@ -1253,7 +1286,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!camera) return;
     const { state: streamState, detail } = event.detail || {};
     if (streamState === "playing") {
-      clearLiveWatchdog();
+      startLiveWatchdog(camera);
       const mode = String(detail || "go2rtc").toUpperCase();
       $("liveSourceLabel").textContent = `go2rtc / ${mode}`;
       $("liveState").textContent = `${camera.name} ${mode}`;

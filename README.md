@@ -144,34 +144,50 @@ instead of leaving a frozen final frame.
 go2rtc and recorder supervision can be tuned with:
 
 - `NVR_GO2RTC_WEBRTC_CANDIDATES`
+- `NVR_GO2RTC_WEBRTC_NETWORKS` (default `udp4,tcp4`; use `udp4,tcp4,udp6,tcp6` for a verified dual-stack deployment)
 - `NVR_RTSP_READ_TIMEOUT_SECONDS`
 - `NVR_RECORDER_START_GRACE_SECONDS`
 - `NVR_RECORDER_STALE_SECONDS`
 
+WebRTC defaults to IPv4. Older go2rtc 1.9.13 builds could abort their WebRTC module
+when binding an IPv6 link-local address inside a Docker/TrueNAS container.
+PlainNVR 0.1.3 upgrades to go2rtc 1.9.14, which also fixes listener initialization.
+The web server could remain healthy in that state while native clients received
+no WebRTC signaling answer. When using published container ports, also set
+`NVR_GO2RTC_WEBRTC_CANDIDATES` to a reachable server address and media port
+(for example, `192.0.2.1:8555`), and publish that port for both TCP and UDP.
+
 ## ONVIF And PTZ
 
-Enable **PTZ** in the camera editor and select **ONVIF** for standards-based
-control. **Discover ONVIF** queries the camera for:
+**Discover ONVIF** works for fixed cameras as well as PTZ models. PlainNVR
+derives common device endpoints from the RTSP host, including port `2020` used
+by Tapo Profile-S cameras. The optional **ONVIF Device URL** overrides discovery
+without implying that the camera can move. Discovery queries:
 
-- Device, media, and PTZ service endpoints
+- Device, media, imaging, events, and advertised PTZ service endpoints
 - Manufacturer, model, and firmware identity
-- Media profiles and stream URIs
-- PTZ configuration and movement spaces
+- Media profiles, stream URIs, video, and audio encodings
+- PTZ configuration and movement spaces, when present
 - Pan, tilt, and zoom capabilities
 - Home position and presets
 
-Selecting a discovered profile stores its service endpoint and profile token
-with the camera. The web and iPhone controls then display only the capabilities
-reported by that camera.
+Selecting a discovered stream updates the camera RTSP URL. Fixed ONVIF cameras
+remain fully supported for media discovery while PTZ stays disabled. The web
+and iPhone controls display only capabilities reported by the camera.
 
 ONVIF movement uses continuous press-and-hold commands and sends STOP when the
 control is released. Manual **Control URL** and **Profile / Hash** fields remain
-available for devices with incomplete discovery. Credentials may be included in
-the ONVIF URL when WS-Security is required:
+available for movable devices with incomplete discovery. Credentials may be
+included in the ONVIF Device URL when WS-Security is required:
 
 ```text
-http://USERNAME:PASSWORD@CAMERA-HOST:8080/onvif/device_service
+http://USERNAME:PASSWORD@CAMERA-HOST:2020/onvif/device_service
 ```
+
+ONVIF Profile S does not by itself guarantee spotlight, siren, or two-way-talk
+control. PlainNVR does not advertise those controls unless a future integration
+can identify a standard relay/output or an explicit vendor API. Camera microphone
+audio contained in the RTSP stream is supported for live view and recording.
 
 PTZ zoom is configured separately from pan and tilt:
 
@@ -265,8 +281,44 @@ Apple developer fees for the companion app, and continued development.
 
 ## Upstream Components
 
-- go2rtc `v1.9.13` provides restreaming and the vendored MIT-licensed browser
+- go2rtc `v1.9.14` provides restreaming and the vendored MIT-licensed browser
   player under `static/vendor/go2rtc`.
 - Frigate's public ONVIF probe, capability-driven PTZ interface, and live-view
   architecture served as behavioral references. PlainNVR's discovery and
   integration code is independently implemented for this smaller codebase.
+
+## Server security and deployment
+
+The go2rtc management API and RTSP relay bind to localhost by default. Native
+and browser playback use authenticated PlainNVR routes; only the WebRTC media
+port needs external TCP/UDP access. Publishing the RTSP container port alone
+no longer exposes the relay. An administrator can explicitly set
+`NVR_GO2RTC_RTSP_HOST=0.0.0.0` for trusted-network RTSP integrations, but that
+relay has no authentication: restrict access with the network firewall.
+Keep `NVR_GO2RTC_API_HOST` on localhost.
+
+Treat every PlainNVR account as an administrator. Camera credentials are stored
+in the data volume; restrict filesystem access and protect backups. For remote
+access, use HTTPS through a trusted reverse proxy or a VPN; direct HTTP sends
+login credentials and session cookies without transport encryption. Do not
+expose an unconfigured instance: first-run setup creates the administrator.
+
+Mutations accept JSON objects up to 1 MiB, reject foreign browser origins, and
+login/setup attempts are limited to 20 per minute per network peer. Behind a
+reverse proxy, users share that limit unless the proxy connects from different
+addresses. Playback WebSockets accept configured camera IDs only. The HLS
+proxy exposes only fixed playlist and segment routes.
+
+The release image runs as UID/GID 568 by default; mounted data and recording
+folders must be writable by the configured user. New files are private to that
+user. HTTP connections are capped at 128 and slow requests time out after 30
+seconds. Failed Basic streaming logins also have a per-peer limit; successful
+stream requests do not consume it.
+
+Version 0.1.3 uses Python 3.14, Alpine 3.24, source-built go2rtc with updated Go
+dependencies, and FFmpeg 9.0.2 with a MOV bounds-check patch. The FFmpeg build
+supports camera playback/probing, video-copy MP4 recording with AAC audio,
+snapshots and night sampling. It excludes unrelated subtitle/game codecs,
+DASH/XML, device capture and hardware acceleration. See the
+[release audit](docs/RELEASE-0.1.3-AUDIT.md) for scan scope, compatibility and
+verification, and [third-party notices](THIRD_PARTY_NOTICES.md) for source details.
