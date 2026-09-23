@@ -1,28 +1,47 @@
-FROM python:3.12-slim
+# Build media dependencies from pinned source with an auditable dependency lock.
+FROM golang:1.27.1-alpine3.24 AS go2rtc-build
+ADD https://codeload.github.com/AlexxIT/go2rtc/tar.gz/refs/tags/v1.9.14 /tmp/go2rtc.tar.gz
+RUN echo "e3d59e553dfd0085889a2956281cfc0fd78bb7b4d6269d1c90c217d2ffcf2c7b  /tmp/go2rtc.tar.gz" | sha256sum -c - \
+    && mkdir /src && tar -xzf /tmp/go2rtc.tar.gz -C /src --strip-components=1
+WORKDIR /src
+COPY build/go2rtc/go.mod build/go2rtc/go.sum ./
+RUN go mod download && go mod verify \
+    && go test ./internal/webrtc ./internal/hls ./internal/rtsp ./pkg/webrtc ./pkg/rtsp \
+    && go list -deps . > /compiled-packages.txt \
+    && ! grep -q '^golang.org/x/crypto/openpgp' /compiled-packages.txt \
+    && CGO_ENABLED=0 go build -mod=readonly -trimpath -o /go2rtc .
+COPY build/go2rtc/collect-licenses.sh /collect-licenses.sh
+RUN sh /collect-licenses.sh
 
-ARG TARGETARCH
+FROM alpine:3.24 AS ffmpeg-build
+RUN apk add --no-cache build-base nasm pkgconf openssl-dev
+ADD https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz /tmp/ffmpeg.tar.xz
+RUN echo "8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e  /tmp/ffmpeg.tar.xz" | sha256sum -c - \
+    && mkdir /src && tar -xJf /tmp/ffmpeg.tar.xz -C /src --strip-components=1
+WORKDIR /src
+COPY build/ffmpeg/configure.sh /configure.sh
+COPY build/ffmpeg/mov-seek-bounds.patch /mov-seek-bounds.patch
+COPY build/ffmpeg/test-mov-seek-bounds.sh /test-mov-seek-bounds.sh
+RUN patch -p1 < /mov-seek-bounds.patch && sh /test-mov-seek-bounds.sh
+RUN sh /configure.sh
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-# No Python packages are installed at runtime; omit the unused package installer.
-RUN python -m pip uninstall -y pip
-
-ADD --chmod=755 "https://github.com/AlexxIT/go2rtc/releases/download/v1.9.14/go2rtc_linux_${TARGETARCH}" /usr/local/bin/go2rtc
-
-RUN case "${TARGETARCH}" in \
-      amd64) checksum=32d616af226bd731678ffde328b94cfb94e30339bfefc469cfb76323144615a6 ;; \
-      arm64) checksum=359fabade8a7a51e81a55fe6df6b0ef81764a5e1d63179577534eaaa71904b50 ;; \
-      *) echo "Unsupported architecture: ${TARGETARCH}" >&2; exit 1 ;; \
-    esac \
-    && echo "${checksum}  /usr/local/bin/go2rtc" | sha256sum -c -
+FROM python:3.14-alpine3.24
+RUN apk add --no-cache ca-certificates tzdata libssl3 libcrypto3 \
+    && python -m pip uninstall -y pip
+COPY --from=go2rtc-build /go2rtc /usr/local/bin/go2rtc
+COPY --from=ffmpeg-build /opt/ffmpeg/bin /usr/local/bin/
+COPY --from=ffmpeg-build /src/COPYING.LGPLv3 /usr/share/licenses/ffmpeg/COPYING.LGPLv3
+COPY --from=go2rtc-build /licenses /usr/share/licenses/go2rtc/
+COPY --from=go2rtc-build /compiled-packages.txt /usr/share/plainnvr/go2rtc-compiled-packages.txt
+COPY --from=ffmpeg-build /src/config_components.h /usr/share/plainnvr/ffmpeg-config-components.h
+COPY build/ffmpeg/configure.sh /usr/share/plainnvr/ffmpeg-configure.sh
 
 WORKDIR /app
 
 COPY app /app/app
 COPY static /app/static
-RUN chmod -R a+rX /app/app /app/static
+RUN chmod -R a+rX /app/app /app/static \
+    && mkdir -p /data /recordings && chown 568:568 /data /recordings
 
 ENV NVR_HOST=0.0.0.0 \
     NVR_PORT=8787 \
@@ -34,5 +53,7 @@ EXPOSE 8787 8554 8555/tcp 8555/udp
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD python -c "import os, urllib.request; port = os.environ.get('NVR_PORT', '8787'); urllib.request.urlopen(f'http://127.0.0.1:{port}/api/health', timeout=3).read()" || exit 1
+
+USER 568:568
 
 CMD ["python", "/app/app/server.py"]

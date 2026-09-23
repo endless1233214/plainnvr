@@ -6,6 +6,7 @@ from app.onvif_client import (
     allowed_endpoint_hosts,
     cacheable_discovery,
     device_url_candidates,
+    discover,
     parse_device_information,
     parse_profiles,
     parse_service_addresses,
@@ -86,6 +87,7 @@ class OnvifParsingTests(unittest.TestCase):
         }
         candidates = device_url_candidates(payload)
         self.assertIn("http://192.168.1.50/onvif/device_service", candidates)
+        self.assertIn("http://192.168.1.50:2020/onvif/device_service", candidates)
         self.assertEqual(
             redact_url(payload["rtsp_url"]),
             "rtsp://<credentials>@192.168.1.50:554/stream",
@@ -104,6 +106,73 @@ class OnvifParsingTests(unittest.TestCase):
         )
         self.assertNotIn("stream_uri", cached["profiles"][0])
         self.assertNotIn("endpoint_attempts", cached)
+
+    def test_explicit_device_url_is_tried_first(self):
+        candidates = device_url_candidates(
+            {
+                "onvif_url": "http://192.168.1.50:2020/onvif/service",
+                "ptz_url": "",
+                "rtsp_url": "rtsp://user:secret@192.168.1.50:554/stream1",
+            }
+        )
+        self.assertEqual(candidates[0], "http://192.168.1.50:2020/onvif/service")
+
+    def test_fixed_profile_s_camera_discovers_media_audio_without_ptz(self):
+        device = b"""<Envelope><Body><GetDeviceInformationResponse>
+          <Manufacturer>tp-link</Manufacturer><Model>Tapo TCW61</Model>
+          <FirmwareVersion>1.2.3</FirmwareVersion><SerialNumber>redacted</SerialNumber>
+          <HardwareId>1.0</HardwareId>
+        </GetDeviceInformationResponse></Body></Envelope>"""
+        capabilities = b"""<Envelope><Body><GetCapabilitiesResponse><Capabilities>
+          <Device><XAddr>http://192.168.1.50:2020/onvif/service</XAddr></Device>
+          <Media><XAddr>http://192.168.1.50:2020/onvif/service</XAddr></Media>
+          <Imaging><XAddr>http://192.168.1.50:2020/onvif/service</XAddr></Imaging>
+          <Events><XAddr>http://192.168.1.50:2020/onvif/service</XAddr></Events>
+        </Capabilities></GetCapabilitiesResponse></Body></Envelope>"""
+        profiles = b"""<Envelope><Body><GetProfilesResponse>
+          <Profiles token="profile_1"><Name>mainStream</Name>
+            <VideoEncoderConfiguration><Encoding>H264</Encoding>
+              <Resolution><Width>1920</Width><Height>1080</Height></Resolution>
+            </VideoEncoderConfiguration>
+            <AudioEncoderConfiguration><Encoding>G711</Encoding></AudioEncoderConfiguration>
+          </Profiles>
+          <Profiles token="profile_2"><Name>minorStream</Name>
+            <VideoEncoderConfiguration><Encoding>H264</Encoding>
+              <Resolution><Width>1280</Width><Height>720</Height></Resolution>
+            </VideoEncoderConfiguration>
+            <AudioEncoderConfiguration><Encoding>G711</Encoding></AudioEncoderConfiguration>
+          </Profiles>
+        </GetProfilesResponse></Body></Envelope>"""
+
+        def reply(url, body, **_kwargs):
+            self.assertEqual(url, "http://192.168.1.50:2020/onvif/service")
+            if "GetDeviceInformation" in body:
+                return device
+            if "GetCapabilities" in body:
+                return capabilities
+            if "GetProfiles" in body:
+                return profiles
+            if "GetStreamUri" in body:
+                stream = "stream1" if "profile_1" in body else "stream2"
+                return f"<Envelope><Body><Uri>rtsp://192.168.1.50:554/{stream}</Uri></Body></Envelope>".encode()
+            self.fail(f"Unexpected ONVIF request: {body}")
+
+        payload = {
+            "onvif_url": "http://192.168.1.50:2020/onvif/service",
+            "ptz_url": "",
+            "rtsp_url": "rtsp://user:secret@192.168.1.50:554/stream1",
+        }
+        with mock.patch("app.onvif_client.soap_post", side_effect=reply) as post:
+            result = discover(payload)
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["device"]["model"], "Tapo TCW61")
+        self.assertEqual(len(result["profiles"]), 2)
+        self.assertEqual(result["profiles"][0]["audio"]["encoding"], "G711")
+        self.assertIn("<credentials>", result["profiles"][0]["stream_uri_redacted"])
+        self.assertFalse(result["ptz_supported"])
+        self.assertNotIn("ptz", result["services"])
+        self.assertFalse(any("tptz:" in call.args[1] for call in post.call_args_list))
 
     def test_validated_onvif_urls_stay_on_configured_camera_host(self):
         payload = {

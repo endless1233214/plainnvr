@@ -253,6 +253,7 @@ function cameraPayloadFromForm() {
     view_rotation: Number($("viewRotation").value),
     ptz_enabled: $("ptzEnabled").checked,
     ptz_type: $("ptzType").value,
+    onvif_url: $("onvifUrl").value.trim(),
     ptz_url: $("ptzUrl").value.trim(),
     ptz_profile_token: $("ptzProfileToken").value.trim(),
     ptz_zoom_mode: $("ptzZoomMode").value,
@@ -275,6 +276,7 @@ function resetForm() {
   $("viewRotation").value = "0";
   $("ptzEnabled").checked = false;
   $("ptzType").value = "onvif";
+  $("onvifUrl").value = "";
   $("ptzUrl").value = "";
   $("ptzProfileToken").value = "Profile_1";
   $("ptzZoomMode").value = "auto";
@@ -305,6 +307,7 @@ function editCamera(camera) {
   $("viewRotation").value = String(cameraViewRotation(camera));
   $("ptzEnabled").checked = Boolean(camera.ptz_enabled);
   $("ptzType").value = camera.ptz_type || "onvif";
+  $("onvifUrl").value = camera.onvif_url || "";
   $("ptzUrl").value = camera.ptz_url || "";
   $("ptzProfileToken").value = camera.ptz_profile_token || "Profile_1";
   $("ptzZoomMode").value = camera.ptz_zoom_mode || "auto";
@@ -384,11 +387,17 @@ function renderOnvifDiscovery(discovery) {
   }
 
   const device = discovery.device || {};
-  const features = (discovery.features || []).join(", ") || "stream discovery only";
+  const audioProfiles = profiles.filter((profile) => profile.audio?.encoding).length;
+  const features = discovery.ptz_supported
+    ? (discovery.features || []).join(", ") || "PTZ profile"
+    : "PTZ unavailable";
   $("onvifState").textContent = `${device.manufacturer || "ONVIF"} ${
     device.model || "camera"
-  }: ${profiles.length} profile(s); ${features}`;
+  }: ${profiles.length} media profile(s), ${audioProfiles} with audio; ${features}`;
 
+  if (discovery.services?.device) {
+    $("onvifUrl").value = discovery.services.device;
+  }
   if (discovery.services?.ptz) {
     $("ptzUrl").value = discovery.services.ptz;
   }
@@ -398,6 +407,8 @@ function renderOnvifDiscovery(discovery) {
   if (discovery.ptz_supported) {
     $("ptzEnabled").checked = true;
     $("ptzType").value = "onvif";
+  } else if ($("ptzType").value === "onvif") {
+    $("ptzEnabled").checked = false;
   }
   if ((discovery.features || []).includes("zoom")) {
     $("ptzZoomMode").value = "hardware";
@@ -740,7 +751,7 @@ async function testStream() {
 async function discoverOnvif() {
   const cameraId = $("cameraId").value;
   $("discoverOnvif").disabled = true;
-  $("onvifState").textContent = "Discovering device services, profiles, streams, and PTZ...";
+  $("onvifState").textContent = "Discovering ONVIF device services and media profiles...";
   try {
     const result = await api(
       cameraId ? `/api/cameras/${cameraId}/onvif/discover` : "/api/onvif/discover",

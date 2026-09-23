@@ -1,6 +1,6 @@
 # PlainNVR 0.1.3 release audit
 
-Reviewed September 19, 2026. This is a focused source review and dependency scan,
+Reviewed September 22, 2026. This is a focused source review and dependency scan,
 not a penetration test, exhaustive security audit, or bug-free certification.
 
 ## Application fixes
@@ -27,72 +27,90 @@ not a penetration test, exhaustive security audit, or bug-free certification.
   watchdog keeps observing after startup; MSE overflow reconnects cleanly.
 - HLS preserves upstream failure statuses, HEAD behavior and partial-content headers.
 
+Additional hardening bounds concurrent HTTP handlers at 128, limits failed Basic
+stream authentication attempts, rejects non-ASCII token guesses without exceptions,
+validates FFprobe inputs at the execution boundary, and adds anti-framing headers.
+New data files use a restrictive umask. The image defaults to UID/GID 568.
+
 ## Dependency inventory
 
-| Component | Candidate | Assessment |
+| Component | Candidate | Assessment as of 2026-09-22 |
 | --- | --- | --- |
-| Python | 3.12.14, `python:3.12-slim` | Current security patch in supported 3.12 line; not latest feature line. No third-party Python application packages. |
-| Debian | 13.7 image, repository packages refreshed at build | Current repository packages still have known advisories; see below. |
-| FFmpeg | Debian 7:7.1.5-0+deb13u1 | Distribution-maintained version, not latest upstream major. |
-| go2rtc | 1.9.14, formerly 1.9.13 | Latest published release checked via GitHub; fixes UDP listener startup, but transitive advisories remain. Release binary checksums are verified. |
-| Browser player | go2rtc 1.9.14 JavaScript | Updated from upstream, retaining the bounded MSE recovery patch. |
-| iOS and macOS WebRTC | stasel/WebRTC 153.0.0 | Both local Package.resolved files match latest published release. Binary/transitive client audit not completed; Apple framework security also depends on OS updates. |
-| pip | Removed | Unneeded at runtime; its installed distribution had six fixable advisories. |
-| GitHub Actions | Latest published checkout/setup-node/login/build-push, pinned by commit | PRs test/build without publishing. Publishing is restricted to main after successful tests. |
+| Python | 3.14.7, `python:3.14-alpine3.24` | Current supported feature line and image patch; no third-party Python application packages. |
+| Alpine | 3.24.2 | Runtime packages refreshed at build; no OS package findings in the candidate scan. |
+| FFmpeg | 9.0.2 plus MOV bounds patch | Source checksum and complete build recipe pinned; reviewed separately because Trivy does not discover this source-built C binary. |
+| go2rtc | 1.9.14, built with Go 1.27.1 | Updated Pion and golang.org/x dependency locks; readable Go module metadata retained for scanning. |
+| Browser player | go2rtc 1.9.14 JavaScript | Updated from upstream, retaining bounded MSE recovery. No npm runtime dependencies. |
+| iOS and macOS WebRTC | stasel/WebRTC 153.0.0 | Both local Package.resolved files match the latest published release checked. Binary/transitive client audit is not exhaustive; Apple frameworks depend on OS updates. |
+| pip | Removed | Not needed in the runtime. |
+| GitHub Actions | Pinned release commits | Test and scan the container before publication; publish the exact saved image without rebuilding. |
 
-Upstream references:
-- https://github.com/AlexxIT/go2rtc/releases/tag/v1.9.14
-- https://github.com/stasel/WebRTC/releases/tag/153.0.0
-- https://devguide.python.org/versions/
+Weekly Dependabot checks cover Docker, Go module locks and GitHub Actions. Pinned
+FFmpeg/go2rtc source releases still require maintainers to check upstream releases
+and advisories; the image scan alone is insufficient for FFmpeg.
 
-## Remaining dependency findings — release decision required
+References: [go2rtc release](https://github.com/AlexxIT/go2rtc/releases/tag/v1.9.14),
+[WebRTC release](https://github.com/stasel/WebRTC/releases/tag/153.0.0),
+[FFmpeg releases](https://ffmpeg.org/download.html),
+[Python support](https://devguide.python.org/versions/).
 
-Trivy 0.74.0 scanned the freshly rebuilt Debian container. Before removing pip,
-it reported 598 package/advisory occurrences (the same CVE appears against multiple
-binary packages). Deduplicating CVE IDs gives 221: 1 critical, 42 high, 62 medium,
-98 low and 18 unknown. Six fixable IDs belonged to unused pip; the other Debian
-findings had no fixed version in the scanner's Debian 13 database at scan time.
-Removing pip does not resolve the remaining Debian findings.
+## Findings and disposition
 
-Examples checked against the Debian tracker:
-- CVE-2026-6653: libxml2 use-after-free/denial of service, scanner critical;
-  Debian labels it a minor issue with no security update planned for trixie.
-  PlainNVR ONVIF uses Python ElementTree, not libxml2; FFmpeg's XML-related
-  features remain a separate surface. This is not proof of unreachability.
-  https://security-tracker.debian.org/tracker/CVE-2026-6653
-- CVE-2026-86138: libxml2 integer overflow/heap overflow; Debian 13 affected.
-  https://security-tracker.debian.org/tracker/CVE-2026-86138
-- CVE-2026-64834: FFmpeg RTP/ASF CPU exhaustion; fix deferred in Debian 13.
-  https://security-tracker.debian.org/tracker/CVE-2026-64834
+The first Debian-based candidate produced 598 package/advisory occurrences,
+representing 221 distinct IDs (1 critical, 42 high, 62 medium, 98 low, 18 unknown).
+Removing pip fixed six IDs but left distribution packages without available fixes.
+The upstream go2rtc manifest separately produced 31 advisory matches. Those
+results were release blockers, rather than accepted exceptions.
 
-A separate manifest scan of go2rtc v1.9.14 go.mod/go.sum reported 31 advisories:
-17 high, 12 medium, 2 unknown. These are package-version matches, not confirmed
-reachable vulnerabilities. Examples include Pion DTLS (CVE-2026-26014,
-CVE-2026-54908), STUN (CVE-2026-54909), and older golang.org/x dependencies.
-The container scan did not detect go2rtc's bundled Go modules, so its report alone
-is insufficient. The manifest scan also does not establish the binary's Go runtime
-patch level. Updating go2rtc's own release version does not fix all these findings.
+The candidate now uses a small Alpine runtime and source-built media components.
+The Trivy 0.74.0 image scan reports zero OS findings. The Go binary scan has one raw
+module-level match, GO-2026-5932, and zero after the narrowly scoped OpenVEX statement.
+[That advisory](https://pkg.go.dev/vuln/GO-2026-5932) concerns the unmaintained
+`golang.org/x/crypto/openpgp` package. It is absent from `go list -deps .` for this
+executable. The Docker build fails if it appears; the compiled package list is
+saved in the image. This is a code-absence determination, not an accepted
+vulnerable package or a blanket severity exclusion. All other severities, including
+unknown and unfixed advisories, fail the image scan.
 
-Recommended next step before stable publication: test a maintained/patched go2rtc
-build and evaluate a patched FFmpeg/base image, with reachable-code analysis and
-recording/playback regression tests. Do not silently suppress the scanner findings.
+FFmpeg is reviewed independently in [FFmpeg advisory dispositions](FFMPEG-SECURITY.md).
+Its build retains camera transport, H.264/H.265 and common camera audio, MP4
+recording, snapshots and night-mode sampling. Unneeded device, subtitle, game-codec,
+XML/DASH and hardware-acceleration components are disabled. This is a deliberate
+compatibility boundary: it is not a general-purpose FFmpeg distribution or arbitrary
+transcoding service.
+
+CVE-2026-13858 remains relevant to upstream FFmpeg 9.0.2. The local patch checks
+negative and unequal-length sample indexes before MOV seeking. It follows the
+[public Chromium report](https://issues.chromium.org/issues/507090179), and a build-time
+ASan/UBSan regression compiles the actual patched function and exercises both
+bounds. Other reviewed enabled-component issues are fixed in the pinned source.
 
 ## Verification and limits
 
-- 44 Python regression tests and 5 JavaScript tests pass.
-- Container builds on TrueNAS amd64, and source imports successfully as UID/GID 568.
-- Actual sandbox rejects internal API access, encoded HLS traversal, foreign-origin
-  login requests and non-object JSON. Authenticated HLS playlists work.
-- RTSP connection to the container's non-loopback address is refused.
-- Original catalog instance remains running separately; only sandbox is updated.
-- Native playback, startup timing and 65-second frame delivery are checked with
-  the existing Mac WebRTC harness: first frame 0.556 s, 979 frames counted
-  through second 65, maximum inter-frame gap 0.151 s.
+- 53 Python regression tests and 5 JavaScript tests pass.
+- The container builds on TrueNAS amd64 and imports as UID/GID 568.
+- The go2rtc build runs its WebRTC/HLS/RTSP package tests and verifies module checksums.
+- Actual sandbox HTTP checks reject internal API access, encoded HLS traversal,
+  foreign-origin login requests and non-object JSON. Authenticated HLS works.
+- Native playback on the final sandbox image delivered 944 frames through second
+  65 with a 0.133-second maximum normal frame gap. Four on-demand startup samples
+  ranged from 0.531 to 4.488 seconds while waiting for source/keyframe startup;
+  three were 1.891 seconds or faster. These are startup measurements, not
+  camera-to-display latency. An active recorder keeps the shared source warm.
+- Camera color/grayscale JPEG snapshots and multiple MP4 recording segments with
+  video and audio passed live sandbox smoke tests.
+- A physical Tapo TCW61 discovered its Device, Media, Imaging, and Events services
+  on port 2020, three media profiles, H.264/G.711 streams, and correctly reported
+  no PTZ service. Main and secondary RTSP audio/video are probed independently.
+- During an intentional sandbox redeploy, the native client reconnected and
+  decoded a new first frame in 0.294 seconds after its retry; the expected outage
+  produced a 16.387-second frame gap and playback remained live through second 65.
+- RTSP defaults to loopback. The original catalog instance remains separate.
 - No long soak, independent penetration test, multi-camera capacity test, or exhaustive
-  client security review has been performed. Prior startup measurements are not
-  glass-to-glass latency measurements.
+  client binary security review has been performed. No audit can establish zero
+  unknown vulnerabilities or guarantee bug-free behavior.
 
 All users are administrators. Direct HTTP remains cleartext; use HTTPS/VPN for
 remote access. Restrict the data volume/backups and use trusted camera networks.
-The built-in HTTP server, basic-auth streaming endpoints, proxy deployment policy,
-and broader resource limits merit further hardening for public Internet service.
+The HTTP connection cap is a bounded resource safeguard, not Internet-scale DoS
+protection. Reverse-proxy limits and deployment configuration remain relevant.

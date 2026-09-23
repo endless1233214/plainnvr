@@ -346,6 +346,7 @@ def init_db():
                 rtsp_transport TEXT NOT NULL DEFAULT 'tcp',
                 ptz_enabled INTEGER NOT NULL DEFAULT 0,
                 ptz_type TEXT NOT NULL DEFAULT 'onvif',
+                onvif_url TEXT NOT NULL DEFAULT '',
                 ptz_url TEXT NOT NULL DEFAULT '',
                 ptz_profile_token TEXT NOT NULL DEFAULT 'Profile_1',
                 ptz_zoom_mode TEXT NOT NULL DEFAULT 'auto',
@@ -422,6 +423,8 @@ def ensure_camera_schema(conn):
         conn.execute("ALTER TABLE cameras ADD COLUMN ptz_enabled INTEGER NOT NULL DEFAULT 0")
     if "ptz_type" not in columns:
         conn.execute("ALTER TABLE cameras ADD COLUMN ptz_type TEXT NOT NULL DEFAULT 'onvif'")
+    if "onvif_url" not in columns:
+        conn.execute("ALTER TABLE cameras ADD COLUMN onvif_url TEXT NOT NULL DEFAULT ''")
     if "ptz_url" not in columns:
         conn.execute("ALTER TABLE cameras ADD COLUMN ptz_url TEXT NOT NULL DEFAULT ''")
     if "ptz_profile_token" not in columns:
@@ -640,6 +643,7 @@ def camera_from_row(row):
     data["live_view_mode"] = normalize_live_view_mode(data.get("live_view_mode"))
     data["view_rotation"] = normalize_view_rotation(data.get("view_rotation"))
     data["ptz_type"] = normalize_ptz_type(data.get("ptz_type"))
+    data["onvif_url"] = data.get("onvif_url") or ""
     data["ptz_url"] = data.get("ptz_url") or ""
     data["ptz_profile_token"] = normalize_ptz_profile_token(data.get("ptz_profile_token"))
     data["ptz_zoom_mode"] = normalize_ptz_zoom_mode(data.get("ptz_zoom_mode"))
@@ -712,6 +716,7 @@ def validate_camera_payload(payload, partial=False):
     name = str(payload.get("name", "")).strip()
     rtsp_url = str(payload.get("rtsp_url", "")).strip()
     audio_url = str(payload.get("audio_url", "")).strip()
+    onvif_url = str(payload.get("onvif_url", "")).strip()
     ptz_url = str(payload.get("ptz_url", "")).strip()
     if not partial or "name" in payload:
         if not name:
@@ -734,6 +739,8 @@ def validate_camera_payload(payload, partial=False):
             normalize_view_rotation(payload.get("view_rotation"))
         except ValueError:
             errors["view_rotation"] = "Use 0, 90, 180, or 270."
+    if onvif_url and not onvif_url.startswith(CONTROL_URL_PREFIXES):
+        errors["onvif_url"] = "Use an http:// or https:// ONVIF device endpoint URL."
     ptz_type = normalize_ptz_type(payload.get("ptz_type"))
     if ptz_url and ptz_type == "onvif" and not ptz_url.startswith(CONTROL_URL_PREFIXES):
         errors["ptz_url"] = "Use an http:// or https:// ONVIF endpoint URL."
@@ -821,9 +828,9 @@ def create_camera(payload):
             INSERT INTO cameras (
                 id, name, slug, rtsp_url, audio_url, enabled, segment_seconds, retention_days,
                 schedule_json, record_audio, grayscale_mode, live_view_mode, rtsp_transport, ptz_enabled, ptz_type,
-                view_rotation, ptz_url, ptz_profile_token, ptz_zoom_mode, ptz_speed, created_at, updated_at
+                view_rotation, onvif_url, ptz_url, ptz_profile_token, ptz_zoom_mode, ptz_speed, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 camera_id,
@@ -842,6 +849,7 @@ def create_camera(payload):
                 normalize_bool(payload.get("ptz_enabled", False)),
                 ptz_type,
                 normalize_view_rotation(payload.get("view_rotation", 0)),
+                str(payload.get("onvif_url", "")).strip(),
                 str(payload.get("ptz_url", "")).strip(),
                 normalize_ptz_profile_token(payload.get("ptz_profile_token")),
                 normalize_ptz_zoom_mode(payload.get("ptz_zoom_mode")),
@@ -887,7 +895,7 @@ def update_camera(camera_id, payload):
     )
     discovery_changed = any(
         str(existing.get(key) or "") != str(merged.get(key) or "")
-        for key in ("rtsp_url", "ptz_url", "ptz_profile_token", "ptz_type")
+        for key in ("rtsp_url", "onvif_url", "ptz_url", "ptz_profile_token", "ptz_type")
     )
     onvif_json = "{}" if discovery_changed else json.dumps(existing.get("onvif") or {})
     onvif_updated_at = "" if discovery_changed else str(existing.get("onvif_updated_at") or "")
@@ -898,7 +906,7 @@ def update_camera(camera_id, payload):
             UPDATE cameras
             SET name = ?, slug = ?, rtsp_url = ?, audio_url = ?, enabled = ?, segment_seconds = ?,
                 retention_days = ?, schedule_json = ?, record_audio = ?, grayscale_mode = ?,
-                live_view_mode = ?, view_rotation = ?, rtsp_transport = ?, ptz_enabled = ?, ptz_type = ?, ptz_url = ?,
+                live_view_mode = ?, view_rotation = ?, rtsp_transport = ?, ptz_enabled = ?, ptz_type = ?, onvif_url = ?, ptz_url = ?,
                 ptz_profile_token = ?, ptz_zoom_mode = ?, ptz_speed = ?, onvif_json = ?, onvif_updated_at = ?, updated_at = ?
             WHERE id = ?
             """,
@@ -918,6 +926,7 @@ def update_camera(camera_id, payload):
                 merged.get("rtsp_transport") if merged.get("rtsp_transport") in ("tcp", "udp") else "tcp",
                 normalize_bool(merged.get("ptz_enabled")),
                 ptz_type,
+                str(merged.get("onvif_url", "")).strip(),
                 str(merged.get("ptz_url", "")).strip(),
                 normalize_ptz_profile_token(merged.get("ptz_profile_token")),
                 normalize_ptz_zoom_mode(merged.get("ptz_zoom_mode")),
@@ -1980,6 +1989,8 @@ def run_ptz_command(camera, payload):
             discovery = discover_camera_onvif(camera, camera["id"])
         except OnvifError:
             discovery = {}
+    if discovery.get("success") and discovery.get("ptz_supported") is False:
+        raise ValueError("This ONVIF camera does not advertise PTZ support.")
 
     selected_profile = discovery.get("selected_profile") or {}
     profile_token = normalize_ptz_profile_token(
@@ -2504,6 +2515,8 @@ def recording_coverage(camera):
 
 
 def probe_stream_url(url, payload, select_streams, show_entries, low_latency=True):
+    if not url.startswith(STREAM_URL_PREFIXES):
+        raise ValueError("Unsupported stream URL scheme.")
     transport = payload.get("rtsp_transport", "tcp")
     command = [
         FFPROBE_BIN,
@@ -2535,6 +2548,7 @@ def probe_stream_url(url, payload, select_streams, show_entries, low_latency=Tru
             show_entries,
             "-of",
             "json",
+            "-i",
             url,
         ]
     )
@@ -2565,14 +2579,19 @@ def test_stream(payload):
         raise ValueError("Use an rtsp://, rtsps://, http://, or https:// audio URL.")
 
     video = probe_stream_url(rtsp_url, payload, "v:0", "stream=codec_name,width,height,r_frame_rate")
-    if not audio_url or not normalize_bool(payload.get("record_audio", True)):
+    if not normalize_bool(payload.get("record_audio", True)):
         return video
 
-    audio = probe_stream_url(audio_url, payload, "a:0", "stream=codec_name,sample_rate,channels")
+    audio_source = audio_url or rtsp_url
+    audio = probe_stream_url(audio_source, payload, "a:0", "stream=codec_name,sample_rate,channels")
     if video["ok"] and audio["ok"]:
         return {
             "ok": True,
-            "message": "Video and secondary audio are reachable.",
+            "message": (
+                "Video and secondary audio are reachable."
+                if audio_url
+                else "Video and camera audio are reachable."
+            ),
             "seconds": round(video["seconds"] + audio["seconds"], 2),
             "details": {"video": video.get("details", {}), "audio": audio.get("details", {})},
         }
@@ -2589,6 +2608,7 @@ def redact_camera_text(text, camera):
     replacements = {
         str(camera.get("rtsp_url") or "").strip(): "<stream-url>",
         str(camera.get("audio_url") or "").strip(): "<audio-url>",
+        str(camera.get("onvif_url") or "").strip(): "<onvif-url>",
         str(camera.get("ptz_url") or "").strip(): "<ptz-url>",
     }
     for value, label in replacements.items():
@@ -2747,6 +2767,7 @@ def camera_compatibility_report(camera, refresh_onvif=True):
             "transport": camera.get("rtsp_transport"),
             "record_audio": camera.get("record_audio"),
             "live_view_mode": camera.get("live_view_mode"),
+            "onvif_url": redact_onvif_url(camera.get("onvif_url")),
             "ptz_enabled": camera.get("ptz_enabled"),
             "ptz_type": camera.get("ptz_type"),
         },
@@ -2818,10 +2839,18 @@ def valid_stream_auth(handler, parsed):
     expected = get_stream_token()
     query = parse_qs(parsed.query)
     provided = query.get("token", [""])[0] or bearer_token(handler.headers)
-    if expected and provided and hmac.compare_digest(provided, expected):
+    if expected and provided and hmac.compare_digest(provided.encode("utf-8"), expected.encode("utf-8")):
         return True
     username, password = basic_auth_credentials(handler.headers)
-    return bool(username and authenticate_user(username, password))
+    if not username:
+        return False
+    peer = handler.client_address[0]
+    if basic_failure_limiter.blocked(peer):
+        return False
+    authenticated = bool(authenticate_user(username, password))
+    if not authenticated:
+        basic_failure_limiter.allow(peer)
+    return authenticated
 
 
 class LoginLimiter:
@@ -2829,6 +2858,11 @@ class LoginLimiter:
     def __init__(self):
         self.lock = threading.Lock()
         self.attempts = {}
+
+    def blocked(self, peer):
+        with self.lock:
+            started, count = self.attempts.get(peer, (0, 0))
+            return count >= 20 and time.monotonic() - started < 60
 
     def allow(self, peer):
         now = time.monotonic()
@@ -2842,6 +2876,7 @@ class LoginLimiter:
 
 
 login_limiter = LoginLimiter()
+basic_failure_limiter = LoginLimiter()
 
 
 class NvrHandler(SimpleHTTPRequestHandler):
@@ -2864,6 +2899,12 @@ class NvrHandler(SimpleHTTPRequestHandler):
             self.send_error_json(HTTPStatus.FORBIDDEN, "Cross-site request denied.")
             return False
         return True
+
+    def end_headers(self):
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Content-Security-Policy", "frame-ancestors 'none'; base-uri 'self'")
+        self.send_header("Referrer-Policy", "same-origin")
+        super().end_headers()
 
     def log_message(self, fmt, *args):
         message = fmt % args
@@ -3192,11 +3233,12 @@ class NvrHandler(SimpleHTTPRequestHandler):
 
     def handle_onvif_discovery(self, payload):
         rtsp_url = str(payload.get("rtsp_url") or "").strip()
+        onvif_url = str(payload.get("onvif_url") or "").strip()
         ptz_url = str(payload.get("ptz_url") or "").strip()
-        if not rtsp_url and not ptz_url:
+        if not rtsp_url and not onvif_url and not ptz_url:
             self.send_error_json(
                 HTTPStatus.BAD_REQUEST,
-                "Enter a stream URL or ONVIF control URL first.",
+                "Enter a stream URL or ONVIF device URL first.",
             )
             return
         try:
@@ -3683,13 +3725,44 @@ class NvrHandler(SimpleHTTPRequestHandler):
             shutil.copyfileobj(src, self.wfile)
 
 
+class NvrHTTPServer(ThreadingHTTPServer):
+    # Idle/slow peers and long-lived playback sockets cannot spawn unlimited
+    # handler threads. Each camera/viewer may use more than one connection.
+    def __init__(self, address, handler, max_connections=128):
+        self.connection_slots = threading.BoundedSemaphore(max_connections)
+        super().__init__(address, handler)
+
+    def process_request(self, request, client_address):
+        if not self.connection_slots.acquire(blocking=False):
+            try:
+                request.settimeout(1)
+                request.sendall(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\nRetry-After: 1\r\n\r\n")
+            except OSError:
+                pass
+            finally:
+                self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self.connection_slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self.connection_slots.release()
+
+
 def main():
+    os.umask(0o077)
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
     init_db()
     go2rtc.start(list_cameras())
     recorder.start()
-    server = ThreadingHTTPServer((APP_HOST, APP_PORT), NvrHandler)
+    server = NvrHTTPServer((APP_HOST, APP_PORT), NvrHandler)
 
     def handle_signal(signum, _frame):
         print(f"Received signal {signum}, shutting down.")

@@ -72,6 +72,13 @@ class RequestSafetyTests(unittest.TestCase):
                 proxy.assert_not_called()
                 error.assert_called_once()
 
+    def test_probe_rejects_options_and_local_files_before_execution(self):
+        for url in ['-help', 'file:///etc/passwd', '/etc/passwd', 'concat:one|two']:
+            with patch.object(server.subprocess, 'run') as run:
+                with self.assertRaises(ValueError):
+                    server.probe_stream_url(url, {}, 'v:0', 'stream=codec_name')
+                run.assert_not_called()
+
     def test_rtsp_is_loopback_by_default(self):
         self.assertEqual(server.Go2RTCManager()._config()['rtsp']['listen'], '127.0.0.1:8554')
 
@@ -106,3 +113,48 @@ class RecordingRangeTests(unittest.TestCase):
                     self.assertEqual(handler.status, status)
                     self.assertEqual(handler.wfile.getvalue(), body)
                     self.assertEqual(int(handler.response_headers['Content-Length']), len(body))
+
+class ConnectionSafetyTests(unittest.TestCase):
+    def test_failed_basic_auth_is_bounded_but_valid_playback_is_not_throttled(self):
+        import base64
+        handler = CapturedHandler({'Authorization': 'Basic ' + base64.b64encode(b'user:password').decode()})
+        handler.client_address = ('peer', 123)
+        with patch.object(server, 'get_stream_token', return_value='token'), patch.object(server, 'basic_failure_limiter', server.LoginLimiter()), patch.object(server, 'authenticate_user', return_value='user') as auth:
+            for _ in range(30):
+                self.assertTrue(server.valid_stream_auth(handler, urlparse('/live/abc/stream.m3u8')))
+            self.assertEqual(auth.call_count, 30)
+        with patch.object(server, 'get_stream_token', return_value='token'), patch.object(server, 'basic_failure_limiter', server.LoginLimiter()), patch.object(server, 'authenticate_user', return_value=None) as auth:
+            for _ in range(30):
+                self.assertFalse(server.valid_stream_auth(handler, urlparse('/live/abc/stream.m3u8')))
+            self.assertEqual(auth.call_count, 20)
+
+    def test_non_ascii_stream_token_is_rejected_without_exception(self):
+        handler = CapturedHandler()
+        with patch.object(server, 'get_stream_token', return_value='ascii-token'):
+            self.assertFalse(server.valid_stream_auth(handler, urlparse('/live/abc/stream.m3u8?token=%C3%A9')))
+
+    def test_capacity_is_bounded_and_released_and_security_headers_present(self):
+        import http.client
+        import threading
+        httpd = server.NvrHTTPServer(('127.0.0.1', 0), server.NvrHandler, max_connections=1)
+        worker = threading.Thread(target=httpd.serve_forever, daemon=True)
+        worker.start()
+        try:
+            httpd.connection_slots.acquire()
+            conn = http.client.HTTPConnection(*httpd.server_address, timeout=3)
+            conn.request('GET', '/api/health')
+            response = conn.getresponse()
+            self.assertEqual(response.status, 503)
+            response.read(); conn.close()
+            httpd.connection_slots.release()
+            conn = http.client.HTTPConnection(*httpd.server_address, timeout=3)
+            conn.request('GET', '/api/health')
+            response = conn.getresponse()
+            self.assertEqual(response.status, 200)
+            self.assertEqual(response.getheader('X-Frame-Options'), 'DENY')
+            self.assertIn("frame-ancestors 'none'", response.getheader('Content-Security-Policy'))
+            response.read(); conn.close()
+            self.assertTrue(httpd.connection_slots.acquire(timeout=2))
+            httpd.connection_slots.release()
+        finally:
+            httpd.shutdown(); httpd.server_close(); worker.join()

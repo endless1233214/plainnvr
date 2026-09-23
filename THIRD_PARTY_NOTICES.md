@@ -6,7 +6,9 @@ General Public License.
 
 ## go2rtc
 
-PlainNVR's container build downloads and includes go2rtc.
+PlainNVR builds go2rtc 1.9.14 from checksum-verified source with updated
+dependency locks in `build/go2rtc`. The exact module versions and checksums
+are recorded there. Runtime notices are under `/usr/share/licenses/go2rtc`.
 
 Project: go2rtc  
 Upstream: https://github.com/AlexxIT/go2rtc  
@@ -33,18 +35,23 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-## Container Base and System Packages
+## FFmpeg and runtime packages
 
-The PlainNVR container is built from a Python Debian-based image and installs
-system packages including FFmpeg and CA certificates. Those packages and their
-dependencies are distributed under their respective upstream licenses.
+FFmpeg 9.0.2 is built from https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz
+with the checksum in Dockerfile and the complete configure script in
+`build/ffmpeg/configure.sh`. The bounds-check patch in
+`build/ffmpeg/mov-seek-bounds.patch` follows Chromium issue 507090179
+(CVE-2026-13858); it is the only source modification. This build
+uses LGPL version 3 (OpenSSL enabled; GPL/nonfree components disabled).
+The license and build configuration are included under
+`/usr/share/licenses/ffmpeg` and `/usr/share/plainnvr` in the image.
+Source and build scripts remain available at the linked upstream archive and
+in this repository for rebuilding or relinking FFmpeg.
 
-Relevant upstream projects include:
+Python and Alpine packages remain under their upstream licenses:
 
 - Python: https://www.python.org/
-- Debian: https://www.debian.org/
+- Alpine: https://alpinelinux.org/
 - FFmpeg: https://ffmpeg.org/
 
-License and copyright files supplied by Debian packages should remain present
-inside distributed container images. This notice does not replace any notices
-or source-code obligations required by those packages' individual licenses.
+This notice does not replace the components' license or source obligations.

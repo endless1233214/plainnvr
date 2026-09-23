@@ -159,28 +159,35 @@ no WebRTC signaling answer. When using published container ports, also set
 
 ## ONVIF And PTZ
 
-Enable **PTZ** in the camera editor and select **ONVIF** for standards-based
-control. **Discover ONVIF** queries the camera for:
+**Discover ONVIF** works for fixed cameras as well as PTZ models. PlainNVR
+derives common device endpoints from the RTSP host, including port `2020` used
+by Tapo Profile-S cameras. The optional **ONVIF Device URL** overrides discovery
+without implying that the camera can move. Discovery queries:
 
-- Device, media, and PTZ service endpoints
+- Device, media, imaging, events, and advertised PTZ service endpoints
 - Manufacturer, model, and firmware identity
-- Media profiles and stream URIs
-- PTZ configuration and movement spaces
+- Media profiles, stream URIs, video, and audio encodings
+- PTZ configuration and movement spaces, when present
 - Pan, tilt, and zoom capabilities
 - Home position and presets
 
-Selecting a discovered profile stores its service endpoint and profile token
-with the camera. The web and iPhone controls then display only the capabilities
-reported by that camera.
+Selecting a discovered stream updates the camera RTSP URL. Fixed ONVIF cameras
+remain fully supported for media discovery while PTZ stays disabled. The web
+and iPhone controls display only capabilities reported by the camera.
 
 ONVIF movement uses continuous press-and-hold commands and sends STOP when the
 control is released. Manual **Control URL** and **Profile / Hash** fields remain
-available for devices with incomplete discovery. Credentials may be included in
-the ONVIF URL when WS-Security is required:
+available for movable devices with incomplete discovery. Credentials may be
+included in the ONVIF Device URL when WS-Security is required:
 
 ```text
-http://USERNAME:PASSWORD@CAMERA-HOST:8080/onvif/device_service
+http://USERNAME:PASSWORD@CAMERA-HOST:2020/onvif/device_service
 ```
+
+ONVIF Profile S does not by itself guarantee spotlight, siren, or two-way-talk
+control. PlainNVR does not advertise those controls unless a future integration
+can identify a standard relay/output or an explicit vendor API. Camera microphone
+audio contained in the RTSP stream is supported for live view and recording.
 
 PTZ zoom is configured separately from pan and tilt:
 
@@ -274,7 +281,7 @@ Apple developer fees for the companion app, and continued development.
 
 ## Upstream Components
 
-- go2rtc `v1.9.13` provides restreaming and the vendored MIT-licensed browser
+- go2rtc `v1.9.14` provides restreaming and the vendored MIT-licensed browser
   player under `static/vendor/go2rtc`.
 - Frigate's public ONVIF probe, capability-driven PTZ interface, and live-view
   architecture served as behavioral references. PlainNVR's discovery and
@@ -301,3 +308,17 @@ login/setup attempts are limited to 20 per minute per network peer. Behind a
 reverse proxy, users share that limit unless the proxy connects from different
 addresses. Playback WebSockets accept configured camera IDs only. The HLS
 proxy exposes only fixed playlist and segment routes.
+
+The release image runs as UID/GID 568 by default; mounted data and recording
+folders must be writable by the configured user. New files are private to that
+user. HTTP connections are capped at 128 and slow requests time out after 30
+seconds. Failed Basic streaming logins also have a per-peer limit; successful
+stream requests do not consume it.
+
+Version 0.1.3 uses Python 3.14, Alpine 3.24, source-built go2rtc with updated Go
+dependencies, and FFmpeg 9.0.2 with a MOV bounds-check patch. The FFmpeg build
+supports camera playback/probing, video-copy MP4 recording with AAC audio,
+snapshots and night sampling. It excludes unrelated subtitle/game codecs,
+DASH/XML, device capture and hardware acceleration. See the
+[release audit](docs/RELEASE-0.1.3-AUDIT.md) for scan scope, compatibility and
+verification, and [third-party notices](THIRD_PARTY_NOTICES.md) for source details.
