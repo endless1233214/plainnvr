@@ -5,11 +5,10 @@ services:
     restart: unless-stopped
     ports:
       - "8787:8787"
-      - "8554:8554"
       - "8555:8555/tcp"
       - "8555:8555/udp"
     environment:
-      TZ: America/Detroit
+      TZ: ${TZ:-Etc/UTC}
       NVR_PORT: "8787"
       NVR_DATA_DIR: /data
       NVR_RECORDINGS_DIR: /recordings
