@@ -12,3 +12,7 @@ updates:
     directory: /build/go2rtc
     schedule:
       interval: weekly
+    groups:
+      go2rtc-dependencies:
+        patterns:
+          - "*"

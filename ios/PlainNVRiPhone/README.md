@@ -23,13 +23,16 @@ connection.
 ## Requirements
 
 - A running PlainNVR server reachable from the iPhone (0.1.3 or newer for WebRTC)
+- A reachable published WebRTC media port for low-latency playback; HLS remains
+  available when WebRTC is not reachable
 - A current Xcode installation with the required iOS platform
 - An Apple account selected as the project's signing team
 - Camera streams configured in the PlainNVR web interface
 
-## PlainNVR - Companion is now on testflight!
-Use this invite link to download PlainNVR - Companion, https://testflight.apple.com/join/m6RS5bnh
+## TestFlight
 
+PlainNVR - Companion is available on TestFlight:
+https://testflight.apple.com/join/m6RS5bnh
 
 ## Install With Xcode
 
@@ -58,6 +61,8 @@ endpoints:
 - `POST /api/cameras/<id>/live/<action>` with `stop` or `restart` for
   live-stream recovery
 - `POST /api/cameras/<id>/ptz` for PTZ movement, stop, home, and preset commands
+- `GET /go2rtc/api/ws?src=plainnvr_<camera_id>` for authenticated WebRTC
+  signaling
 - `GET /live/<camera_id>/stream.m3u8?token=<stream_token>` for go2rtc HLS
   playback
 - `GET /media/<camera_id>/<segment>.mp4?token=<stream_token>` for recording
