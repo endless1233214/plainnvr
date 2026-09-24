@@ -24,14 +24,14 @@ For a normal home install, start with these choices:
 | Application Name | `plainnvr` |
 | Timezone | Your local timezone |
 | Recording Segment Seconds | `60` |
-| WebRTC Candidates | Leave blank |
+| WebRTC Candidates | Leave blank for HLS-only use; for native iPhone WebRTC, use `TRUENAS-IP:PUBLISHED-WEBRTC-PORT` |
 | Additional Environment Variables | Leave empty |
 | User ID | `568` |
 | Group ID | `568` |
 | Host Network | Off |
 | Web UI Port | Published, keep the TrueNAS generated port unless you need a different one |
-| RTSP Port | Exposed, unless another app or device needs to connect to PlainNVR RTSP restreams |
-| WebRTC Port | Exposed, unless you are deliberately using go2rtc WebRTC directly |
+| RTSP Port | None for normal use; Publish only when another app or device needs PlainNVR RTSP restreams |
+| WebRTC Port | Publish for native iPhone WebRTC; otherwise None is fine and HLS fallback still works |
 | PlainNVR Data Storage | ixVolume |
 | PlainNVR Recordings Storage | Host Path for a large recordings dataset, or ixVolume for a simple test install |
 | Labels | Leave empty |
@@ -88,21 +88,22 @@ For most users, `60` is the right starting point.
 
 ### WebRTC Candidates
 
-Leave this blank for a normal install.
+This setting tells go2rtc which address and port a native WebRTC client should
+use for media.
 
-This is an advanced go2rtc setting for WebRTC networking. It tells go2rtc what
-address or addresses to advertise when a browser or remote client is trying to
-make a WebRTC media connection.
+You can leave it blank if you only need the web interface, Home Assistant HLS,
+or the iPhone app's HLS fallback.
 
-PlainNVR's own web interface uses go2rtc through the PlainNVR web port. The
-iPhone companion app uses the PlainNVR server too. Because of that, most users
-do not need to set WebRTC candidates.
+For low-latency WebRTC in the iPhone companion app, publish the WebRTC port for
+both TCP and UDP and add a candidate using the TrueNAS LAN address plus that
+published port. For example:
 
-Only fill this in if you are troubleshooting direct go2rtc WebRTC access,
-remote access, VPN access, or a reverse proxy setup where the browser cannot
-figure out how to reach the media port.
+```text
+192.168.1.50:30454
+```
 
-This is not where camera IP addresses go.
+Use the actual TrueNAS address and WebRTC port from your install. Do not put a
+camera IP address here.
 
 ### Additional Environment Variables
 
@@ -207,37 +208,34 @@ Use the actual port shown by your TrueNAS install screen.
 
 ### RTSP Port
 
-This is the go2rtc RTSP restream port. Its internal container port is `8554`.
+This is the go2rtc RTSP restream port.
 
-PlainNVR can use go2rtc internally without publishing this port to your whole
-LAN.
+PlainNVR does not need this port published for normal recording or viewing.
+Leave it at **None** unless another trusted app or device needs to connect to
+PlainNVR's RTSP restreams directly.
 
-Recommended:
-
-- Leave it as Exposed for normal PlainNVR use.
-- Publish it only if another app or device needs to connect to PlainNVR's RTSP
-  restreams directly.
+If you publish it, remember that the RTSP relay itself is not an authenticated
+PlainNVR web endpoint. Keep it limited to a trusted network.
 
 Camera RTSP URLs are still added inside PlainNVR after install. They do not go
 in this TrueNAS field.
 
 ### WebRTC Port
 
-This is the go2rtc WebRTC media port. Its internal container port is `8555` and
-it uses both TCP and UDP.
+This is the go2rtc WebRTC media port and it uses both TCP and UDP.
 
-PlainNVR's web UI currently uses go2rtc through the PlainNVR web port using
-MSE/HLS. The iPhone companion app also talks to PlainNVR, not directly to the
-camera or directly to go2rtc.
+The PlainNVR web interface works without publishing this port because its normal
+browser path uses the authenticated PlainNVR web endpoint. The iPhone companion
+app starts with HLS and then tries native WebRTC for lower latency.
 
-Recommended:
+For native iPhone WebRTC:
 
-- Leave it as Exposed for normal PlainNVR use.
-- Publish it only if you are intentionally using direct go2rtc WebRTC access or
-  troubleshooting a setup that requires it.
+- Set the WebRTC Port to **Publish**.
+- Keep the selected port reachable on both TCP and UDP.
+- Add a matching WebRTC Candidate such as `TRUENAS-IP:PUBLISHED-PORT`.
 
-If you publish this port for direct WebRTC, make sure both TCP and UDP are
-reachable and set WebRTC Candidates only if needed.
+If the port is not published or the candidate is unreachable, the iPhone app
+stays on HLS instead of switching to WebRTC.
 
 ### Networks
 
@@ -356,12 +354,13 @@ The exact path depends on the camera brand and firmware.
 
 For testing a fresh TrueNAS install:
 
-1. Leave WebRTC Candidates blank.
+1. Leave WebRTC Candidates blank for the first HLS/web test.
 2. Leave Additional Environment Variables empty.
 3. Keep User ID and Group ID at `568`.
 4. Leave Host Network off.
 5. Publish the Web UI port.
-6. Leave RTSP and WebRTC ports exposed unless you know you need them published.
+6. Leave RTSP and WebRTC ports at None for the first test. After the app works,
+   publish WebRTC and add a candidate if you want native iPhone WebRTC.
 7. Use ixVolume for PlainNVR Data Storage.
 8. Use an empty Host Path or ixVolume for Recordings Storage.
 9. Install the app.
@@ -406,9 +405,9 @@ Also check that the dataset has enough free space.
 
 ### WebRTC Or Remote Live View Is Not Working
 
-For normal PlainNVR use, start with the Web UI and HLS/MSE live view first.
-
-Only troubleshoot WebRTC Candidates if you are intentionally using direct
-go2rtc WebRTC or a remote setup that needs advertised media candidates.
+Start with the Web UI or iPhone HLS fallback first. If those work but the iPhone
+never switches to WebRTC, verify that the WebRTC port is published for both TCP
+and UDP and that WebRTC Candidates contains the reachable TrueNAS address and
+published port.
 
 
