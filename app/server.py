@@ -1746,7 +1746,9 @@ class RecorderSupervisor(BaseRecorderSupervisor):
             relay=relay,
             build_ffmpeg_command=build_ffmpeg_command,
             add_event=add_event,
-            redact_camera_text=redact_camera_text,
+            redact_camera_text=lambda text, camera: redact_camera_text(
+                text, camera
+            ),
             get_camera=get_camera,
             camera_dir=camera_dir,
             list_cameras=list_cameras,
