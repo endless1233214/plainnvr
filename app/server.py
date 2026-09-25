@@ -115,7 +115,6 @@ try:
         stream_summary as stream_summary_impl,
         test_stream as test_stream_impl,
     )
-    from app import http_api
     from app.http_server import NvrHTTPServer
     from app.http_handler import NvrHandler as BaseNvrHandler
     from app.http_auth import (
@@ -258,7 +257,6 @@ except ModuleNotFoundError:
         stream_summary as stream_summary_impl,
         test_stream as test_stream_impl,
     )
-    import http_api
     from http_server import NvrHTTPServer
     from http_handler import NvrHandler as BaseNvrHandler
     from http_auth import (
