@@ -127,6 +127,7 @@ try:
         stream_summary as stream_summary_impl,
         test_stream as test_stream_impl,
     )
+    from app import http_api
     from app.http_auth import (
         LoginLimiter,
         basic_auth_credentials,
@@ -267,6 +268,7 @@ except ModuleNotFoundError:
         stream_summary as stream_summary_impl,
         test_stream as test_stream_impl,
     )
+    import http_api
     from http_auth import (
         LoginLimiter,
         basic_auth_credentials,
@@ -1317,753 +1319,275 @@ class NvrHandler(SimpleHTTPRequestHandler):
         return f"{AUTH_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"
 
     def do_GET(self):
-        parsed = urlparse(self.path)
-        if not self.ensure_authorized(parsed):
-            return
-        if parsed.path == "/login.html" and self.auth_user() and not setup_required():
-            self.redirect("/")
-            return
-        if parsed.path.startswith("/api/"):
-            self.handle_api_get(parsed)
-            return
-        if parsed.path.startswith("/go2rtc/"):
-            self.handle_go2rtc_proxy(parsed)
-            return
-        if parsed.path.startswith("/ha/"):
-            self.handle_home_assistant(parsed)
-            return
-        if parsed.path.startswith("/live/"):
-            self.handle_live_hls(parsed)
-            return
-        if parsed.path.startswith("/media/"):
-            self.handle_media(parsed.path)
-            return
-        self.serve_static(parsed.path)
+        return http_api.do_GET(
+            self,
+            sys.modules[__name__],
+        )
 
     def do_HEAD(self):
-        parsed = urlparse(self.path)
-        if not self.ensure_authorized(parsed):
-            return
-        if parsed.path.startswith("/ha/"):
-            self.handle_home_assistant_head(parsed)
-            return
-        if parsed.path.startswith("/live/"):
-            self.handle_live_hls_head(parsed)
-            return
-        if parsed.path.startswith("/media/"):
-            self.handle_media(parsed.path, head_only=True)
-            return
-        if parsed.path.startswith("/api/"):
-            self.send_response(HTTPStatus.METHOD_NOT_ALLOWED)
-            self.send_header("Content-Length", "0")
-            self.end_headers()
-            return
-        if parsed.path.startswith("/go2rtc/"):
-            self.handle_go2rtc_proxy(parsed, head_only=True)
-            return
-        self.serve_static(parsed.path, head_only=True)
+        return http_api.do_HEAD(
+            self,
+            sys.modules[__name__],
+        )
 
     def do_POST(self):
-        if not self.ensure_same_origin():
-            return
-        parsed = urlparse(self.path)
-        if not self.ensure_authorized(parsed):
-            return
-        if parsed.path in ("/api/auth/login", "/api/auth/setup") and not login_limiter.allow(self.client_address[0]):
-            self.send_json({"error": "Too many login attempts. Try again in a minute."}, HTTPStatus.TOO_MANY_REQUESTS, headers={"Retry-After": "60"})
-            return
-        try:
-            payload = parse_json_body(self)
-        except ValueError as exc:
-            self.send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
-            return
-        if parsed.path == "/api/auth/setup":
-            self.handle_auth_setup(payload)
-            return
-        if parsed.path == "/api/auth/login":
-            self.handle_auth_login(payload)
-            return
-        if parsed.path == "/api/auth/logout":
-            delete_session(self.session_id())
-            self.send_json({"ok": True}, headers={"Set-Cookie": self.expired_session_cookie()})
-            return
-        if parsed.path == "/api/cameras":
-            try:
-                camera = create_camera(payload)
-            except ValueError as exc:
-                self.send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
-                return
-            self.send_json(camera, HTTPStatus.CREATED)
-            return
-        if parsed.path == "/api/onvif/discover":
-            self.handle_onvif_discovery(payload)
-            return
-        match = re.match(
-            r"^/api/cameras/([a-f0-9]+)/(onvif/discover|compatibility)$",
-            parsed.path,
+        return http_api.do_POST(
+            self,
+            sys.modules[__name__],
         )
-        if match:
-            if match.group(2) == "onvif/discover":
-                self.handle_camera_onvif_discovery(match.group(1), payload)
-            else:
-                self.handle_camera_compatibility(match.group(1))
-            return
-        match = re.match(r"^/api/cameras/([a-f0-9]+)/ptz$", parsed.path)
-        if match:
-            self.handle_camera_ptz(match.group(1), payload)
-            return
-        match = re.match(r"^/api/cameras/([a-f0-9]+)/time$", parsed.path)
-        if match:
-            self.handle_camera_time(match.group(1), payload)
-            return
-        match = re.match(r"^/api/cameras/([a-f0-9]+)/(recorder|live)/(start|stop|restart)$", parsed.path)
-        if match:
-            self.handle_camera_control(match.group(1), match.group(2), match.group(3))
-            return
-        if parsed.path == "/api/test-stream":
-            try:
-                self.send_json(test_stream(payload))
-            except ValueError as exc:
-                self.send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
-            return
-        if parsed.path == "/api/users":
-            try:
-                username = create_user(payload.get("username"), payload.get("password"))
-            except ValueError as exc:
-                self.send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
-                return
-            self.send_json({"ok": True, "username": username}, HTTPStatus.CREATED)
-            return
-        self.send_error_json(HTTPStatus.NOT_FOUND, "Not found.")
 
     def do_PUT(self):
-        if not self.ensure_same_origin():
-            return
-        parsed = urlparse(self.path)
-        if not self.ensure_authorized(parsed):
-            return
-        try:
-            payload = parse_json_body(self)
-        except ValueError as exc:
-            self.send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
-            return
-        if parsed.path == "/api/settings":
-            previous = get_app_settings()
-            try:
-                settings = update_app_settings(payload)
-            except ValueError as exc:
-                self.send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
-                return
-            if settings["log_level"] != previous["log_level"]:
-                go2rtc.shutdown()
-                with go2rtc.lock:
-                    go2rtc.stream_keys.clear()
-                    go2rtc.media_states.clear()
-                go2rtc.start(list_cameras())
-            self.send_json({"settings": settings})
-            return
-        match = re.match(r"^/api/cameras/([a-f0-9]+)$", parsed.path)
-        if match:
-            try:
-                camera = update_camera(match.group(1), payload)
-            except ValueError as exc:
-                self.send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
-                return
-            if not camera:
-                self.send_error_json(HTTPStatus.NOT_FOUND, "Camera not found.")
-                return
-            self.send_json(camera)
-            return
-        self.send_error_json(HTTPStatus.NOT_FOUND, "Not found.")
+        return http_api.do_PUT(
+            self,
+            sys.modules[__name__],
+        )
 
     def do_DELETE(self):
-        if not self.ensure_same_origin():
-            return
-        parsed = urlparse(self.path)
-        if not self.ensure_authorized(parsed):
-            return
-        match = re.match(r"^/api/cameras/([a-f0-9]+)$", parsed.path)
-        if match:
-            if delete_camera(match.group(1)):
-                self.send_json({"ok": True})
-            else:
-                self.send_error_json(HTTPStatus.NOT_FOUND, "Camera not found.")
-            return
-        match = re.match(r"^/api/users/([^/]+)$", parsed.path)
-        if match:
-            try:
-                deleted = delete_user(match.group(1), self.auth_user())
-            except ValueError as exc:
-                self.send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
-                return
-            if deleted:
-                self.send_json({"ok": True})
-            else:
-                self.send_error_json(HTTPStatus.NOT_FOUND, "User not found.")
-            return
-        self.send_error_json(HTTPStatus.NOT_FOUND, "Not found.")
+        return http_api.do_DELETE(
+            self,
+            sys.modules[__name__],
+        )
 
     def handle_auth_setup(self, payload):
-        if not setup_required():
-            self.send_error_json(HTTPStatus.CONFLICT, "Admin account already exists.")
-            return
-        try:
-            username = create_user(payload.get("username"), payload.get("password"), initial_setup=True)
-        except ValueError as exc:
-            self.send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
-            return
-        session_id = create_session(username)
-        self.send_json(
-            {"ok": True, "username": username},
-            HTTPStatus.CREATED,
-            headers={"Set-Cookie": self.session_cookie(session_id)},
+        return http_api.handle_auth_setup(
+            self,
+            sys.modules[__name__],
+            payload,
         )
 
     def handle_auth_login(self, payload):
-        username = authenticate_user(payload.get("username"), payload.get("password"))
-        if not username:
-            self.send_error_json(HTTPStatus.UNAUTHORIZED, "Invalid username or password.")
-            return
-        session_id = create_session(username)
-        self.send_json({"ok": True, "username": username}, headers={"Set-Cookie": self.session_cookie(session_id)})
+        return http_api.handle_auth_login(
+            self,
+            sys.modules[__name__],
+            payload,
+        )
 
-    def handle_camera_control(self, camera_id, target, action):
-        camera = get_camera(camera_id)
-        if not camera:
-            self.send_error_json(HTTPStatus.NOT_FOUND, "Camera not found.")
-            return
-        if target == "recorder":
-            self.handle_recorder_control(camera, action)
-            return
-        self.handle_live_control(camera, action)
+    def handle_camera_control(
+        self,
+        camera_id,
+        target,
+        action,
+    ):
+        return http_api.handle_camera_control(
+            self,
+            sys.modules[__name__],
+            camera_id,
+            target,
+            action,
+        )
 
-    def handle_recorder_control(self, camera, action):
-        if action == "stop":
-            recorder.pause(camera["id"])
-        elif action == "start":
-            if not camera["enabled"]:
-                self.send_error_json(HTTPStatus.CONFLICT, "Camera is disabled.")
-                return
-            recorder.resume(camera)
-        elif action == "restart":
-            if not camera["enabled"]:
-                self.send_error_json(HTTPStatus.CONFLICT, "Camera is disabled.")
-                return
-            recorder.restart_now(camera)
-        self.send_json({"ok": True, "recorders": recorder.status(), "events": get_recent_events()})
+    def handle_recorder_control(
+        self,
+        camera,
+        action,
+    ):
+        return http_api.handle_recorder_control(
+            self,
+            sys.modules[__name__],
+            camera,
+            action,
+        )
 
-    def handle_live_control(self, camera, action):
-        # Live controls belong to a viewer. Deleting the shared source here
-        # disconnects every viewer and the recorder when one client retries.
-        self.send_json({"ok": True, "scope": "viewer"})
+    def handle_live_control(
+        self,
+        camera,
+        action,
+    ):
+        return http_api.handle_live_control(
+            self,
+            sys.modules[__name__],
+            camera,
+            action,
+        )
 
-    def handle_camera_ptz(self, camera_id, payload):
-        camera = get_camera(camera_id)
-        if not camera:
-            self.send_error_json(HTTPStatus.NOT_FOUND, "Camera not found.")
-            return
-        try:
-            result = run_ptz_command(camera, payload)
-        except ValueError as exc:
-            self.send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
-            return
-        except RuntimeError as exc:
-            self.send_error_json(HTTPStatus.BAD_GATEWAY, redact_camera_text(str(exc), camera))
-            return
-        self.send_json(result)
+    def handle_camera_ptz(
+        self,
+        camera_id,
+        payload,
+    ):
+        return http_api.handle_camera_ptz(
+            self,
+            sys.modules[__name__],
+            camera_id,
+            payload,
+        )
 
-    def handle_onvif_discovery(self, payload):
-        rtsp_url = str(payload.get("rtsp_url") or "").strip()
-        onvif_url = str(payload.get("onvif_url") or "").strip()
-        ptz_url = str(payload.get("ptz_url") or "").strip()
-        if not rtsp_url and not onvif_url and not ptz_url:
-            self.send_error_json(
-                HTTPStatus.BAD_REQUEST,
-                "Enter a stream URL or ONVIF device URL first.",
-            )
-            return
-        try:
-            result = discover_camera_onvif(payload)
-        except OnvifError as exc:
-            self.send_error_json(HTTPStatus.BAD_GATEWAY, str(exc))
-            return
-        self.send_json(result)
+    def handle_onvif_discovery(
+        self,
+        payload,
+    ):
+        return http_api.handle_onvif_discovery(
+            self,
+            sys.modules[__name__],
+            payload,
+        )
 
-    def handle_camera_onvif_discovery(self, camera_id, payload=None):
-        camera = get_camera(camera_id)
-        if not camera:
-            self.send_error_json(HTTPStatus.NOT_FOUND, "Camera not found.")
-            return
-        try:
-            result = discover_camera_onvif({**camera, **(payload or {})}, camera_id)
-        except OnvifError as exc:
-            self.send_error_json(
-                HTTPStatus.BAD_GATEWAY,
-                redact_camera_text(str(exc), camera),
-            )
-            return
-        self.send_json(result)
+    def handle_camera_onvif_discovery(
+        self,
+        camera_id,
+        payload=None,
+    ):
+        return http_api.handle_camera_onvif_discovery(
+            self,
+            sys.modules[__name__],
+            camera_id,
+            payload,
+        )
 
-    def handle_camera_compatibility(self, camera_id, download=False):
-        camera = get_camera(camera_id)
-        if not camera:
-            self.send_error_json(HTTPStatus.NOT_FOUND, "Camera not found.")
-            return
-        report = camera_compatibility_report(camera, refresh_onvif=True)
-        headers = None
-        if download:
-            headers = {
-                "Content-Disposition": (
-                    f'attachment; filename="plainnvr-{camera["slug"]}-compatibility.json"'
-                )
-            }
-        self.send_json(report, headers=headers, indent=2 if download else None)
+    def handle_camera_compatibility(
+        self,
+        camera_id,
+        download=False,
+    ):
+        return http_api.handle_camera_compatibility(
+            self,
+            sys.modules[__name__],
+            camera_id,
+            download,
+        )
 
-    def handle_camera_time(self, camera_id, payload=None):
-        camera = get_camera(camera_id)
-        if not camera:
-            self.send_error_json(HTTPStatus.NOT_FOUND, "Camera not found.")
-            return
-        try:
-            result = camera_time(camera, None if payload is None else payload.get("time"))
-        except ValueError as exc:
-            self.send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
-            return
-        except RuntimeError as exc:
-            self.send_error_json(HTTPStatus.BAD_GATEWAY, redact_camera_text(str(exc), camera))
-            return
-        self.send_json(result)
+    def handle_camera_time(
+        self,
+        camera_id,
+        payload=None,
+    ):
+        return http_api.handle_camera_time(
+            self,
+            sys.modules[__name__],
+            camera_id,
+            payload,
+        )
 
     def handle_api_get(self, parsed):
-        query = parse_qs(parsed.query)
-        if parsed.path == "/api/health":
-            self.send_json({"ok": True, "now": iso_now()})
-            return
-        if parsed.path == "/api/auth/state":
-            username = self.auth_user()
-            self.send_json(
-                {
-                    "authenticated": bool(username),
-                    "setup_required": setup_required(),
-                    "username": username,
-                }
-            )
-            return
-        if parsed.path == "/api/cameras":
-            self.send_json({"cameras": list_cameras()})
-            return
-        if parsed.path == "/api/settings":
-            self.send_json({"settings": get_app_settings()})
-            return
-        match = re.match(r"^/api/cameras/([a-f0-9]+)/time$", parsed.path)
-        if match:
-            self.handle_camera_time(match.group(1))
-            return
-        match = re.match(r"^/api/cameras/([a-f0-9]+)/live/diagnostics$", parsed.path)
-        if match:
-            camera = get_camera(match.group(1))
-            if not camera:
-                self.send_error_json(HTTPStatus.NOT_FOUND, "Camera not found.")
-                return
-            self.send_json(
-                live_diagnostics(
-                    camera,
-                    include_audio=query_bool(query, "audio", default=True),
-                )
-            )
-            return
-        match = re.match(
-            r"^/api/cameras/([a-f0-9]+)/compatibility-report$",
-            parsed.path,
+        return http_api.handle_api_get(
+            self,
+            sys.modules[__name__],
+            parsed,
         )
-        if match:
-            self.handle_camera_compatibility(match.group(1), download=True)
-            return
-        if parsed.path == "/api/status":
-            cameras = list_cameras()
-            states = recorder.status()
-            self.send_json(
-                {
-                    "cameras": cameras,
-                    "recorders": states,
-                    "disk": disk_status(),
-                    "events": get_recent_events(),
-                    "stream_token": get_stream_token(),
-                    "relays": relay.status(cameras),
-                    "go2rtc": go2rtc.status(),
-                    "night_modes": night_modes.status(),
-                    "settings": get_app_settings(),
-                    "users": list_users(),
-                    "username": self.auth_user(),
-                    "now": iso_now(),
-                }
-            )
-            return
-        if parsed.path == "/api/coverage":
-            camera_id = query.get("camera_id", [""])[0]
-            camera = get_camera(camera_id)
-            if not camera:
-                self.send_error_json(HTTPStatus.NOT_FOUND, "Camera not found.")
-                return
-            self.send_json({"coverage": recording_coverage(camera)})
-            return
-        if parsed.path == "/api/segments":
-            camera_id = query.get("camera_id", [""])[0]
-            date_value = query.get("date", [""])[0] or None
-            camera = get_camera(camera_id)
-            if not camera:
-                self.send_error_json(HTTPStatus.NOT_FOUND, "Camera not found.")
-                return
-            self.send_json({"segments": scan_segments(camera, date_value)})
-            return
-        self.send_error_json(HTTPStatus.NOT_FOUND, "Not found.")
 
-    def handle_go2rtc_proxy(self, parsed, head_only=False):
-        if not go2rtc.running():
-            self.send_error_json(HTTPStatus.SERVICE_UNAVAILABLE, "go2rtc is unavailable.")
-            return
-        # Only expose the playback socket, never go2rtc's management/debug
-        # APIs or arbitrary sources (which can invoke go2rtc source handlers).
-        query = parse_qs(parsed.query, keep_blank_values=True)
-        source = query.get("src", [""])
-        match = re.fullmatch(r"plainnvr_([a-f0-9]+)", source[0]) if len(source) == 1 else None
-        if parsed.path != "/go2rtc/api/ws" or set(query) != {"src"} or not match:
-            self.send_error_json(HTTPStatus.NOT_FOUND, "Not found.")
-            return
-        camera = get_camera(match.group(1))
-        if not camera or not camera.get("enabled"):
-            self.send_error_json(HTTPStatus.NOT_FOUND, "Camera not found.")
-            return
-        if not self.ensure_same_origin():
-            return
-        if not go2rtc.can_restream(camera) or not go2rtc.configure_camera(camera):
-            self.send_error_json(HTTPStatus.SERVICE_UNAVAILABLE, "Stream unavailable.")
-            return
-        upstream_path = "/api/ws?" + urlencode({"src": source[0]})
-        if self.headers.get("Upgrade", "").lower() == "websocket" and not head_only:
-            self.proxy_go2rtc_websocket(upstream_path)
-            return
-        self.send_error_json(HTTPStatus.BAD_REQUEST, "WebSocket upgrade required.")
-        return
+    def handle_go2rtc_proxy(
+        self,
+        parsed,
+        head_only=False,
+    ):
+        return http_api.handle_go2rtc_proxy(
+            self,
+            sys.modules[__name__],
+            parsed,
+            head_only,
+        )
 
-    def proxy_go2rtc_websocket(self, upstream_path):
-        upstream = None
-        response_sent = False
-        try:
-            upstream = socket.create_connection(
-                (GO2RTC_API_HOST, GO2RTC_API_PORT),
-                timeout=10,
-            )
-            headers = [
-                f"GET {upstream_path} HTTP/1.1",
-                f"Host: {GO2RTC_API_HOST}:{GO2RTC_API_PORT}",
-                "Connection: Upgrade",
-                "Upgrade: websocket",
-            ]
-            for key in (
-                "Sec-WebSocket-Key",
-                "Sec-WebSocket-Version",
-                "Sec-WebSocket-Protocol",
-                "Sec-WebSocket-Extensions",
-                "Origin",
-                "User-Agent",
-            ):
-                value = self.headers.get(key)
-                if value:
-                    headers.append(f"{key}: {value}")
-            upstream.sendall(("\r\n".join(headers) + "\r\n\r\n").encode("latin-1"))
-
-            response = bytearray()
-            while b"\r\n\r\n" not in response and len(response) < 64 * 1024:
-                chunk = upstream.recv(4096)
-                if not chunk:
-                    break
-                response.extend(chunk)
-            if not response:
-                raise RuntimeError("go2rtc closed the WebSocket handshake.")
-            self.connection.sendall(response)
-            response_sent = True
-            status_line = bytes(response).split(b"\r\n", 1)[0]
-            if b" 101 " not in status_line:
-                return
-
-            self.close_connection = True
-            upstream.settimeout(None)
-            self.connection.settimeout(None)
-            sockets = (self.connection, upstream)
-            while True:
-                readable, _, exceptional = select.select(sockets, [], sockets, 30)
-                if exceptional:
-                    break
-                if not readable:
-                    continue
-                for source in readable:
-                    data = source.recv(64 * 1024)
-                    if not data:
-                        return
-                    target = upstream if source is self.connection else self.connection
-                    target.sendall(data)
-        except (OSError, RuntimeError) as exc:
-            if not response_sent:
-                self.send_error_json(
-                    HTTPStatus.BAD_GATEWAY,
-                    f"go2rtc WebSocket proxy failed: {exc}",
-                )
-        finally:
-            if upstream:
-                try:
-                    upstream.close()
-                except OSError:
-                    pass
+    def proxy_go2rtc_websocket(
+        self,
+        upstream_path,
+    ):
+        return http_api.proxy_go2rtc_websocket(
+            self,
+            sys.modules[__name__],
+            upstream_path,
+        )
 
     def handle_home_assistant(self, parsed):
-        match = re.match(r"^/ha/([a-f0-9]+)/(snapshot\.jpg|stream\.mjpeg)$", parsed.path)
-        if not match:
-            self.send_error(HTTPStatus.NOT_FOUND)
-            return
-        if not home_assistant_enabled():
-            self.send_error(HTTPStatus.NOT_FOUND, "Home Assistant bridge is disabled.")
-            return
-        camera = get_camera(match.group(1))
-        if not camera:
-            self.send_error(HTTPStatus.NOT_FOUND)
-            return
-        query = parse_qs(parsed.query)
-        if match.group(2) == "snapshot.jpg":
-            self.handle_snapshot(camera, grayscale=query_bool(query, "grayscale"))
-            return
-        self.send_error(
-            HTTPStatus.GONE,
-            "MJPEG live streaming is disabled. Use the go2rtc-backed HLS URL under /live/.",
+        return http_api.handle_home_assistant(
+            self,
+            sys.modules[__name__],
+            parsed,
         )
 
-    def handle_home_assistant_head(self, parsed):
-        match = re.match(r"^/ha/([a-f0-9]+)/(snapshot\.jpg|stream\.mjpeg)$", parsed.path)
-        if not match or not home_assistant_enabled():
-            self.send_response(HTTPStatus.NOT_FOUND)
-            self.send_header("Content-Length", "0")
-            self.end_headers()
-            return
-        if not get_camera(match.group(1)):
-            self.send_response(HTTPStatus.NOT_FOUND)
-            self.send_header("Content-Length", "0")
-            self.end_headers()
-            return
-        if match.group(2) == "snapshot.jpg":
-            self.send_response(HTTPStatus.OK)
-            self.send_header("Content-Type", "image/jpeg")
-        else:
-            self.send_response(HTTPStatus.GONE)
-            self.send_header("Content-Type", "text/plain; charset=utf-8")
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Content-Length", "0")
-        self.end_headers()
+    def handle_home_assistant_head(
+        self,
+        parsed,
+    ):
+        return http_api.handle_home_assistant_head(
+            self,
+            sys.modules[__name__],
+            parsed,
+        )
 
-    def handle_live_hls(self, parsed, head_only=False):
-        match = re.match(r"^/live/([a-f0-9]+)/(stream\.m3u8|hls/(?:playlist\.m3u8|init\.mp4|segment\.(?:ts|m4s)))$", parsed.path)
-        if not match:
-            self.send_error(HTTPStatus.NOT_FOUND)
-            return
-        camera = get_camera(match.group(1))
-        if not camera:
-            self.send_error(HTTPStatus.NOT_FOUND)
-            return
-        token = parse_qs(parsed.query).get("token", [""])[0]
-        if match.group(2) == "stream.m3u8":
-            if not go2rtc.can_restream(camera) or not go2rtc.configure_camera(camera):
-                self.send_error(
-                    HTTPStatus.SERVICE_UNAVAILABLE,
-                    "go2rtc stream is unavailable.",
-                )
-                return
-            upstream_path = f"/api/stream.m3u8?{urlencode({'src': go2rtc.stream_name(camera)})}"
-        else:
-            rest = match.group(2)[len("hls/") :]
-            query = parse_qs(parsed.query, keep_blank_values=True)
-            query.pop("token", None)
-            upstream_path = f"/api/hls/{rest}"
-            encoded_query = urlencode(query, doseq=True)
-            if encoded_query:
-                upstream_path = f"{upstream_path}?{encoded_query}"
-        self.proxy_go2rtc_live_hls(upstream_path, camera["id"], token, head_only=head_only)
+    def handle_live_hls(
+        self,
+        parsed,
+        head_only=False,
+    ):
+        return http_api.handle_live_hls(
+            self,
+            sys.modules[__name__],
+            parsed,
+            head_only,
+        )
 
     def handle_live_hls_head(self, parsed):
-        self.handle_live_hls(parsed, head_only=True)
-
-    def proxy_go2rtc_live_hls(self, upstream_path, camera_id, token="", head_only=False):
-        headers = {"Accept": self.headers.get("Accept", "*/*")}
-        if self.headers.get("Range"):
-            headers["Range"] = self.headers["Range"]
-        request = urllib_request.Request(
-            f"http://{GO2RTC_API_HOST}:{GO2RTC_API_PORT}{upstream_path}",
-            headers=headers,
-            method="HEAD" if head_only else "GET",
+        return http_api.handle_live_hls_head(
+            self,
+            sys.modules[__name__],
+            parsed,
         )
-        try:
-            response = urllib_request.urlopen(request, timeout=10)
-        except urllib_error.HTTPError as exc:
-            response = exc
-        except (OSError, urllib_error.URLError) as exc:
-            self.send_error(HTTPStatus.BAD_GATEWAY, f"go2rtc HLS proxy failed: {exc}")
-            return
-        with response:
-            content_type = response.headers.get("Content-Type", "")
-            is_playlist = "mpegurl" in content_type or upstream_path.split("?", 1)[0].endswith(".m3u8")
-            if is_playlist and response.status == HTTPStatus.OK and not head_only:
-                text = response.read().decode("utf-8", "replace")
-                self.send_go2rtc_live_playlist(text, camera_id, token)
-                return
-            self.send_response(response.status)
-            for key in ("Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "Cache-Control", "Retry-After"):
-                value = response.headers.get(key)
-                if value:
-                    self.send_header(key, value)
-            self.send_header("X-Content-Type-Options", "nosniff")
-            self.end_headers()
-            if not head_only:
-                shutil.copyfileobj(response, self.wfile, length=64 * 1024)
 
-    def send_go2rtc_live_playlist(self, text, camera_id, token=""):
-        def rewrite_uri(uri):
-            if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", uri):
-                return uri
-            if uri.startswith("/api/hls/"):
-                uri = uri[len("/api/hls/") :]
-            elif uri.startswith("hls/"):
-                uri = uri[len("hls/") :]
-            uri = f"/live/{camera_id}/hls/{uri}"
-            if token:
-                separator = "&" if "?" in uri else "?"
-                uri = f"{uri}{separator}token={quote(token)}"
-            return uri
+    def proxy_go2rtc_live_hls(
+        self,
+        upstream_path,
+        camera_id,
+        token="",
+        head_only=False,
+    ):
+        return http_api.proxy_go2rtc_live_hls(
+            self,
+            sys.modules[__name__],
+            upstream_path,
+            camera_id,
+            token,
+            head_only,
+        )
 
-        lines = []
-        for line in text.splitlines():
-            if line.startswith("#") and 'URI="' in line:
-                line = re.sub(
-                    r'URI="([^"]+)"',
-                    lambda match: f'URI="{rewrite_uri(match.group(1))}"',
-                    line,
-                )
-                lines.append(line)
-            elif not line or line.startswith("#"):
-                lines.append(line)
-            else:
-                lines.append(rewrite_uri(line.strip()))
-        text = "\n".join(lines) + "\n"
-        payload = text.encode("utf-8")
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", "application/vnd.apple.mpegurl")
-        self.send_header("Content-Length", str(len(payload)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(payload)
+    def send_go2rtc_live_playlist(
+        self,
+        text,
+        camera_id,
+        token="",
+    ):
+        return http_api.send_go2rtc_live_playlist(
+            self,
+            sys.modules[__name__],
+            text,
+            camera_id,
+            token,
+        )
 
-    def handle_snapshot(self, camera, grayscale=False):
-        try:
-            result = subprocess.run(build_snapshot_command(camera, grayscale=grayscale), capture_output=True, timeout=20)
-        except RuntimeError as exc:
-            self.send_error(HTTPStatus.BAD_GATEWAY, redact_camera_text(str(exc), camera))
-            return
-        except subprocess.TimeoutExpired:
-            self.send_error(HTTPStatus.GATEWAY_TIMEOUT, "Snapshot timed out.")
-            return
-        if result.returncode != 0 or not result.stdout:
-            message = result.stderr.decode("utf-8", "replace").strip().splitlines()
-            self.send_error(HTTPStatus.BAD_GATEWAY, message[-1] if message else "Snapshot failed.")
-            return
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", "image/jpeg")
-        self.send_header("Content-Length", str(len(result.stdout)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        try:
-            self.wfile.write(result.stdout)
-        except (BrokenPipeError, ConnectionResetError):
-            pass
+    def handle_snapshot(
+        self,
+        camera,
+        grayscale=False,
+    ):
+        return http_api.handle_snapshot(
+            self,
+            sys.modules[__name__],
+            camera,
+            grayscale,
+        )
 
-    def handle_media(self, path, head_only=False):
-        parts = path.split("/")
-        if len(parts) != 4:
-            self.send_error(HTTPStatus.NOT_FOUND)
-            return
-        camera_id = parts[2]
-        filename = unquote(parts[3])
-        if not SEGMENT_RE.match(filename):
-            self.send_error(HTTPStatus.NOT_FOUND)
-            return
-        camera = get_camera(camera_id)
-        if not camera:
-            self.send_error(HTTPStatus.NOT_FOUND)
-            return
-        target = (camera_dir(camera) / filename).resolve()
-        root = camera_dir(camera).resolve()
-        if root not in target.parents or not target.exists():
-            self.send_error(HTTPStatus.NOT_FOUND)
-            return
-        size = target.stat().st_size
-        start = 0
-        end = size - 1
-        status = HTTPStatus.OK
-        range_header = self.headers.get("Range")
-        if range_header:
-            match = re.fullmatch(r"bytes=(\d*)-(\d*)", range_header)
-            if not match or not any(match.groups()):
-                # Unsupported range syntax (including multipart): serve whole file.
-                match = None
-            if match:
-                first, last = match.groups()
-                if first:
-                    start = int(first)
-                    end = min(int(last), size - 1) if last else size - 1
-                else:
-                    start = max(0, size - int(last))
-                if start >= size or start > end:
-                    self.send_response(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
-                    self.send_header("Content-Range", f"bytes */{size}")
-                    self.send_header("Content-Length", "0")
-                    self.end_headers()
-                    return
-                status = HTTPStatus.PARTIAL_CONTENT
-        self.send_response(status)
-        self.send_header("Content-Type", "video/mp4")
-        self.send_header("Content-Length", str(end - start + 1))
-        self.send_header("Accept-Ranges", "bytes")
-        if status == HTTPStatus.PARTIAL_CONTENT:
-            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
-        self.end_headers()
-        if head_only:
-            return
-        with target.open("rb") as src:
-            src.seek(start)
-            remaining = end - start + 1
-            while remaining > 0:
-                chunk = src.read(min(1024 * 1024, remaining))
-                if not chunk:
-                    break
-                self.wfile.write(chunk)
-                remaining -= len(chunk)
+    def handle_media(
+        self,
+        path,
+        head_only=False,
+    ):
+        return http_api.handle_media(
+            self,
+            sys.modules[__name__],
+            path,
+            head_only,
+        )
 
-    def serve_static(self, path, head_only=False):
-        if path in ("", "/"):
-            path = "/index.html"
-        target = (STATIC_DIR / path.lstrip("/")).resolve()
-        root = STATIC_DIR.resolve()
-        if root not in target.parents and target != root:
-            self.send_error(HTTPStatus.NOT_FOUND)
-            return
-        if not target.exists() or not target.is_file():
-            self.send_error(HTTPStatus.NOT_FOUND)
-            return
-        content_type = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(target.stat().st_size))
-        self.end_headers()
-        if head_only:
-            return
-        with target.open("rb") as src:
-            shutil.copyfileobj(src, self.wfile)
+    def serve_static(
+        self,
+        path,
+        head_only=False,
+    ):
+        return http_api.serve_static(
+            self,
+            sys.modules[__name__],
+            path,
+            head_only,
+        )
 
 
 class NvrHTTPServer(ThreadingHTTPServer):
