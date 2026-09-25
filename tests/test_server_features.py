@@ -35,7 +35,7 @@ class ServerFeatureTests(unittest.TestCase):
         )
 
     def test_direct_script_import_keeps_dvrip_helpers(self):
-        app_dir = Path(__file__).resolve().parents[1] / "app"
+        app_dir = Path(server.__file__).resolve().parent
         script = """
 import sys
 sys.path.insert(0, sys.argv[1])
