@@ -100,6 +100,29 @@ class RequestSafetyTests(unittest.TestCase):
                 server.create_user('second', 'second-password-123', initial_setup=True)
             self.assertEqual(len(server.list_users()), 1)
 
+    def test_bootstrap_credentials_create_a_working_admin(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            server, 'DATA_DIR', Path(directory)
+        ), patch.object(
+            server, 'DB_PATH', Path(directory) / 'test.sqlite3'
+        ), patch.object(
+            server, 'BOOTSTRAP_USERNAME', 'bootstrap-admin'
+        ), patch.object(
+            server, 'BOOTSTRAP_PASSWORD', 'bootstrap-password-123'
+        ):
+            server.init_db()
+            self.assertEqual(
+                server.authenticate_user(
+                    'bootstrap-admin',
+                    'bootstrap-password-123',
+                ),
+                'bootstrap-admin',
+            )
+            self.assertEqual(
+                [user['username'] for user in server.list_users()],
+                ['bootstrap-admin'],
+            )
+
     def test_low_write_mode_throttles_session_heartbeat(self):
         original_data = server.DATA_DIR
         original_db = server.DB_PATH
