@@ -307,6 +307,16 @@
             <input id="homeAssistantEnabled" type="checkbox" />
             Home Assistant
           </label>
+          <label class="server-setting-option">
+            <input id="reduceStorageWrites" type="checkbox" checked />
+            <span>
+              <strong>Reduce app storage writes</strong>
+              <small class="muted">
+                Throttles session metadata writes. Camera recordings already write
+                directly to the configured Recordings Storage.
+              </small>
+            </span>
+          </label>
           <button type="submit">Save Settings</button>
         </form>
       </section>
