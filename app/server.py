@@ -826,12 +826,12 @@ def build_ffmpeg_command(
 
 
 def ffmpeg_input_args(
-    camera,
+    camera_or_payload,
     url_key="rtsp_url",
     low_latency=True,
 ):
     return ffmpeg_input_args_impl(
-        camera,
+        camera_or_payload,
         url_key,
         low_latency,
         rtsp_probesize=RTSP_PROBESIZE,
@@ -926,6 +926,13 @@ def dvrip_target(camera):
         default_user=DVRIP_DEFAULT_USER,
         default_passhash=DVRIP_DEFAULT_PASSHASH,
     )
+
+
+def dvrip_time_target(camera):
+    target_camera = dict(camera)
+    if normalize_ptz_type(camera.get("ptz_type")) != "victure_dvrip":
+        target_camera["ptz_url"] = ""
+    return dvrip_target(target_camera)
 
 
 def camera_time(camera, requested=None):

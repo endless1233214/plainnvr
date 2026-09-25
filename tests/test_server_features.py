@@ -17,6 +17,23 @@ class RunningProcess:
 
 
 class ServerFeatureTests(unittest.TestCase):
+    def test_server_facade_keeps_existing_helper_names_and_keywords(self):
+        source = {"rtsp_url": "http://example.invalid/stream"}
+        self.assertEqual(
+            server.ffmpeg_input_args(camera_or_payload=source),
+            ["-i", source["rtsp_url"]],
+        )
+        camera = {
+            "rtsp_url": "rtsp://user:password@127.0.0.1:554/stream1",
+            "ptz_type": "none",
+            "ptz_url": "dvrip://different.example.invalid:34567",
+        }
+        target_camera = dict(camera, ptz_url="")
+        self.assertEqual(
+            server.dvrip_time_target(camera),
+            server.dvrip_target(target_camera),
+        )
+
     def test_direct_script_import_keeps_dvrip_helpers(self):
         app_dir = Path(__file__).resolve().parents[1] / "app"
         script = """
