@@ -49,7 +49,7 @@ cp "$repo_dir/build/go2rtc/go.mod" "$repo_dir/build/go2rtc/go.sum" "$work_dir/go
     export GOTOOLCHAIN=go1.27.1
     go mod download
     go mod verify
-    go list -deps . > "$work_dir/go2rtc-deps.txt"
+    CGO_ENABLED=0 go list -deps . > "$work_dir/go2rtc-deps.txt"
     if grep -q '^golang.org/x/crypto/openpgp$' "$work_dir/go2rtc-deps.txt"; then
         echo "Unexpected OpenPGP dependency" >&2
         exit 1

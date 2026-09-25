@@ -34,7 +34,7 @@ repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     python3 ca-certificates libssl3t64 chromium chromium-sandbox cage \
-    dbus-user-session libpam-systemd
+    dbus-user-session libpam-systemd kbd
 
 if ! getent group plainnvr >/dev/null; then
     groupadd --system plainnvr

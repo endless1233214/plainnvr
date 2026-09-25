@@ -71,3 +71,23 @@ recovery after restarting either service, and CPU/decoding load. The physical
 PC test decides whether Cage/Wayland works well on its graphics hardware;
 an Xorg kiosk fallback can be added if required. Disk selection, final ISO,
 automatic updates, and rollback are later milestones.
+
+The Debian 13 amd64 VM prototype has now completed the native validation pass:
+
+- The pinned go2rtc and FFmpeg builds produced native amd64 binaries. go2rtc
+  is statically linked with CGO disabled; FFmpeg and FFprobe link only against
+  the expected Debian runtime libraries.
+- The separate ext4 data disk is mounted at `/var/lib/plainnvr` by UUID. The
+  server refuses to start when that mount is absent.
+- PlainNVR, Cage, and Chromium start through systemd. The local display opens
+  the ordinary login page and requires a new login after reboot.
+- Two synthetic H.264/AAC camera sources recorded simultaneous MP4 segments;
+  recordings survived server restarts, kiosk restarts, and full VM reboots.
+  Playback was verified from the Recordings page.
+- The VirtualBox copy is bridged to the LAN and responded at
+  `http://192.168.1.150:8787/` during validation. The address is assigned by
+  DHCP and will change on another network.
+
+The remaining validation is on the intended old physical PC, including its
+graphics hardware and sustained CPU/decoding load. No installer ISO or
+production update mechanism has been created yet.
