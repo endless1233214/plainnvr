@@ -2,7 +2,7 @@
 set -eu
 # Retain camera transport, recording, audio conversion, snapshots and rotation.
 # Do not ship unrelated subtitle/game codecs, device capture or XML/DASH stacks.
-./configure --prefix=/opt/ffmpeg \
+./configure --prefix="${FFMPEG_PREFIX:-/opt/ffmpeg}" \
   --disable-autodetect --disable-debug --disable-doc --disable-ffplay \
   --disable-everything --enable-network --enable-openssl --enable-version3 \
   --enable-protocol=file,pipe,rtp,tcp,udp,rtsp,http,https,tls,crypto \
@@ -22,4 +22,4 @@ for component in RASC_DECODER VOBSUB_DEMUXER SPDIF_MUXER ADPCM_ADX_DECODER \
   grep -q "#define CONFIG_${component} 0" config_components.h
 done
 make -j2
-make install
+make install DESTDIR="${FFMPEG_DESTDIR:-}"

@@ -4,6 +4,7 @@ __pycache__/
 
 data/
 recordings/
+appliance/out/
 *.log
 *.pid
 ios/PlainNVRiPhone/build/

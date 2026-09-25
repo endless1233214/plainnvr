@@ -1,0 +1,34 @@
+[Unit]
+Description=PlainNVR native server
+After=network.target
+RequiresMountsFor=/var/lib/plainnvr
+AssertPathIsMountPoint=/var/lib/plainnvr
+
+[Service]
+Type=simple
+User=plainnvr
+Group=plainnvr
+WorkingDirectory=/opt/plainnvr/current
+Environment=NVR_HOST=0.0.0.0
+Environment=NVR_PORT=8787
+Environment=NVR_DATA_DIR=/var/lib/plainnvr
+Environment=NVR_RECORDINGS_DIR=/var/lib/plainnvr/recordings
+Environment=NVR_STATIC_DIR=/opt/plainnvr/current/static
+Environment=GO2RTC_BIN=/opt/plainnvr/current/bin/go2rtc
+Environment=FFMPEG_BIN=/opt/plainnvr/current/ffmpeg/bin/ffmpeg
+Environment=FFPROBE_BIN=/opt/plainnvr/current/ffmpeg/bin/ffprobe
+ExecStartPre=/usr/bin/test -w /var/lib/plainnvr
+ExecStartPre=/usr/bin/test -w /var/lib/plainnvr/recordings
+ExecStart=/usr/bin/python3 -u /opt/plainnvr/current/app/server.py
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=45s
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/plainnvr
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,27 @@
+[Unit]
+Description=PlainNVR local kiosk on %I
+After=systemd-user-sessions.service systemd-logind.service dbus.socket
+Wants=systemd-logind.service dbus.socket plainnvr.service
+Conflicts=getty@%i.service
+After=getty@%i.service
+ConditionPathExists=/dev/tty0
+
+[Service]
+Type=simple
+User=plainnvr-kiosk
+Group=plainnvr-kiosk
+ExecStart=/opt/plainnvr/current/kiosk/start.sh
+ExecStartPost=+/usr/bin/chvt 1
+Restart=always
+RestartSec=3s
+UtmpIdentifier=%I
+UtmpMode=user
+TTYPath=/dev/%I
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+StandardInput=tty-fail
+PAMName=plainnvr-kiosk
+
+[Install]
+WantedBy=graphical.target
