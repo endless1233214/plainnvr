@@ -498,10 +498,19 @@ def setting_bool(value, default=False):
         return default
 
 
+LOG_LEVELS = ("trace", "debug", "info", "warn", "error", "fatal")
+LOG_LEVEL_ORDER = {level: index for index, level in enumerate(LOG_LEVELS)}
+
 APP_SETTING_DEFAULTS = {
     "home_assistant_enabled": False,
     "reduce_storage_writes": True,
+    "log_level": "info",
 }
+
+
+def normalize_log_level(value, default="info"):
+    level = str(value or "").strip().lower()
+    return level if level in LOG_LEVELS else default
 
 
 def get_app_settings():
@@ -511,13 +520,22 @@ def get_app_settings():
             """
             SELECT key, value
             FROM app_settings
-            WHERE key IN ('home_assistant_enabled', 'reduce_storage_writes')
+            WHERE key IN ('home_assistant_enabled', 'reduce_storage_writes', 'log_level')
             """
         ).fetchall()
     for row in rows:
-        settings[row["key"]] = setting_bool(
-            row["value"], default=APP_SETTING_DEFAULTS[row["key"]]
-        )
+        key = row["key"]
+        if key == "log_level":
+            raw = row["value"]
+            try:
+                raw = json.loads(raw)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                pass
+            settings[key] = normalize_log_level(raw)
+        else:
+            settings[key] = setting_bool(
+                row["value"], default=APP_SETTING_DEFAULTS[key]
+            )
     return settings
 
 
@@ -525,21 +543,40 @@ def home_assistant_enabled():
     return bool(get_app_settings().get("home_assistant_enabled"))
 
 
+def app_log_level():
+    return normalize_log_level(get_app_settings().get("log_level"))
+
+
+def event_level_enabled(level):
+    level = normalize_log_level(level, default="info")
+    configured = app_log_level()
+    return LOG_LEVEL_ORDER[level] >= LOG_LEVEL_ORDER[configured]
+
+
 def update_app_settings(payload):
     settings = get_app_settings()
-    for key, default in APP_SETTING_DEFAULTS.items():
+    for key in ("home_assistant_enabled", "reduce_storage_writes"):
         if key in payload:
-            settings[key] = setting_bool(payload.get(key), default=default)
+            settings[key] = setting_bool(
+                payload.get(key), default=APP_SETTING_DEFAULTS[key]
+            )
+    if "log_level" in payload:
+        requested = str(payload.get("log_level") or "").strip().lower()
+        if requested not in LOG_LEVELS:
+            raise ValueError("Log level must be TRACE, DEBUG, INFO, WARN, ERROR, or FATAL.")
+        settings["log_level"] = requested
+
     now = iso_now()
     with db_conn() as conn:
         for key, value in settings.items():
+            encoded = json.dumps(value)
             conn.execute(
                 """
                 INSERT INTO app_settings (key, value, updated_at)
                 VALUES (?, ?, ?)
                 ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
                 """,
-                (key, json.dumps(bool(value)), now),
+                (key, encoded, now),
             )
     return settings
 
@@ -1001,6 +1038,8 @@ def delete_camera(camera_id):
 
 
 def add_event(camera_id, level, message):
+    if not event_level_enabled(level):
+        return
     try:
         with db_conn() as conn:
             previous = conn.execute(
@@ -1121,6 +1160,7 @@ class Go2RTCManager:
             if item.strip()
         ]
         config = {
+            "log": {"level": app_log_level()},
             "api": {
                 "listen": f"{GO2RTC_API_HOST}:{GO2RTC_API_PORT}",
                 "origin": "*",
