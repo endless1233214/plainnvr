@@ -107,13 +107,13 @@ try:
     from app.ptz import (
         camera_time as camera_time_impl,
         clean_control_url,
-        dvrip_login,
+        dvrip_login as dvrip_login_impl,
         dvrip_parse_json,
         dvrip_parse_session,
-        dvrip_query_time,
+        dvrip_query_time as dvrip_query_time_impl,
         dvrip_recv_exact,
-        dvrip_recv_packet,
-        dvrip_send_packet,
+        dvrip_recv_packet as dvrip_recv_packet_impl,
+        dvrip_send_packet as dvrip_send_packet_impl,
         dvrip_step_from_speed,
         dvrip_target as dvrip_target_impl,
         dvrip_url_for_parse,
@@ -1246,6 +1246,47 @@ def build_snapshot_command(camera, grayscale=False):
     add_video_filters(command, video_filters)
     command.extend(["-frames:v", "1", "-q:v", "4", "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1"])
     return command
+
+
+def dvrip_send_packet(
+    sock,
+    session,
+    number,
+    packet_type,
+    payload,
+):
+    return dvrip_send_packet_impl(
+        sock,
+        session,
+        number,
+        packet_type,
+        payload,
+        header=DVRIP_HEADER,
+    )
+
+
+def dvrip_recv_packet(sock):
+    return dvrip_recv_packet_impl(
+        sock,
+        header=DVRIP_HEADER,
+    )
+
+
+def dvrip_login(sock, target):
+    return dvrip_login_impl(
+        sock,
+        target,
+        header=DVRIP_HEADER,
+    )
+
+
+def dvrip_query_time(sock, session, number=4):
+    return dvrip_query_time_impl(
+        sock,
+        session,
+        number=number,
+        header=DVRIP_HEADER,
+    )
 
 
 def dvrip_target(camera):
