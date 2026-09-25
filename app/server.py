@@ -1194,15 +1194,18 @@ def disk_status():
     return {"total": usage.total, "used": usage.used, "free": usage.free}
 
 
-def valid_stream_auth(headers, stream_token):
+def valid_stream_auth(handler, parsed):
     return valid_stream_auth_impl(
-        headers,
-        stream_token,
+        handler,
+        parsed,
+        get_stream_token=get_stream_token,
         authenticate_user=authenticate_user,
+        basic_failure_limiter=basic_failure_limiter,
     )
 
 
 login_limiter = LoginLimiter()
+basic_failure_limiter = LoginLimiter()
 
 
 class NvrHandler(SimpleHTTPRequestHandler):
