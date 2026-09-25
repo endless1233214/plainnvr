@@ -7,6 +7,8 @@ const state = {
   users: [],
   username: "",
   coverage: {},
+  disk: {},
+  events: [],
   selectedCameraId: "",
   liveCameraId: "",
   streamToken: "",
@@ -262,7 +264,14 @@ function cameraPayloadFromForm() {
   };
 }
 
+function maskRtspUrl() {
+  $("rtspUrl").type = "password";
+  $("toggleRtspVisibility").textContent = "Show";
+  $("toggleRtspVisibility").setAttribute("aria-pressed", "false");
+}
+
 function resetForm() {
+  maskRtspUrl();
   state.selectedCameraId = "";
   $("editorTitle").textContent = "Add Camera";
   $("cameraId").value = "";
@@ -294,6 +303,7 @@ function resetForm() {
 }
 
 function editCamera(camera) {
+  maskRtspUrl();
   state.selectedCameraId = camera.id;
   $("editorTitle").textContent = camera.name;
   $("cameraId").value = camera.id;
@@ -432,18 +442,18 @@ function renderCameras() {
     const recorder = state.recorders[camera.id];
     const relay = state.relays[camera.id];
     const running = recorder?.running;
-    const streamHealthy = relay?.healthy === true;
+    const streamReady = relay?.available === true && relay?.media_state !== "stalled";
     const recorderRecovering = Boolean(recorder && !recorder.paused && !running);
     const stateLabel = !camera.enabled
       ? "disabled"
-      : !streamHealthy || recorderRecovering
+      : !streamReady || recorderRecovering
         ? "recovering"
         : running
         ? "recording"
         : "live";
     const stateClass = !camera.enabled
       ? "off"
-      : streamHealthy && !recorderRecovering
+      : streamReady && !recorderRecovering
         ? "ok"
         : "warn";
     const button = document.createElement("button");
@@ -643,7 +653,7 @@ function renderEvents(events) {
     row.className = "event";
     row.innerHTML = `
       <time>${formatTime(event.created_at)}</time>
-      <span class="chip ${event.level === "error" ? "off" : event.level === "warn" ? "warn" : "ok"}">${event.level}</span>
+      <span class="chip ${event.level === "error" ? "off" : event.level === "warn" ? "warn" : "ok"}">${escapeHtml(event.level)}</span>
       <span>${escapeHtml(event.message)}</span>
     `;
     target.appendChild(row);
@@ -701,7 +711,9 @@ async function loadStatus() {
   state.users = data.users || [];
   state.username = data.username || "";
   state.streamToken = data.stream_token || "";
-  updateDiskLine(data.disk);
+  state.disk = data.disk || {};
+  state.events = data.events || [];
+  updateDiskLine(state.disk);
   renderCameras();
   renderLiveCameras();
   renderPlaybackCameras();
@@ -710,10 +722,12 @@ async function loadStatus() {
   renderSettings();
   renderUsers();
   syncLiveHealth();
+  window.plainNvrUi?.render?.();
 }
 
 async function saveCamera(event) {
   event.preventDefault();
+  maskRtspUrl();
   const payload = cameraPayloadFromForm();
   setSaveState("Saving...");
   try {
@@ -788,6 +802,7 @@ function useDiscoveredStream() {
       "Run discovery again to retrieve the credentialed stream URI.";
     return;
   }
+  maskRtspUrl();
   $("rtspUrl").value = streamUrl;
   $("onvifState").textContent = `Using ${profile.name || profile.token}.`;
 }
@@ -1250,6 +1265,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
   $("playbackDate").value = today();
   $("cameraForm").addEventListener("submit", saveCamera);
+  $("cameraForm").addEventListener("invalid", maskRtspUrl, true);
   $("ptzType").addEventListener("change", updatePtzFormHints);
   $("discoverOnvif").addEventListener("click", discoverOnvif);
   $("downloadCompatibility").addEventListener("click", downloadCompatibilityReport);
