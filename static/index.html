@@ -17,349 +17,558 @@
     </script>
     <link rel="stylesheet" href="/styles.css" />
   </head>
-  <body>
-    <header class="topbar">
-      <div>
-        <h1>PlainNVR</h1>
-        <p id="diskLine">Checking storage...</p>
+  <body class="app-body">
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Primary navigation">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">P</div>
+          <div>
+            <strong>PlainNVR</strong>
+            <span>Local NVR</span>
+          </div>
+        </div>
+
+        <nav class="app-nav">
+          <button class="nav-item active" type="button" data-page-target="dashboard">
+            <span class="nav-icon" aria-hidden="true">⌂</span>
+            <span>Dashboard</span>
+          </button>
+          <button class="nav-item" type="button" data-page-target="live">
+            <span class="nav-icon" aria-hidden="true">▦</span>
+            <span>Live View</span>
+          </button>
+          <button class="nav-item" type="button" data-page-target="cameras">
+            <span class="nav-icon" aria-hidden="true">◉</span>
+            <span>Cameras</span>
+          </button>
+          <button class="nav-item" type="button" data-page-target="recordings">
+            <span class="nav-icon" aria-hidden="true">▶</span>
+            <span>Recordings</span>
+          </button>
+          <button class="nav-item" type="button" data-page-target="events">
+            <span class="nav-icon" aria-hidden="true">≡</span>
+            <span>Events</span>
+          </button>
+          <button class="nav-item" type="button" data-page-target="settings">
+            <span class="nav-icon" aria-hidden="true">⚙</span>
+            <span>Settings</span>
+          </button>
+        </nav>
+
+        <div class="sidebar-status">
+          <span class="status-dot"></span>
+          <div>
+            <strong>Server storage</strong>
+            <span id="diskLine">Checking storage...</span>
+          </div>
+        </div>
+      </aside>
+
+      <div class="app-main">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">PlainNVR</p>
+            <h1 id="pageTitle">Dashboard</h1>
+          </div>
+          <div class="top-actions">
+            <label class="theme-toggle" title="Toggle dark mode">
+              <input id="themeToggle" type="checkbox" />
+              <span class="theme-toggle-track" aria-hidden="true"></span>
+              <span id="themeLabel">Dark</span>
+            </label>
+            <button id="refreshStatus" class="quiet-button" type="button">Refresh</button>
+            <button id="logoutButton" class="quiet-button" type="button">Log Out</button>
+          </div>
+        </header>
+
+        <main class="workspace">
+          <section class="app-page active" data-page="dashboard">
+            <div class="page-heading">
+              <div>
+                <h2>System overview</h2>
+                <p>Camera health, recording state, storage, and recent activity.</p>
+              </div>
+              <button type="button" class="primary-button" data-page-target="live">Open Live View</button>
+            </div>
+
+            <div class="metric-grid">
+              <article class="metric-card">
+                <span>Cameras</span>
+                <strong id="dashboardCameraCount">0</strong>
+                <small id="dashboardCameraDetail">No cameras configured</small>
+              </article>
+              <article class="metric-card">
+                <span>Recording</span>
+                <strong id="dashboardRecordingCount">0</strong>
+                <small id="dashboardRecordingDetail">No active recorders</small>
+              </article>
+              <article class="metric-card">
+                <span>Storage free</span>
+                <strong id="dashboardStorage">—</strong>
+                <small id="dashboardStorageDetail">Checking storage</small>
+              </article>
+              <article class="metric-card">
+                <span>Needs attention</span>
+                <strong id="dashboardHealth">0</strong>
+                <small id="dashboardHealthDetail">Everything looks good</small>
+              </article>
+            </div>
+
+            <div class="dashboard-grid">
+              <section class="panel dashboard-camera-panel">
+                <div class="panel-heading">
+                  <div>
+                    <h2>Cameras</h2>
+                    <p>Current recorder and relay state</p>
+                  </div>
+                  <button type="button" data-page-target="cameras">Manage</button>
+                </div>
+                <div id="dashboardCameraGrid" class="dashboard-camera-grid"></div>
+              </section>
+
+              <section class="panel dashboard-events-panel">
+                <div class="panel-heading">
+                  <div>
+                    <h2>Recent events</h2>
+                    <p>Latest recorder activity</p>
+                  </div>
+                  <button type="button" data-page-target="events">View all</button>
+                </div>
+                <div id="dashboardEvents" class="dashboard-events"></div>
+              </section>
+            </div>
+          </section>
+
+          <section class="app-page" data-page="live" hidden>
+            <div class="page-heading">
+              <div>
+                <h2>Live View</h2>
+                <p>Watch multiple cameras together, then focus one for PTZ or detailed controls.</p>
+              </div>
+              <div class="wall-toolbar">
+                <label>
+                  Layout
+                  <select id="wallLayout">
+                    <option value="auto">Auto</option>
+                    <option value="1">1 camera</option>
+                    <option value="2">2 cameras</option>
+                    <option value="4" selected>4 cameras</option>
+                    <option value="6">6 cameras</option>
+                    <option value="9">9 cameras</option>
+                  </select>
+                </label>
+                <details class="camera-picker">
+                  <summary>Cameras</summary>
+                  <div id="wallCameraPicker" class="camera-picker-list"></div>
+                </details>
+              </div>
+            </div>
+
+            <section class="panel live-wall-panel">
+              <div id="liveWall" class="live-wall" data-layout="4">
+                <div class="wall-empty">Loading cameras…</div>
+              </div>
+            </section>
+
+            <section class="panel live-panel focus-panel">
+              <div class="panel-heading">
+                <div>
+                  <h2>Focus &amp; PTZ</h2>
+                  <p>Choose one camera for audio, zoom, and movement controls.</p>
+                </div>
+                <span id="liveState" class="muted"></span>
+              </div>
+              <div class="live-controls">
+                <label>
+                  Camera
+                  <select id="liveCamera"></select>
+                </label>
+                <span id="liveSourceLabel" class="live-source-label">go2rtc</span>
+                <button id="startLive" type="button">Start</button>
+                <button id="stopLive" type="button">Stop</button>
+              </div>
+              <div id="ptzPanel" class="ptz-panel" hidden>
+                <div class="ptz-pad" aria-label="PTZ movement controls">
+                  <button type="button" data-ptz="up_left" title="Up left" aria-label="Up left">&nwarr;</button>
+                  <button type="button" data-ptz="up" title="Up" aria-label="Up">&uarr;</button>
+                  <button type="button" data-ptz="up_right" title="Up right" aria-label="Up right">&nearr;</button>
+                  <button type="button" data-ptz="left" title="Left" aria-label="Left">&larr;</button>
+                  <button type="button" data-ptz="home" title="Home" aria-label="Home">&#8962;</button>
+                  <button type="button" data-ptz="right" title="Right" aria-label="Right">&rarr;</button>
+                  <button type="button" data-ptz="down_left" title="Down left" aria-label="Down left">&swarr;</button>
+                  <button type="button" data-ptz="down" title="Down" aria-label="Down">&darr;</button>
+                  <button type="button" data-ptz="down_right" title="Down right" aria-label="Down right">&searr;</button>
+                </div>
+                <div class="ptz-zoom">
+                  <button type="button" data-ptz="zoom_in" title="Zoom in" aria-label="Zoom in">+</button>
+                  <button type="button" data-ptz="stop" title="Stop" aria-label="Stop">&#9632;</button>
+                  <button type="button" data-ptz="zoom_out" title="Zoom out" aria-label="Zoom out">-</button>
+                </div>
+                <div id="ptzPresets" class="ptz-presets" hidden>
+                  <label>
+                    Preset
+                    <select id="ptzPreset"></select>
+                  </label>
+                  <button id="goToPtzPreset" type="button">Go</button>
+                </div>
+                <span id="ptzState" class="muted"></span>
+              </div>
+              <div class="live-frame">
+                <plainnvr-live-player id="go2rtcLive" hidden></plainnvr-live-player>
+                <div id="liveEmpty" class="empty">No live stream selected.</div>
+              </div>
+            </section>
+          </section>
+
+          <section class="app-page" data-page="cameras" hidden>
+            <div class="page-heading">
+              <div>
+                <h2>Camera settings</h2>
+                <p>Streams, recording, schedules, ONVIF, PTZ, and integrations.</p>
+              </div>
+              <button id="newCamera" class="primary-button" type="button">Add camera</button>
+            </div>
+
+            <div class="camera-settings-layout">
+              <section class="panel cameras-panel">
+                <div class="panel-heading">
+                  <div>
+                    <h2>Cameras</h2>
+                    <p>Select a camera to edit</p>
+                  </div>
+                </div>
+                <div id="cameraList" class="camera-list"></div>
+              </section>
+
+              <section class="panel editor-panel">
+                <div class="panel-heading">
+                  <div>
+                    <h2 id="editorTitle">Add Camera</h2>
+                    <p>Camera configuration</p>
+                  </div>
+                  <span id="saveState" class="muted"></span>
+                </div>
+                <form id="cameraForm" class="form-grid">
+                  <input type="hidden" id="cameraId" />
+
+                  <section class="form-section">
+                    <div class="form-section-heading">
+                      <h3>Stream</h3>
+                      <p>Connection and basic camera behavior.</p>
+                    </div>
+                    <div class="form-fields two-column">
+                      <label>
+                        Name
+                        <input id="cameraName" autocomplete="off" placeholder="Driveway" required />
+                      </label>
+                      <label>
+                        Transport
+                        <select id="rtspTransport">
+                          <option value="tcp" selected>TCP</option>
+                          <option value="udp">UDP</option>
+                        </select>
+                      </label>
+                    </div>
+                    <label>
+                      Stream URL
+                      <div class="secret-field">
+                        <input id="rtspUrl" type="password" autocomplete="off" placeholder="rtsp://user:pass@camera-ip:554/stream1" required />
+                        <button id="toggleRtspVisibility" type="button" aria-pressed="false">Show</button>
+                      </div>
+                      <small class="field-help">Credentials stay hidden unless you choose to reveal them.</small>
+                    </label>
+                    <div class="form-fields three-column">
+                      <label>
+                        Segment Length
+                        <select id="segmentSeconds">
+                          <option value="30">30 seconds</option>
+                          <option value="60" selected>1 minute</option>
+                          <option value="300">5 minutes</option>
+                          <option value="600">10 minutes</option>
+                        </select>
+                      </label>
+                      <label>
+                        Retention
+                        <input id="retentionDays" type="number" min="1" max="3650" value="14" />
+                      </label>
+                      <label>
+                        Rotation
+                        <select id="viewRotation">
+                          <option value="0" selected>0°</option>
+                          <option value="90">90°</option>
+                          <option value="180">180°</option>
+                          <option value="270">270°</option>
+                        </select>
+                      </label>
+                    </div>
+                    <div class="toggles">
+                      <label><input id="enabled" type="checkbox" checked /> Enabled</label>
+                      <label><input id="recordAudio" type="checkbox" checked /> Record audio</label>
+                      <label><input id="ptzEnabled" type="checkbox" /> PTZ</label>
+                    </div>
+                  </section>
+
+                  <fieldset class="ptz-settings form-section">
+                    <legend>PTZ &amp; ONVIF</legend>
+                    <div class="form-fields two-column">
+                      <label>
+                        Driver
+                        <select id="ptzType">
+                          <option value="onvif" selected>ONVIF</option>
+                          <option value="victure_direct">Victure Direct Stepper</option>
+                          <option value="victure_dvrip">Victure DVRIP</option>
+                          <option value="none">None</option>
+                        </select>
+                      </label>
+                      <label>
+                        Control URL
+                        <input id="ptzUrl" autocomplete="off" placeholder="http://camera-ip:8080/onvif/ptz_service" />
+                      </label>
+                    </div>
+                    <div class="ptz-form-row">
+                      <label>
+                        Profile / Hash
+                        <input id="ptzProfileToken" autocomplete="off" value="Profile_1" />
+                      </label>
+                      <label>
+                        Speed
+                        <input id="ptzSpeed" type="number" min="0.05" max="1" step="0.05" value="0.55" />
+                      </label>
+                      <label>
+                        Zoom
+                        <select id="ptzZoomMode">
+                          <option value="auto" selected>Auto</option>
+                          <option value="digital">Digital</option>
+                          <option value="hardware">Hardware</option>
+                          <option value="none">None</option>
+                        </select>
+                      </label>
+                    </div>
+                    <div class="onvif-discovery">
+                      <label>
+                        ONVIF Device URL
+                        <input id="onvifUrl" autocomplete="off" placeholder="http://camera-ip:2020/onvif/device_service" />
+                      </label>
+                      <div class="onvif-actions">
+                        <button id="discoverOnvif" type="button">Discover ONVIF</button>
+                        <button id="downloadCompatibility" type="button" disabled>Compatibility Report</button>
+                        <span id="onvifState" class="muted">Uses the stream credentials unless a control URL is provided.</span>
+                      </div>
+                      <div class="onvif-results">
+                        <label>
+                          Discovered Profile
+                          <select id="onvifProfile" disabled></select>
+                        </label>
+                        <label>
+                          Discovered Stream
+                          <select id="onvifStream" disabled></select>
+                        </label>
+                        <button id="useOnvifStream" type="button" disabled>Use Stream</button>
+                      </div>
+                    </div>
+                  </fieldset>
+
+                  <fieldset id="cameraTimePanel" class="camera-time-settings form-section" hidden>
+                    <legend>Camera Clock</legend>
+                    <div class="camera-time-row">
+                      <label>
+                        Date and Time
+                        <input id="cameraTime" type="datetime-local" step="1" />
+                      </label>
+                      <button id="cameraTimeNow" type="button">Now</button>
+                      <button id="readCameraTime" type="button">Read</button>
+                      <button id="setCameraTime" type="button">Set</button>
+                      <span id="cameraTimeState" class="muted"></span>
+                    </div>
+                  </fieldset>
+
+                  <fieldset class="schedule form-section">
+                    <legend>Recording schedule</legend>
+                    <div class="mode-row">
+                      <label><input type="radio" name="scheduleMode" value="always" checked /> Always</label>
+                      <label><input type="radio" name="scheduleMode" value="weekly" /> Weekly</label>
+                    </div>
+                    <div id="weeklySchedule" class="weekly disabled">
+                      <div class="day-row">
+                        <label><input type="checkbox" value="mon" checked /> Mon</label>
+                        <label><input type="checkbox" value="tue" checked /> Tue</label>
+                        <label><input type="checkbox" value="wed" checked /> Wed</label>
+                        <label><input type="checkbox" value="thu" checked /> Thu</label>
+                        <label><input type="checkbox" value="fri" checked /> Fri</label>
+                        <label><input type="checkbox" value="sat" checked /> Sat</label>
+                        <label><input type="checkbox" value="sun" checked /> Sun</label>
+                      </div>
+                      <div class="time-row">
+                        <label>
+                          Start
+                          <input id="scheduleStart" type="time" value="00:00" />
+                        </label>
+                        <label>
+                          End
+                          <input id="scheduleEnd" type="time" value="23:59" />
+                        </label>
+                      </div>
+                    </div>
+                  </fieldset>
+
+                  <fieldset id="haPanel" class="ha-panel form-section" hidden>
+                    <legend>Home Assistant</legend>
+                    <label>
+                      HLS URL
+                      <input id="haHlsUrl" readonly />
+                    </label>
+                    <button id="copyHaHlsUrl" type="button">Copy HLS URL</button>
+                    <label>
+                      Snapshot URL
+                      <input id="haSnapshotUrl" readonly />
+                    </label>
+                    <button id="copyHaSnapshotUrl" type="button">Copy Snapshot URL</button>
+                    <label>
+                      YAML
+                      <textarea id="haYaml" readonly rows="6"></textarea>
+                    </label>
+                    <button id="copyHaYaml" type="button">Copy YAML</button>
+                  </fieldset>
+
+                  <div class="button-row sticky-actions">
+                    <button id="saveCamera" class="primary-button" type="submit">Save Camera</button>
+                    <button id="testStream" type="button">Test Stream</button>
+                    <button id="deleteCamera" class="danger" type="button" hidden>Delete</button>
+                  </div>
+                </form>
+              </section>
+            </div>
+          </section>
+
+          <section class="app-page" data-page="recordings" hidden>
+            <div class="page-heading">
+              <div>
+                <h2>Recordings</h2>
+                <p>Browse saved footage by camera and date.</p>
+              </div>
+            </div>
+            <section class="panel playback-panel">
+              <div class="panel-heading">
+                <div>
+                  <h2>Playback</h2>
+                  <p id="segmentCount" class="muted"></p>
+                </div>
+              </div>
+              <div class="playback-controls">
+                <label>
+                  Camera
+                  <select id="playbackCamera"></select>
+                </label>
+                <label>
+                  Date
+                  <input id="playbackDate" type="date" />
+                </label>
+                <button id="loadSegments" class="primary-button" type="button">Load</button>
+              </div>
+              <div id="coverageSummary" class="coverage-summary empty">No recording summary loaded.</div>
+              <div class="playback-stage">
+                <video id="player" controls playsinline></video>
+              </div>
+              <div id="segments" class="segments"></div>
+            </section>
+          </section>
+
+          <section class="app-page" data-page="events" hidden>
+            <div class="page-heading">
+              <div>
+                <h2>Events</h2>
+                <p>Recorder starts, stops, warnings, and errors.</p>
+              </div>
+            </div>
+            <section class="panel events-panel">
+              <div class="panel-heading">
+                <h2>Activity</h2>
+              </div>
+              <div id="events" class="events"></div>
+            </section>
+          </section>
+
+          <section class="app-page" data-page="settings" hidden>
+            <div class="page-heading">
+              <div>
+                <h2>Settings</h2>
+                <p>Server behavior, integrations, logging, and users.</p>
+              </div>
+            </div>
+
+            <div class="settings-grid">
+              <section class="panel settings-panel">
+                <div class="panel-heading">
+                  <div>
+                    <h2>Server</h2>
+                    <p>Runtime and integration settings</p>
+                  </div>
+                  <span id="settingsState" class="muted"></span>
+                </div>
+                <form id="serverSettingsForm" class="server-settings">
+                  <label class="setting-row">
+                    <span>
+                      <strong>Home Assistant</strong>
+                      <small class="muted">Expose local HLS and snapshot URLs for configured cameras.</small>
+                    </span>
+                    <input id="homeAssistantEnabled" type="checkbox" />
+                  </label>
+                  <label class="setting-row">
+                    <span>
+                      <strong>Reduce app storage writes</strong>
+                      <small class="muted">Throttle session metadata writes. Camera recordings already write directly to Recordings Storage.</small>
+                    </span>
+                    <input id="reduceStorageWrites" type="checkbox" checked />
+                  </label>
+                  <label class="setting-row server-log-level">
+                    <span>
+                      <strong>Log level</strong>
+                      <small class="muted">TRACE is most verbose; INFO is recommended for normal use.</small>
+                    </span>
+                    <select id="logLevel">
+                      <option value="trace">TRACE</option>
+                      <option value="debug">DEBUG</option>
+                      <option value="info" selected>INFO</option>
+                      <option value="warn">WARN</option>
+                      <option value="error">ERROR</option>
+                      <option value="fatal">FATAL</option>
+                    </select>
+                  </label>
+                  <div class="settings-actions">
+                    <button class="primary-button" type="submit">Save Settings</button>
+                  </div>
+                </form>
+              </section>
+
+              <section class="panel users-panel">
+                <div class="panel-heading">
+                  <div>
+                    <h2>Users</h2>
+                    <p>Accounts allowed to manage PlainNVR</p>
+                  </div>
+                  <span id="usersState" class="muted"></span>
+                </div>
+                <div id="userList" class="user-list"></div>
+                <form id="userForm" class="user-form">
+                  <label>
+                    Username
+                    <input id="newUsername" autocomplete="off" required />
+                  </label>
+                  <label>
+                    Password
+                    <input id="newPassword" type="password" autocomplete="new-password" required />
+                  </label>
+                  <button class="primary-button" type="submit">Add User</button>
+                </form>
+              </section>
+            </div>
+          </section>
+        </main>
       </div>
-      <div class="top-actions">
-        <label class="theme-toggle" title="Toggle dark mode">
-          <input id="themeToggle" type="checkbox" />
-          <span class="theme-toggle-track" aria-hidden="true"></span>
-          <span id="themeLabel">Dark</span>
-        </label>
-        <button id="refreshStatus" type="button">Refresh</button>
-        <button id="logoutButton" type="button">Log Out</button>
-      </div>
-    </header>
-
-    <main class="layout">
-      <section class="panel cameras-panel">
-        <div class="panel-heading">
-          <h2>Cameras</h2>
-          <button id="newCamera" type="button">New</button>
-        </div>
-        <div id="cameraList" class="camera-list"></div>
-      </section>
-
-      <section class="panel editor-panel">
-        <div class="panel-heading">
-          <h2 id="editorTitle">Add Camera</h2>
-          <span id="saveState" class="muted"></span>
-        </div>
-        <form id="cameraForm" class="form-grid">
-          <input type="hidden" id="cameraId" />
-          <label>
-            Name
-            <input id="cameraName" autocomplete="off" placeholder="Driveway" required />
-          </label>
-          <label>
-            Stream URL
-            <input id="rtspUrl" autocomplete="off" placeholder="rtsp://user:pass@camera-ip:554/stream1" required />
-          </label>
-          <label>
-            Segment Length
-            <select id="segmentSeconds">
-              <option value="30">30 seconds</option>
-              <option value="60" selected>1 minute</option>
-              <option value="300">5 minutes</option>
-              <option value="600">10 minutes</option>
-            </select>
-          </label>
-          <label>
-            Retention
-            <input id="retentionDays" type="number" min="1" max="3650" value="14" />
-          </label>
-          <label>
-            Transport
-            <select id="rtspTransport">
-              <option value="tcp" selected>TCP</option>
-              <option value="udp">UDP</option>
-            </select>
-          </label>
-          <label>
-            Rotation
-            <select id="viewRotation">
-              <option value="0" selected>0 deg</option>
-              <option value="90">90 deg</option>
-              <option value="180">180 deg</option>
-              <option value="270">270 deg</option>
-            </select>
-          </label>
-          <div class="toggles">
-            <label><input id="enabled" type="checkbox" checked /> Enabled</label>
-            <label><input id="recordAudio" type="checkbox" checked /> Audio</label>
-            <label><input id="ptzEnabled" type="checkbox" /> PTZ</label>
-          </div>
-
-          <fieldset class="ptz-settings">
-            <legend>PTZ</legend>
-            <label>
-              Driver
-              <select id="ptzType">
-                <option value="onvif" selected>ONVIF</option>
-                <option value="victure_direct">Victure Direct Stepper</option>
-                <option value="victure_dvrip">Victure DVRIP</option>
-                <option value="none">None</option>
-              </select>
-            </label>
-            <label>
-              Control URL
-              <input id="ptzUrl" autocomplete="off" placeholder="http://camera-ip:8080/onvif/ptz_service" />
-            </label>
-            <div class="ptz-form-row">
-              <label>
-                Profile / Hash
-                <input id="ptzProfileToken" autocomplete="off" value="Profile_1" />
-              </label>
-              <label>
-                Speed
-                <input id="ptzSpeed" type="number" min="0.05" max="1" step="0.05" value="0.55" />
-              </label>
-              <label>
-                Zoom
-                <select id="ptzZoomMode">
-                  <option value="auto" selected>Auto</option>
-                  <option value="digital">Digital</option>
-                  <option value="hardware">Hardware</option>
-                  <option value="none">None</option>
-                </select>
-              </label>
-            </div>
-            <div class="onvif-discovery">
-              <label>
-                ONVIF Device URL
-                <input id="onvifUrl" autocomplete="off" placeholder="http://camera-ip:2020/onvif/device_service" />
-              </label>
-              <div class="onvif-actions">
-                <button id="discoverOnvif" type="button">Discover ONVIF</button>
-                <button id="downloadCompatibility" type="button" disabled>Compatibility Report</button>
-                <span id="onvifState" class="muted">Uses the stream credentials unless a control URL is provided.</span>
-              </div>
-              <div class="onvif-results">
-                <label>
-                  Discovered Profile
-                  <select id="onvifProfile" disabled></select>
-                </label>
-                <label>
-                  Discovered Stream
-                  <select id="onvifStream" disabled></select>
-                </label>
-                <button id="useOnvifStream" type="button" disabled>Use Stream</button>
-              </div>
-            </div>
-          </fieldset>
-
-          <fieldset id="cameraTimePanel" class="camera-time-settings" hidden>
-            <legend>Camera Clock</legend>
-            <div class="camera-time-row">
-              <label>
-                Date and Time
-                <input id="cameraTime" type="datetime-local" step="1" />
-              </label>
-              <button id="cameraTimeNow" type="button">Now</button>
-              <button id="readCameraTime" type="button">Read</button>
-              <button id="setCameraTime" type="button">Set</button>
-              <span id="cameraTimeState" class="muted"></span>
-            </div>
-          </fieldset>
-
-          <fieldset class="schedule">
-            <legend>Schedule</legend>
-            <div class="mode-row">
-              <label><input type="radio" name="scheduleMode" value="always" checked /> Always</label>
-              <label><input type="radio" name="scheduleMode" value="weekly" /> Weekly</label>
-            </div>
-            <div id="weeklySchedule" class="weekly disabled">
-              <div class="day-row">
-                <label><input type="checkbox" value="mon" checked /> Mon</label>
-                <label><input type="checkbox" value="tue" checked /> Tue</label>
-                <label><input type="checkbox" value="wed" checked /> Wed</label>
-                <label><input type="checkbox" value="thu" checked /> Thu</label>
-                <label><input type="checkbox" value="fri" checked /> Fri</label>
-                <label><input type="checkbox" value="sat" checked /> Sat</label>
-                <label><input type="checkbox" value="sun" checked /> Sun</label>
-              </div>
-              <div class="time-row">
-                <label>
-                  Start
-                  <input id="scheduleStart" type="time" value="00:00" />
-                </label>
-                <label>
-                  End
-                  <input id="scheduleEnd" type="time" value="23:59" />
-                </label>
-              </div>
-            </div>
-          </fieldset>
-
-          <div class="button-row">
-            <button id="saveCamera" type="submit">Save Camera</button>
-            <button id="testStream" type="button">Test Stream</button>
-            <button id="deleteCamera" class="danger" type="button" hidden>Delete</button>
-          </div>
-
-          <fieldset id="haPanel" class="ha-panel" hidden>
-            <legend>Home Assistant</legend>
-            <label>
-              HLS URL
-              <input id="haHlsUrl" readonly />
-            </label>
-            <button id="copyHaHlsUrl" type="button">Copy HLS URL</button>
-            <label>
-              Snapshot URL
-              <input id="haSnapshotUrl" readonly />
-            </label>
-            <button id="copyHaSnapshotUrl" type="button">Copy Snapshot URL</button>
-            <label>
-              YAML
-              <textarea id="haYaml" readonly rows="6"></textarea>
-            </label>
-            <button id="copyHaYaml" type="button">Copy YAML</button>
-          </fieldset>
-        </form>
-      </section>
-
-      <div class="monitor-column">
-        <section class="panel live-panel">
-          <div class="panel-heading">
-            <h2>Live View</h2>
-            <span id="liveState" class="muted"></span>
-          </div>
-          <div class="live-controls">
-            <label>
-              Camera
-              <select id="liveCamera"></select>
-            </label>
-            <span id="liveSourceLabel" class="live-source-label">go2rtc</span>
-            <button id="startLive" type="button">Start</button>
-            <button id="stopLive" type="button">Stop</button>
-          </div>
-          <div id="ptzPanel" class="ptz-panel" hidden>
-            <div class="ptz-pad" aria-label="PTZ movement controls">
-              <button type="button" data-ptz="up_left" title="Up left" aria-label="Up left">&nwarr;</button>
-              <button type="button" data-ptz="up" title="Up" aria-label="Up">&uarr;</button>
-              <button type="button" data-ptz="up_right" title="Up right" aria-label="Up right">&nearr;</button>
-              <button type="button" data-ptz="left" title="Left" aria-label="Left">&larr;</button>
-              <button type="button" data-ptz="home" title="Home" aria-label="Home">&#8962;</button>
-              <button type="button" data-ptz="right" title="Right" aria-label="Right">&rarr;</button>
-              <button type="button" data-ptz="down_left" title="Down left" aria-label="Down left">&swarr;</button>
-              <button type="button" data-ptz="down" title="Down" aria-label="Down">&darr;</button>
-              <button type="button" data-ptz="down_right" title="Down right" aria-label="Down right">&searr;</button>
-            </div>
-            <div class="ptz-zoom">
-              <button type="button" data-ptz="zoom_in" title="Zoom in" aria-label="Zoom in">+</button>
-              <button type="button" data-ptz="stop" title="Stop" aria-label="Stop">&#9632;</button>
-              <button type="button" data-ptz="zoom_out" title="Zoom out" aria-label="Zoom out">-</button>
-            </div>
-            <div id="ptzPresets" class="ptz-presets" hidden>
-              <label>
-                Preset
-                <select id="ptzPreset"></select>
-              </label>
-              <button id="goToPtzPreset" type="button">Go</button>
-            </div>
-            <span id="ptzState" class="muted"></span>
-          </div>
-          <div class="live-frame">
-            <plainnvr-live-player id="go2rtcLive" hidden></plainnvr-live-player>
-            <div id="liveEmpty" class="empty">No live stream selected.</div>
-          </div>
-        </section>
-
-        <section class="panel playback-panel">
-          <div class="panel-heading">
-            <h2>Playback</h2>
-            <span id="segmentCount" class="muted"></span>
-          </div>
-          <div class="playback-controls">
-            <label>
-              Camera
-              <select id="playbackCamera"></select>
-            </label>
-            <label>
-              Date
-              <input id="playbackDate" type="date" />
-            </label>
-            <button id="loadSegments" type="button">Load</button>
-          </div>
-          <div id="coverageSummary" class="coverage-summary empty">No recording summary loaded.</div>
-          <video id="player" controls playsinline></video>
-          <div id="segments" class="segments"></div>
-        </section>
-      </div>
-
-      <section class="panel events-panel">
-        <div class="panel-heading">
-          <h2>Events</h2>
-        </div>
-        <div id="events" class="events"></div>
-      </section>
-
-      <section class="panel settings-panel">
-        <div class="panel-heading">
-          <h2>Server Settings</h2>
-          <span id="settingsState" class="muted"></span>
-        </div>
-        <form id="serverSettingsForm" class="server-settings">
-          <label>
-            <input id="homeAssistantEnabled" type="checkbox" />
-            Home Assistant
-          </label>
-          <label class="server-setting-option">
-            <input id="reduceStorageWrites" type="checkbox" checked />
-            <span>
-              <strong>Reduce app storage writes</strong>
-              <small class="muted">
-                Throttles session metadata writes. Camera recordings already write
-                directly to the configured Recordings Storage.
-              </small>
-            </span>
-          </label>
-          <label class="server-log-level">
-            <span>
-              <strong>Log level</strong>
-              <small class="muted">
-                TRACE is most verbose; DEBUG adds diagnostics; INFO records normal
-                operation; WARN, ERROR, and FATAL progressively keep only more
-                serious events.
-              </small>
-            </span>
-            <select id="logLevel">
-              <option value="trace">TRACE</option>
-              <option value="debug">DEBUG</option>
-              <option value="info" selected>INFO</option>
-              <option value="warn">WARN</option>
-              <option value="error">ERROR</option>
-              <option value="fatal">FATAL</option>
-            </select>
-          </label>
-          <button type="submit">Save Settings</button>
-        </form>
-      </section>
-
-      <section class="panel users-panel">
-        <div class="panel-heading">
-          <h2>Users</h2>
-          <span id="usersState" class="muted"></span>
-        </div>
-        <div id="userList" class="user-list"></div>
-        <form id="userForm" class="user-form">
-          <label>
-            Username
-            <input id="newUsername" autocomplete="off" required />
-          </label>
-          <label>
-            Password
-            <input id="newPassword" type="password" autocomplete="new-password" required />
-          </label>
-          <button type="submit">Add User</button>
-        </form>
-      </section>
-    </main>
+    </div>
 
     <script type="module" src="/go2rtc-player.js"></script>
     <script src="/app.js"></script>
+    <script src="/ui.js"></script>
   </body>
 </html>
