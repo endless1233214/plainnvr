@@ -109,7 +109,7 @@
     if (!camera.enabled) {
       return { label: "disabled", className: "off", issue: true };
     }
-    if (relay?.healthy !== true) {
+    if (relay?.available !== true || relay?.media_state === "stalled") {
       return { label: "recovering", className: "warn", issue: true };
     }
     if (recorder?.paused) {

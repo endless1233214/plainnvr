@@ -51,6 +51,11 @@ test("multi-camera live wall and camera picker are present", () => {
   assert.match(html, /id=["']wallLayout["']/);
 });
 
+test("idle but available relays are not mislabeled as recovering", () => {
+  assert.match(ui, /relay\?\.available !== true \|\| relay\?\.media_state === ["']stalled["']/);
+  assert.match(app, /relay\?\.available === true && relay\?\.media_state !== ["']stalled["']/);
+});
+
 test("frontend scripts parse as JavaScript", () => {
   assert.doesNotThrow(() => new vm.Script(app, { filename: "app.js" }));
   assert.doesNotThrow(() => new vm.Script(ui, { filename: "ui.js" }));

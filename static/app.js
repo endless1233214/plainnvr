@@ -442,18 +442,18 @@ function renderCameras() {
     const recorder = state.recorders[camera.id];
     const relay = state.relays[camera.id];
     const running = recorder?.running;
-    const streamHealthy = relay?.healthy === true;
+    const streamReady = relay?.available === true && relay?.media_state !== "stalled";
     const recorderRecovering = Boolean(recorder && !recorder.paused && !running);
     const stateLabel = !camera.enabled
       ? "disabled"
-      : !streamHealthy || recorderRecovering
+      : !streamReady || recorderRecovering
         ? "recovering"
         : running
         ? "recording"
         : "live";
     const stateClass = !camera.enabled
       ? "off"
-      : streamHealthy && !recorderRecovering
+      : streamReady && !recorderRecovering
         ? "ok"
         : "warn";
     const button = document.createElement("button");
