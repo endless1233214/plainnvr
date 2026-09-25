@@ -60,6 +60,16 @@
       history.replaceState(null, "", `#${next}`);
     }
 
+    if (next === "cameras") {
+      const streamInput = el("rtspUrl");
+      const revealButton = el("toggleRtspVisibility");
+      if (streamInput) streamInput.type = "password";
+      if (revealButton) {
+        revealButton.textContent = "Show";
+        revealButton.setAttribute("aria-pressed", "false");
+      }
+    }
+
     if (next === "live") {
       renderLiveWall();
     } else {
