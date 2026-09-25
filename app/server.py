@@ -2,7 +2,6 @@
 import base64
 from html import escape as html_escape
 import json
-import hashlib
 import hmac
 import mimetypes
 import os
@@ -52,12 +51,64 @@ except ModuleNotFoundError:
         soap_post as onvif_soap_post,
     )
 
-
-def env_float(name, default):
-    try:
-        return float(os.environ.get(name, str(default)))
-    except ValueError:
-        return default
+try:
+    from app.auth import (
+        AUTH_HASH_ITERATIONS,
+        password_hash,
+        validate_password,
+        validate_username,
+        verify_password,
+    )
+    from app.common import (
+        bounded_int,
+        env_float,
+        iso_now,
+        optional_bounded_int,
+        slugify,
+        utcnow,
+    )
+    from app.http_utils import (
+        MAX_JSON_BODY_BYTES,
+        normalize_bool,
+        parse_json_body,
+        query_bool,
+    )
+    from app.schedule import (
+        DAY_KEYS,
+        default_schedule,
+        normalize_schedule,
+        schedule_active,
+        time_to_minutes,
+    )
+except ModuleNotFoundError:
+    from auth import (
+        AUTH_HASH_ITERATIONS,
+        password_hash,
+        validate_password,
+        validate_username,
+        verify_password,
+    )
+    from common import (
+        bounded_int,
+        env_float,
+        iso_now,
+        optional_bounded_int,
+        slugify,
+        utcnow,
+    )
+    from http_utils import (
+        MAX_JSON_BODY_BYTES,
+        normalize_bool,
+        parse_json_body,
+        query_bool,
+    )
+    from schedule import (
+        DAY_KEYS,
+        default_schedule,
+        normalize_schedule,
+        schedule_active,
+        time_to_minutes,
+    )
 
 
 APP_HOST = os.environ.get("NVR_HOST", "0.0.0.0")
@@ -99,7 +150,6 @@ NIGHT_OFF_SATURATION = float(os.environ.get("NVR_NIGHT_OFF_SATURATION", "35"))
 DB_PATH = DATA_DIR / "nvr.sqlite3"
 AUTH_COOKIE_NAME = "plainnvr_session"
 AUTH_SESSION_TTL_SECONDS = int(os.environ.get("NVR_SESSION_TTL_SECONDS", str(7 * 24 * 60 * 60)))
-AUTH_HASH_ITERATIONS = int(os.environ.get("NVR_AUTH_HASH_ITERATIONS", "260000"))
 BOOTSTRAP_USERNAME = os.environ.get("NVR_AUTH_USERNAME", "admin").strip() or "admin"
 BOOTSTRAP_PASSWORD = os.environ.get("NVR_AUTH_PASSWORD", "")
 STREAM_TOKEN_OVERRIDE = os.environ.get("NVR_STREAM_TOKEN", "").strip()
@@ -115,7 +165,6 @@ except ValueError:
     PTZ_DEFAULT_DURATION_MS = 350
 PTZ_DEFAULT_DURATION_MS = max(80, min(PTZ_DEFAULT_DURATION_MS, 1500))
 
-DAY_KEYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 SEGMENT_RE = re.compile(r"^(?P<stamp>\d{8}T\d{6})\.mp4$")
 STREAM_URL_PREFIXES = ("rtsp://", "rtsps://", "http://", "https://")
 CONTROL_URL_PREFIXES = ("http://", "https://")
@@ -161,146 +210,6 @@ DVRIP_PTZ_COMMANDS = {
     "zoom_out": "ZoomWide",
     "stop": "Stop",
 }
-
-
-def utcnow():
-    return datetime.now(timezone.utc)
-
-
-def iso_now():
-    return utcnow().isoformat()
-
-
-def slugify(value):
-    value = value.strip().lower()
-    value = re.sub(r"[^a-z0-9]+", "-", value)
-    value = re.sub(r"-+", "-", value).strip("-")
-    return value or "camera"
-
-
-MAX_JSON_BODY_BYTES = 1024 * 1024
-
-
-def parse_json_body(handler):
-    if handler.headers.get("Transfer-Encoding"):
-        raise ValueError("Transfer-Encoding is not supported.")
-    length = int(handler.headers.get("Content-Length", "0") or "0")
-    if length < 0 or length > MAX_JSON_BODY_BYTES:
-        raise ValueError("JSON body must be at most 1 MiB.")
-    if length == 0:
-        return {}
-    if handler.headers.get("Content-Type", "").split(";", 1)[0].strip().lower() != "application/json":
-        raise ValueError("Content-Type must be application/json.")
-    raw = handler.rfile.read(length)
-    if len(raw) != length:
-        raise ValueError("Incomplete JSON body.")
-    try:
-        payload = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ValueError("Invalid JSON body.") from exc
-    if not isinstance(payload, dict):
-        raise ValueError("JSON body must be an object.")
-    return payload
-
-
-def normalize_bool(value):
-    if isinstance(value, bool):
-        return 1 if value else 0
-    if isinstance(value, int):
-        return 1 if value else 0
-    if isinstance(value, str):
-        return 1 if value.lower() in ("1", "true", "yes", "on") else 0
-    return 0
-
-
-def query_bool(query, key, default=False):
-    values = query.get(key)
-    if not values:
-        return default
-    return normalize_bool(values[0])
-
-
-def password_hash(password, salt=None, iterations=AUTH_HASH_ITERATIONS):
-    salt = salt or secrets.token_hex(16)
-    digest = hashlib.pbkdf2_hmac(
-        "sha256",
-        password.encode("utf-8"),
-        bytes.fromhex(salt),
-        iterations,
-    )
-    return f"pbkdf2_sha256${iterations}${salt}${digest.hex()}"
-
-
-def verify_password(password, stored_hash):
-    try:
-        algorithm, iterations, salt, expected = stored_hash.split("$", 3)
-        if algorithm != "pbkdf2_sha256":
-            return False
-        candidate = password_hash(password, salt=salt, iterations=int(iterations)).rsplit("$", 1)[-1]
-    except (ValueError, TypeError):
-        return False
-    return hmac.compare_digest(candidate, expected)
-
-
-def validate_username(username):
-    username = str(username or "").strip()
-    if not re.match(r"^[A-Za-z0-9_.-]{3,40}$", username):
-        raise ValueError("Username must be 3-40 letters, numbers, dots, dashes, or underscores.")
-    return username
-
-
-def validate_password(password):
-    password = str(password or "")
-    if len(password) < 12:
-        raise ValueError("Password must be at least 12 characters.")
-    return password
-
-
-def default_schedule():
-    return {"mode": "always", "days": {day: [] for day in DAY_KEYS}}
-
-
-def normalize_schedule(value):
-    if not isinstance(value, dict):
-        return default_schedule()
-    mode = value.get("mode", "always")
-    days = value.get("days") if isinstance(value.get("days"), dict) else {}
-    normalized = {"mode": "weekly" if mode == "weekly" else "always", "days": {}}
-    for day in DAY_KEYS:
-        windows = []
-        for item in days.get(day, []):
-            if not isinstance(item, dict):
-                continue
-            start = str(item.get("start", "")).strip()
-            end = str(item.get("end", "")).strip()
-            if re.match(r"^\d{2}:\d{2}$", start) and re.match(r"^\d{2}:\d{2}$", end):
-                windows.append({"start": start, "end": end})
-        normalized["days"][day] = windows
-    return normalized
-
-
-def time_to_minutes(value):
-    hour, minute = value.split(":", 1)
-    return int(hour) * 60 + int(minute)
-
-
-def schedule_active(schedule, now=None):
-    schedule = normalize_schedule(schedule)
-    if schedule["mode"] == "always":
-        return True
-    now = now or datetime.now()
-    day_key = DAY_KEYS[now.weekday()]
-    current = now.hour * 60 + now.minute
-    for window in schedule["days"].get(day_key, []):
-        start = time_to_minutes(window["start"])
-        end = time_to_minutes(window["end"])
-        if start == end:
-            return True
-        if start < end and start <= current < end:
-            return True
-        if start > end and (current >= start or current < end):
-            return True
-    return False
 
 
 def get_db():
@@ -1518,24 +1427,6 @@ def build_snapshot_command(camera, grayscale=False):
     add_video_filters(command, video_filters)
     command.extend(["-frames:v", "1", "-q:v", "4", "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1"])
     return command
-
-
-def bounded_int(value, default, minimum, maximum):
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        parsed = default
-    return max(minimum, min(parsed, maximum))
-
-
-def optional_bounded_int(value, minimum, maximum):
-    if value in (None, ""):
-        return None
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        return None
-    return max(minimum, min(parsed, maximum))
 
 
 def netloc_without_credentials(parsed):
