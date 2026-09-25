@@ -1,5 +1,7 @@
 import os
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -15,6 +17,35 @@ class RunningProcess:
 
 
 class ServerFeatureTests(unittest.TestCase):
+    def test_direct_script_import_keeps_dvrip_helpers(self):
+        app_dir = Path(__file__).resolve().parents[1] / "app"
+        script = """
+import sys
+sys.path.insert(0, sys.argv[1])
+import server
+for name in ('dvrip_send_packet_impl', 'dvrip_recv_packet_impl',
+             'dvrip_login_impl', 'dvrip_query_time_impl'):
+    assert hasattr(server, name), name
+class Socket:
+    def __init__(self):
+        self.sent = b''
+    def sendall(self, data):
+        self.sent += data
+sock = Socket()
+server.dvrip_send_packet(sock, 1, 2, 1000, '{}')
+assert sock.sent.endswith(b'{}')
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run(
+                [sys.executable, "-c", script, str(app_dir)],
+                cwd=directory,
+                env={**os.environ, "PYTHONPATH": ""},
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_fixed_onvif_camera_rejects_ptz_before_network_request(self):
         camera = {
             "id": "fixed",
