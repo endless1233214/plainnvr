@@ -104,6 +104,12 @@ try:
         stream_summary as stream_summary_impl,
         test_stream as test_stream_impl,
     )
+    from app.media_commands import (
+        add_video_filters as add_video_filters_impl,
+        build_ffmpeg_command as build_ffmpeg_command_impl,
+        build_snapshot_command as build_snapshot_command_impl,
+        ffmpeg_input_args as ffmpeg_input_args_impl,
+    )
     from app.ptz import (
         camera_time as camera_time_impl,
         clean_control_url,
@@ -183,6 +189,12 @@ except ModuleNotFoundError:
         redact_camera_text as redact_camera_text_impl,
         stream_summary as stream_summary_impl,
         test_stream as test_stream_impl,
+    )
+    from media_commands import (
+        add_video_filters as add_video_filters_impl,
+        build_ffmpeg_command as build_ffmpeg_command_impl,
+        build_snapshot_command as build_snapshot_command_impl,
+        ffmpeg_input_args as ffmpeg_input_args_impl,
     )
     from ptz import (
         camera_time as camera_time_impl,
@@ -1137,115 +1149,73 @@ go2rtc = Go2RTCManager()
 relay = Go2RTCSourceManager(go2rtc)
 
 
-def build_ffmpeg_command(camera, source_camera=None):
-    camera = source_camera or relay.source_camera(camera)
-    target_dir = ensure_recording_directory(camera)
-    output_pattern = str(target_dir / "%Y%m%dT%H%M%S.mp4")
-    audio_url = str(camera.get("audio_url") or "").strip()
-    record_audio = camera.get("record_audio", True)
-    command = [
-        FFMPEG_BIN,
-        "-hide_banner",
-        "-nostdin",
-        "-loglevel",
-        "error",
-    ]
-    command.extend(ffmpeg_input_args(camera, low_latency=(not record_audio or bool(audio_url))))
-    if record_audio and audio_url:
-        command.extend(ffmpeg_input_args(camera, "audio_url", low_latency=False))
-    command.extend(
-        [
-            "-map",
-            "0:v:0",
-        ]
+def build_ffmpeg_command(
+    camera,
+    source_camera=None,
+):
+    return build_ffmpeg_command_impl(
+        camera,
+        source_camera=(
+            source_camera
+            or relay.source_camera(camera)
+        ),
+        ensure_recording_directory=ensure_recording_directory,
+        ffmpeg_bin=FFMPEG_BIN,
+        ffmpeg_input_args=ffmpeg_input_args,
+        default_segment_seconds=DEFAULT_SEGMENT_SECONDS,
     )
-    if record_audio:
-        if audio_url:
-            command.extend(["-map", "1:a:0?"])
-        else:
-            command.extend(["-map", "0:a?"])
-    if record_audio:
-        command.extend(["-c:v", "copy", "-c:a", "aac", "-b:a", "128k", "-ac", "2"])
-    else:
-        command.extend(["-c", "copy"])
-    command.extend(
-        [
-            "-f",
-            "segment",
-            "-segment_time",
-            str(camera.get("segment_seconds", DEFAULT_SEGMENT_SECONDS)),
-            "-reset_timestamps",
-            "1",
-            "-strftime",
-            "1",
-            "-segment_format",
-            "mp4",
-            "-segment_format_options",
-            "movflags=+faststart",
-            output_pattern,
-        ]
-    )
-    return command
 
 
-def ffmpeg_input_args(camera_or_payload, url_key="rtsp_url", low_latency=True):
-    url = str(camera_or_payload[url_key]).strip()
-    transport = camera_or_payload.get("rtsp_transport", "tcp")
-    args = []
-    if url.startswith(("rtsp://", "rtsps://")):
-        probesize = RTSP_PROBESIZE if low_latency else RTSP_LIVE_PROBESIZE
-        analyze_duration = RTSP_ANALYZE_DURATION if low_latency else RTSP_LIVE_ANALYZE_DURATION
-        args.extend(
-            [
-                "-rtsp_transport",
-                transport if transport in ("tcp", "udp") else "tcp",
-                "-timeout",
-                str(round(RTSP_READ_TIMEOUT_SECONDS * 1_000_000)),
-                "-probesize",
-                probesize,
-                "-analyzeduration",
-                analyze_duration,
-            ]
-        )
-        if low_latency:
-            args.extend(["-fflags", "nobuffer", "-flags", "low_delay"])
-        else:
-            args.extend(["-fflags", "+genpts+igndts", "-use_wallclock_as_timestamps", "1"])
-        args.extend(["-thread_queue_size", RTSP_THREAD_QUEUE_SIZE])
-    args.extend(["-i", url])
-    return args
+def ffmpeg_input_args(
+    camera,
+    url_key="rtsp_url",
+    low_latency=True,
+):
+    return ffmpeg_input_args_impl(
+        camera,
+        url_key,
+        low_latency,
+        rtsp_probesize=RTSP_PROBESIZE,
+        rtsp_analyze_duration=RTSP_ANALYZE_DURATION,
+        rtsp_live_probesize=RTSP_LIVE_PROBESIZE,
+        rtsp_live_analyze_duration=RTSP_LIVE_ANALYZE_DURATION,
+        rtsp_thread_queue_size=RTSP_THREAD_QUEUE_SIZE,
+        rtsp_read_timeout_seconds=RTSP_READ_TIMEOUT_SECONDS,
+    )
 
 
 def grayscale_enabled(camera):
-    mode = normalize_grayscale_mode(camera.get("grayscale_mode"))
+    mode = normalize_grayscale_mode(
+        camera.get("grayscale_mode")
+    )
     if mode == "always":
         return True
     if mode == "auto":
-        return night_modes.is_night(camera["id"])
+        return night_modes.is_night(
+            camera["id"]
+        )
     return False
 
 
 def add_video_filters(command, filters):
-    if filters:
-        command.extend(["-vf", ",".join(filters)])
+    return add_video_filters_impl(
+        command,
+        filters,
+    )
 
 
-def build_snapshot_command(camera, grayscale=False):
-    camera = relay.source_camera(camera)
-    command = [
-        FFMPEG_BIN,
-        "-hide_banner",
-        "-nostdin",
-        "-loglevel",
-        "error",
-    ]
-    command.extend(ffmpeg_input_args(camera))
-    video_filters = []
-    if grayscale or grayscale_enabled(camera):
-        video_filters.append("hue=s=0")
-    add_video_filters(command, video_filters)
-    command.extend(["-frames:v", "1", "-q:v", "4", "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1"])
-    return command
+def build_snapshot_command(
+    camera,
+    grayscale=False,
+):
+    return build_snapshot_command_impl(
+        camera,
+        source_camera=relay.source_camera(camera),
+        ffmpeg_bin=FFMPEG_BIN,
+        ffmpeg_input_args=ffmpeg_input_args,
+        grayscale_enabled=grayscale_enabled,
+        grayscale=grayscale,
+    )
 
 
 def dvrip_send_packet(
