@@ -1,1 +1,1 @@
-../../../iOS/PlainNVRiPhone/PlainNVRiPhone/PlainNVRClient.swift
+../../../ios/PlainNVRiPhone/PlainNVRiPhone/PlainNVRClient.swift
