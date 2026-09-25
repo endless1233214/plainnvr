@@ -42,6 +42,43 @@ jobs:
         run: |
           docker build --pull -t plainnvr-ci .
           docker run --rm -v "$PWD/tests:/tests:ro" -e PYTHONPATH=/app plainnvr-ci python -m unittest discover -s /tests -v
+
+          docker run -d --name plainnvr-startup-smoke -p 127.0.0.1::8787 plainnvr-ci
+          trap 'docker logs plainnvr-startup-smoke || true; docker rm -f plainnvr-startup-smoke >/dev/null 2>&1 || true' EXIT
+
+          port="$(docker port plainnvr-startup-smoke 8787/tcp | awk -F: 'NR == 1 { print $NF }')"
+          ready=0
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error "http://127.0.0.1:$port/api/health" > /tmp/plainnvr-health.json; then
+              ready=1
+              break
+            fi
+            if [ "$(docker inspect -f '{{.State.Running}}' plainnvr-startup-smoke)" != "true" ]; then
+              echo "PlainNVR container exited before becoming ready."
+              docker logs plainnvr-startup-smoke
+              exit 1
+            fi
+            sleep 1
+          done
+
+          if [ "$ready" != "1" ]; then
+            echo "PlainNVR did not become ready within 30 seconds."
+            docker logs plainnvr-startup-smoke
+            exit 1
+          fi
+
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          health = json.loads(Path("/tmp/plainnvr-health.json").read_text())
+          if health.get("ok") is not True:
+              raise SystemExit(f"Unexpected health response: {health!r}")
+          print("release container startup smoke test OK")
+          PY
+
+          docker rm -f plainnvr-startup-smoke
+          trap - EXIT
           docker save -o plainnvr-image.tar plainnvr-ci
       - name: Scan the image
         run: |
