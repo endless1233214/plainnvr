@@ -37,7 +37,7 @@ jobs:
         with:
           node-version: 24
       - name: Run JavaScript tests
-        run: node --test tests/live-player.test.cjs
+        run: node --test tests/*.test.cjs
       - name: Build and test release runtime
         run: |
           docker build --pull -t plainnvr-ci .
