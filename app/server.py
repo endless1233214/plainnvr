@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-import json
 import os
 import re
 import shutil
@@ -9,10 +8,8 @@ import struct
 import sys
 import threading
 from contextlib import contextmanager
-from http import HTTPStatus
-from http.server import SimpleHTTPRequestHandler
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import unquote
 
 try:
     from onvif_client import (
