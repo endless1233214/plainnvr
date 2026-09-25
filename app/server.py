@@ -1143,7 +1143,7 @@ class Go2RTCManager:
             and not separate_audio
         )
 
-    def _config(self):
+    def _config(self, log_level="info"):
         # go2rtc 1.9.13 aborts WebRTC initialization if any enumerated UDP
         # interface cannot bind (including transient Docker IPv6 link-local
         # addresses). Use IPv4 by default; dual-stack deployments can opt in.
@@ -1160,7 +1160,7 @@ class Go2RTCManager:
             if item.strip()
         ]
         config = {
-            "log": {"level": app_log_level()},
+            "log": {"level": normalize_log_level(log_level)},
             "api": {
                 "listen": f"{GO2RTC_API_HOST}:{GO2RTC_API_PORT}",
                 "origin": "*",
@@ -1185,7 +1185,7 @@ class Go2RTCManager:
             return False
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         self.config_path.write_text(
-            json.dumps(self._config(), indent=2) + "\n",
+            json.dumps(self._config(log_level=app_log_level()), indent=2) + "\n",
             encoding="utf-8",
         )
         with self.lock:
