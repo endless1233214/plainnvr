@@ -100,6 +100,20 @@ class LiveHTTPTests(unittest.TestCase):
 
 
 class WebRTCConfigTests(unittest.TestCase):
+    def test_go2rtc_uses_selected_log_level(self):
+        with patch.object(server, "app_log_level", return_value="debug"):
+            config = server.Go2RTCManager()._config()
+        self.assertEqual(config["log"]["level"], "debug")
+
+    def test_plainnvr_event_level_threshold(self):
+        with patch.object(server, "app_log_level", return_value="warn"):
+            self.assertFalse(server.event_level_enabled("trace"))
+            self.assertFalse(server.event_level_enabled("debug"))
+            self.assertFalse(server.event_level_enabled("info"))
+            self.assertTrue(server.event_level_enabled("warn"))
+            self.assertTrue(server.event_level_enabled("error"))
+            self.assertTrue(server.event_level_enabled("fatal"))
+
     def test_default_avoids_ipv6_interface_binding_failure(self):
         with patch.dict(os.environ, {}, clear=True):
             config = server.Go2RTCManager()._config()
