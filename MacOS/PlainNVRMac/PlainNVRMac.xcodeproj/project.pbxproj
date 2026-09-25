@@ -1,0 +1,52 @@
+// !$*UTF8*$!
+{
+  archiveVersion = 1;
+  classes = {};
+  objectVersion = 56;
+  objects = {
+    M00000000000000000000001 /* WebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = M00000000000000000000002 /* WebRTC */; };
+    M00000000000000000000003 /* PlainNVRMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = M00000000000000000000013 /* PlainNVRMacApp.swift */; };
+    M00000000000000000000004 /* MacContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = M00000000000000000000014 /* MacContentView.swift */; };
+    M00000000000000000000005 /* MacLiveView.swift in Sources */ = {isa = PBXBuildFile; fileRef = M00000000000000000000015 /* MacLiveView.swift */; };
+    M00000000000000000000006 /* MacRecordingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = M00000000000000000000016 /* MacRecordingsView.swift */; };
+    M00000000000000000000007 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = M00000000000000000000017 /* Models.swift */; };
+    M00000000000000000000008 /* PlainNVRClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = M00000000000000000000018 /* PlainNVRClient.swift */; };
+    M00000000000000000000009 /* PlainNVRViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = M00000000000000000000019 /* PlainNVRViewModel.swift */; };
+    M00000000000000000000010 /* NativeLiveSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = M00000000000000000000020 /* NativeLiveSession.swift */; };
+    M00000000000000000000036 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = M00000000000000000000037 /* Assets.xcassets */; };
+
+    M00000000000000000000011 /* PlainNVRMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PlainNVRMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
+    M00000000000000000000013 /* PlainNVRMacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlainNVRMacApp.swift; sourceTree = "<group>"; };
+    M00000000000000000000014 /* MacContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacContentView.swift; sourceTree = "<group>"; };
+    M00000000000000000000015 /* MacLiveView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacLiveView.swift; sourceTree = "<group>"; };
+    M00000000000000000000016 /* MacRecordingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacRecordingsView.swift; sourceTree = "<group>"; };
+    M00000000000000000000017 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+    M00000000000000000000018 /* PlainNVRClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlainNVRClient.swift; sourceTree = "<group>"; };
+    M00000000000000000000019 /* PlainNVRViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlainNVRViewModel.swift; sourceTree = "<group>"; };
+    M00000000000000000000020 /* NativeLiveSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeLiveSession.swift; sourceTree = "<group>"; };
+    M00000000000000000000037 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+    M00000000000000000000038 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+    M00000000000000000000039 /* PlainNVRMac.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PlainNVRMac.entitlements; sourceTree = "<group>"; };
+
+    M00000000000000000000021 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (M00000000000000000000001 /* WebRTC in Frameworks */,); runOnlyForDeploymentPostprocessing = 0; };
+    M00000000000000000000022 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (M00000000000000000000003, M00000000000000000000004, M00000000000000000000005, M00000000000000000000006, M00000000000000000000007, M00000000000000000000008, M00000000000000000000009, M00000000000000000000010); runOnlyForDeploymentPostprocessing = 0; };
+    M00000000000000000000023 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (M00000000000000000000036,); runOnlyForDeploymentPostprocessing = 0; };
+
+    M00000000000000000000024 = {isa = PBXGroup; children = (M00000000000000000000025, M00000000000000000000026); sourceTree = "<group>"; };
+    M00000000000000000000025 /* PlainNVRMac */ = {isa = PBXGroup; children = (M00000000000000000000013, M00000000000000000000014, M00000000000000000000015, M00000000000000000000016, M00000000000000000000017, M00000000000000000000018, M00000000000000000000019, M00000000000000000000020, M00000000000000000000037, M00000000000000000000038, M00000000000000000000039); path = PlainNVRMac; sourceTree = "<group>"; };
+    M00000000000000000000026 /* Products */ = {isa = PBXGroup; children = (M00000000000000000000011); name = Products; sourceTree = "<group>"; };
+
+    M00000000000000000000027 /* PlainNVRMac */ = {isa = PBXNativeTarget; buildConfigurationList = M00000000000000000000031; buildPhases = (M00000000000000000000022, M00000000000000000000021, M00000000000000000000023); buildRules = (); dependencies = (); name = PlainNVRMac; packageProductDependencies = (M00000000000000000000002 /* WebRTC */,); productName = PlainNVRMac; productReference = M00000000000000000000011; productType = "com.apple.product-type.application"; };
+    M00000000000000000000028 /* Project object */ = {isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = 1; LastSwiftUpdateCheck = 2650; LastUpgradeCheck = 2660; TargetAttributes = {M00000000000000000000027 = {CreatedOnToolsVersion = 26.5;};};}; buildConfigurationList = M00000000000000000000029; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base); mainGroup = M00000000000000000000024; packageReferences = (M00000000000000000000030 /* WebRTC */,); productRefGroup = M00000000000000000000026; projectDirPath = ""; projectRoot = ""; targets = (M00000000000000000000027); };
+    M00000000000000000000030 /* WebRTC */ = {isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/stasel/WebRTC.git"; requirement = {kind = exactVersion; version = 153.0.0;};};
+    M00000000000000000000002 /* WebRTC */ = {isa = XCSwiftPackageProductDependency; package = M00000000000000000000030; productName = WebRTC;};
+
+    M00000000000000000000029 /* Project configurations */ = {isa = XCConfigurationList; buildConfigurations = (M00000000000000000000032, M00000000000000000000033); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release;};
+    M00000000000000000000031 /* Target configurations */ = {isa = XCConfigurationList; buildConfigurations = (M00000000000000000000034, M00000000000000000000035); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release;};
+    M00000000000000000000032 /* Debug project */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; CLANG_ENABLE_OBJC_ARC = YES; SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; SWIFT_VERSION = 5.0;}; name = Debug;};
+    M00000000000000000000033 /* Release project */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; CLANG_ENABLE_OBJC_ARC = YES; SWIFT_VERSION = 5.0; SWIFT_COMPILATION_MODE = wholemodule;}; name = Release;};
+    M00000000000000000000034 /* Debug target */ = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGN_ENTITLEMENTS = PlainNVRMac/PlainNVRMac.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 2026092301; DEVELOPMENT_TEAM = 2XC4MPD9AK; ENABLE_APP_SANDBOX = YES; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = PlainNVRMac/Info.plist; INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.video"; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/../Frameworks", "@loader_path/../Frameworks"); MACOSX_DEPLOYMENT_TARGET = 14.0; MARKETING_VERSION = 1.0; PRODUCT_BUNDLE_IDENTIFIER = com.versarepair.PlainNVRiPhone; PRODUCT_NAME = PlainNVRMac; SDKROOT = macosx; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0;}; name = Debug;};
+    M00000000000000000000035 /* Release target */ = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGN_ENTITLEMENTS = PlainNVRMac/PlainNVRMac.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 2026092301; DEVELOPMENT_TEAM = 2XC4MPD9AK; ENABLE_APP_SANDBOX = YES; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = PlainNVRMac/Info.plist; INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.video"; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/../Frameworks", "@loader_path/../Frameworks"); MACOSX_DEPLOYMENT_TARGET = 14.0; MARKETING_VERSION = 1.0; PRODUCT_BUNDLE_IDENTIFIER = com.versarepair.PlainNVRiPhone; PRODUCT_NAME = PlainNVRMac; SDKROOT = macosx; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; SWIFT_COMPILATION_MODE = wholemodule;}; name = Release;};
+  };
+  rootObject = M00000000000000000000028 /* Project object */;
+}
