@@ -307,6 +307,34 @@
             <input id="homeAssistantEnabled" type="checkbox" />
             Home Assistant
           </label>
+          <label class="server-setting-option">
+            <input id="reduceStorageWrites" type="checkbox" checked />
+            <span>
+              <strong>Reduce app storage writes</strong>
+              <small class="muted">
+                Throttles session metadata writes. Camera recordings already write
+                directly to the configured Recordings Storage.
+              </small>
+            </span>
+          </label>
+          <label class="server-log-level">
+            <span>
+              <strong>Log level</strong>
+              <small class="muted">
+                TRACE is most verbose; DEBUG adds diagnostics; INFO records normal
+                operation; WARN, ERROR, and FATAL progressively keep only more
+                serious events.
+              </small>
+            </span>
+            <select id="logLevel">
+              <option value="trace">TRACE</option>
+              <option value="debug">DEBUG</option>
+              <option value="info" selected>INFO</option>
+              <option value="warn">WARN</option>
+              <option value="error">ERROR</option>
+              <option value="fatal">FATAL</option>
+            </select>
+          </label>
           <button type="submit">Save Settings</button>
         </form>
       </section>

@@ -3,7 +3,7 @@ const state = {
   recorders: {},
   relays: {},
   go2rtc: {},
-  settings: { home_assistant_enabled: false },
+  settings: { home_assistant_enabled: false, reduce_storage_writes: true, log_level: "info" },
   users: [],
   username: "",
   coverage: {},
@@ -680,6 +680,8 @@ function renderUsers() {
 
 function renderSettings() {
   $("homeAssistantEnabled").checked = Boolean(state.settings.home_assistant_enabled);
+  $("reduceStorageWrites").checked = state.settings.reduce_storage_writes !== false;
+  $("logLevel").value = String(state.settings.log_level || "info").toLowerCase();
 }
 
 function updateDiskLine(disk) {
@@ -695,7 +697,7 @@ async function loadStatus() {
   state.recorders = data.recorders;
   state.relays = data.relays || {};
   state.go2rtc = data.go2rtc || {};
-  state.settings = data.settings || { home_assistant_enabled: false };
+  state.settings = data.settings || { home_assistant_enabled: false, reduce_storage_writes: true, log_level: "info" };
   state.users = data.users || [];
   state.username = data.username || "";
   state.streamToken = data.stream_token || "";
@@ -899,6 +901,8 @@ async function saveSettings(event) {
       method: "PUT",
       body: JSON.stringify({
         home_assistant_enabled: $("homeAssistantEnabled").checked,
+        reduce_storage_writes: $("reduceStorageWrites").checked,
+        log_level: $("logLevel").value,
       }),
     });
     state.settings = result.settings || state.settings;

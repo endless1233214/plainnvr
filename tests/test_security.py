@@ -1,5 +1,6 @@
 import io
 import json
+from datetime import timedelta
 from pathlib import Path
 import tempfile
 import unittest
@@ -98,6 +99,54 @@ class RequestSafetyTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'already exists'):
                 server.create_user('second', 'second-password-123', initial_setup=True)
             self.assertEqual(len(server.list_users()), 1)
+
+    def test_low_write_mode_throttles_session_heartbeat(self):
+        original_data = server.DATA_DIR
+        original_db = server.DB_PATH
+        with tempfile.TemporaryDirectory() as directory:
+            server.DATA_DIR = Path(directory)
+            server.DB_PATH = Path(directory) / 'test.sqlite3'
+            try:
+                server.init_db()
+                start = server.utcnow()
+                with server.db_conn() as conn:
+                    conn.execute(
+                        "INSERT INTO users (username, password_hash, created_at, updated_at) VALUES (?, ?, ?, ?)",
+                        ('admin', 'unused', start.isoformat(), start.isoformat()),
+                    )
+                    conn.execute(
+                        "INSERT INTO sessions (id, username, created_at, last_seen_at, expires_at) VALUES (?, ?, ?, ?, ?)",
+                        ('session', 'admin', start.isoformat(), start.isoformat(), (start + timedelta(days=1)).isoformat()),
+                    )
+
+                with patch.object(server, 'utcnow', return_value=start + timedelta(seconds=30)):
+                    self.assertEqual(server.current_session_user('session'), 'admin')
+                with server.db_conn() as conn:
+                    row = conn.execute("SELECT last_seen_at FROM sessions WHERE id = 'session'").fetchone()
+                self.assertEqual(row['last_seen_at'], start.isoformat())
+
+                later = start + timedelta(seconds=server.SESSION_TOUCH_INTERVAL_SECONDS + 1)
+                with patch.object(server, 'utcnow', return_value=later):
+                    self.assertEqual(server.current_session_user('session'), 'admin')
+                with server.db_conn() as conn:
+                    row = conn.execute("SELECT last_seen_at FROM sessions WHERE id = 'session'").fetchone()
+                self.assertEqual(row['last_seen_at'], later.isoformat())
+
+                with server.db_conn() as conn:
+                    conn.execute(
+                        "INSERT INTO app_settings (key, value, updated_at) VALUES ('reduce_storage_writes', 'false', ?) "
+                        "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+                        (later.isoformat(),),
+                    )
+                immediate = later + timedelta(seconds=1)
+                with patch.object(server, 'utcnow', return_value=immediate):
+                    self.assertEqual(server.current_session_user('session'), 'admin')
+                with server.db_conn() as conn:
+                    row = conn.execute("SELECT last_seen_at FROM sessions WHERE id = 'session'").fetchone()
+                self.assertEqual(row['last_seen_at'], immediate.isoformat())
+            finally:
+                server.DATA_DIR = original_data
+                server.DB_PATH = original_db
 
 
 class RecordingRangeTests(unittest.TestCase):

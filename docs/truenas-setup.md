@@ -251,7 +251,12 @@ PlainNVR has two main storage locations.
 ### PlainNVR Data Storage
 
 This stores the app database, configuration, account setup, camera settings,
-and go2rtc state.
+and go2rtc state. It does not hold camera recording segments when Recordings
+Storage points somewhere else.
+
+PlainNVR enables **Reduce app storage writes** by default under Server Settings.
+That throttles session heartbeat updates, and go2rtc's rolling runtime log is
+kept in memory instead of continuously appending to the app-data dataset.
 
 Recommended: use ixVolume.
 
@@ -269,7 +274,9 @@ For a quick test install, ixVolume is fine.
 
 For a real NVR setup, Host Path is often better because recordings can get big.
 Choose or create a dataset where you want video files to live, then point the
-recordings storage path there.
+recordings storage path there. FFmpeg writes completed recording segments
+directly to this path; PlainNVR does not intentionally stage the video in Data
+Storage first.
 
 Example:
 

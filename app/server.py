@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import base64
+from collections import deque
 from html import escape as html_escape
 import json
 import hashlib
@@ -99,6 +100,7 @@ NIGHT_OFF_SATURATION = float(os.environ.get("NVR_NIGHT_OFF_SATURATION", "35"))
 DB_PATH = DATA_DIR / "nvr.sqlite3"
 AUTH_COOKIE_NAME = "plainnvr_session"
 AUTH_SESSION_TTL_SECONDS = int(os.environ.get("NVR_SESSION_TTL_SECONDS", str(7 * 24 * 60 * 60)))
+SESSION_TOUCH_INTERVAL_SECONDS = max(60, int(os.environ.get("NVR_SESSION_TOUCH_INTERVAL_SECONDS", "900")))
 AUTH_HASH_ITERATIONS = int(os.environ.get("NVR_AUTH_HASH_ITERATIONS", "260000"))
 BOOTSTRAP_USERNAME = os.environ.get("NVR_AUTH_USERNAME", "admin").strip() or "admin"
 BOOTSTRAP_PASSWORD = os.environ.get("NVR_AUTH_PASSWORD", "")
@@ -496,14 +498,44 @@ def setting_bool(value, default=False):
         return default
 
 
+LOG_LEVELS = ("trace", "debug", "info", "warn", "error", "fatal")
+LOG_LEVEL_ORDER = {level: index for index, level in enumerate(LOG_LEVELS)}
+
+APP_SETTING_DEFAULTS = {
+    "home_assistant_enabled": False,
+    "reduce_storage_writes": True,
+    "log_level": "info",
+}
+
+
+def normalize_log_level(value, default="info"):
+    level = str(value or "").strip().lower()
+    return level if level in LOG_LEVELS else default
+
+
 def get_app_settings():
-    settings = {"home_assistant_enabled": False}
+    settings = dict(APP_SETTING_DEFAULTS)
     with db_conn() as conn:
-        row = conn.execute(
-            "SELECT value FROM app_settings WHERE key = 'home_assistant_enabled'"
-        ).fetchone()
-    if row:
-        settings["home_assistant_enabled"] = setting_bool(row["value"])
+        rows = conn.execute(
+            """
+            SELECT key, value
+            FROM app_settings
+            WHERE key IN ('home_assistant_enabled', 'reduce_storage_writes', 'log_level')
+            """
+        ).fetchall()
+    for row in rows:
+        key = row["key"]
+        if key == "log_level":
+            raw = row["value"]
+            try:
+                raw = json.loads(raw)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                pass
+            settings[key] = normalize_log_level(raw)
+        else:
+            settings[key] = setting_bool(
+                row["value"], default=APP_SETTING_DEFAULTS[key]
+            )
     return settings
 
 
@@ -511,20 +543,41 @@ def home_assistant_enabled():
     return bool(get_app_settings().get("home_assistant_enabled"))
 
 
+def app_log_level():
+    return normalize_log_level(get_app_settings().get("log_level"))
+
+
+def event_level_enabled(level):
+    level = normalize_log_level(level, default="info")
+    configured = app_log_level()
+    return LOG_LEVEL_ORDER[level] >= LOG_LEVEL_ORDER[configured]
+
+
 def update_app_settings(payload):
     settings = get_app_settings()
-    if "home_assistant_enabled" in payload:
-        settings["home_assistant_enabled"] = setting_bool(payload.get("home_assistant_enabled"))
+    for key in ("home_assistant_enabled", "reduce_storage_writes"):
+        if key in payload:
+            settings[key] = setting_bool(
+                payload.get(key), default=APP_SETTING_DEFAULTS[key]
+            )
+    if "log_level" in payload:
+        requested = str(payload.get("log_level") or "").strip().lower()
+        if requested not in LOG_LEVELS:
+            raise ValueError("Log level must be TRACE, DEBUG, INFO, WARN, ERROR, or FATAL.")
+        settings["log_level"] = requested
+
     now = iso_now()
     with db_conn() as conn:
-        conn.execute(
-            """
-            INSERT INTO app_settings (key, value, updated_at)
-            VALUES ('home_assistant_enabled', ?, ?)
-            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
-            """,
-            (json.dumps(bool(settings["home_assistant_enabled"])), now),
-        )
+        for key, value in settings.items():
+            encoded = json.dumps(value)
+            conn.execute(
+                """
+                INSERT INTO app_settings (key, value, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+                """,
+                (key, encoded, now),
+            )
     return settings
 
 
@@ -621,15 +674,41 @@ def current_session_user(session_id):
         row = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
         if not row:
             return None
+        now = utcnow()
         try:
             expires_at = datetime.fromisoformat(row["expires_at"])
         except ValueError:
             conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
             return None
-        if expires_at <= utcnow():
+        if expires_at <= now:
             conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
             return None
-        conn.execute("UPDATE sessions SET last_seen_at = ? WHERE id = ?", (iso_now(), session_id))
+
+        setting_row = conn.execute(
+            "SELECT value FROM app_settings WHERE key = 'reduce_storage_writes'"
+        ).fetchone()
+        reduce_writes = (
+            setting_bool(setting_row["value"], default=True)
+            if setting_row
+            else True
+        )
+        touch_session = not reduce_writes
+        if reduce_writes:
+            try:
+                last_seen_at = datetime.fromisoformat(row["last_seen_at"])
+                if last_seen_at.tzinfo is None:
+                    last_seen_at = last_seen_at.replace(tzinfo=timezone.utc)
+                touch_session = (
+                    now - last_seen_at
+                    >= timedelta(seconds=SESSION_TOUCH_INTERVAL_SECONDS)
+                )
+            except (TypeError, ValueError):
+                touch_session = True
+        if touch_session:
+            conn.execute(
+                "UPDATE sessions SET last_seen_at = ? WHERE id = ?",
+                (now.isoformat(), session_id),
+            )
         return row["username"]
 
 
@@ -959,6 +1038,8 @@ def delete_camera(camera_id):
 
 
 def add_event(camera_id, level, message):
+    if not event_level_enabled(level):
+        return
     try:
         with db_conn() as conn:
             previous = conn.execute(
@@ -1027,9 +1108,9 @@ class Go2RTCManager:
     def __init__(self):
         self.lock = threading.RLock()
         self.process = None
-        self.log_handle = None
+        self.log_thread = None
+        self.log_lines = deque(maxlen=200)
         self.config_path = DATA_DIR / "go2rtc.json"
-        self.log_path = DATA_DIR / "go2rtc.log"
         self.stream_keys = {}
         self.generations = {}
         self.media_states = {}
@@ -1062,7 +1143,7 @@ class Go2RTCManager:
             and not separate_audio
         )
 
-    def _config(self):
+    def _config(self, log_level="info"):
         # go2rtc 1.9.13 aborts WebRTC initialization if any enumerated UDP
         # interface cannot bind (including transient Docker IPv6 link-local
         # addresses). Use IPv4 by default; dual-stack deployments can opt in.
@@ -1079,6 +1160,7 @@ class Go2RTCManager:
             if item.strip()
         ]
         config = {
+            "log": {"level": normalize_log_level(log_level)},
             "api": {
                 "listen": f"{GO2RTC_API_HOST}:{GO2RTC_API_PORT}",
                 "origin": "*",
@@ -1103,20 +1185,25 @@ class Go2RTCManager:
             return False
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         self.config_path.write_text(
-            json.dumps(self._config(), indent=2) + "\n",
+            json.dumps(self._config(log_level=app_log_level()), indent=2) + "\n",
             encoding="utf-8",
         )
         with self.lock:
             if self.process and self.process.poll() is None:
                 return True
-            if self.log_handle:
-                self.log_handle.close()
-            self.log_handle = self.log_path.open("a", encoding="utf-8", errors="replace")
             self.process = subprocess.Popen(
                 [binary, "-config", str(self.config_path)],
-                stdout=self.log_handle,
+                stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
             )
+            self.log_thread = threading.Thread(
+                target=self._capture_logs,
+                args=(self.process,),
+                daemon=True,
+            )
+            self.log_thread.start()
         deadline = time.time() + GO2RTC_START_TIMEOUT_SECONDS
         while time.time() < deadline:
             if not self.running():
@@ -1133,6 +1220,20 @@ class Go2RTCManager:
         print(self.last_error)
         self.shutdown()
         return False
+
+    def _capture_logs(self, process):
+        stream = process.stdout
+        if stream is None:
+            return
+        try:
+            for line in stream:
+                with self.lock:
+                    self.log_lines.append(line.rstrip())
+        finally:
+            try:
+                stream.close()
+            except OSError:
+                pass
 
     def _request(self, path, method="GET", timeout=3):
         request = urllib_request.Request(
@@ -1340,28 +1441,25 @@ class Go2RTCManager:
         }
 
     def log_tail(self, line_count=20):
-        try:
-            lines = self.log_path.read_text(
-                encoding="utf-8", errors="replace"
-            ).splitlines()
-        except OSError:
-            return ""
+        with self.lock:
+            lines = list(self.log_lines)
         return "\n".join(lines[-line_count:]).strip()
 
     def shutdown(self):
         with self.lock:
             process = self.process
+            log_thread = self.log_thread
             self.process = None
+            self.log_thread = None
         if process and process.poll() is None:
             process.terminate()
             try:
                 process.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 process.kill()
-        with self.lock:
-            if self.log_handle:
-                self.log_handle.close()
-                self.log_handle = None
+                process.wait(timeout=1)
+        if log_thread and log_thread.is_alive():
+            log_thread.join(timeout=1)
 
 
 go2rtc = Go2RTCManager()
@@ -3119,7 +3217,19 @@ class NvrHandler(SimpleHTTPRequestHandler):
             self.send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
             return
         if parsed.path == "/api/settings":
-            self.send_json({"settings": update_app_settings(payload)})
+            previous = get_app_settings()
+            try:
+                settings = update_app_settings(payload)
+            except ValueError as exc:
+                self.send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
+                return
+            if settings["log_level"] != previous["log_level"]:
+                go2rtc.shutdown()
+                with go2rtc.lock:
+                    go2rtc.stream_keys.clear()
+                    go2rtc.media_states.clear()
+                go2rtc.start(list_cameras())
+            self.send_json({"settings": settings})
             return
         match = re.match(r"^/api/cameras/([a-f0-9]+)$", parsed.path)
         if match:
