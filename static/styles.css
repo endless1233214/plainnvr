@@ -855,6 +855,12 @@ small,
   opacity: 1;
 }
 
+@media (hover: none), (pointer: coarse) {
+  .wall-tile-actions {
+    opacity: 1;
+  }
+}
+
 .wall-tile-actions button {
   min-height: 31px;
   border-color: rgba(255, 255, 255, 0.28);

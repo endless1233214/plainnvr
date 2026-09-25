@@ -57,18 +57,10 @@
     if (title) title.textContent = pageTitles[next];
 
     if (updateHash && window.location.hash !== `#${next}`) {
-      history.replaceState(null, "", `#${next}`);
+      history.pushState(null, "", `#${next}`);
     }
 
-    if (next === "cameras") {
-      const streamInput = el("rtspUrl");
-      const revealButton = el("toggleRtspVisibility");
-      if (streamInput) streamInput.type = "password";
-      if (revealButton) {
-        revealButton.textContent = "Show";
-        revealButton.setAttribute("aria-pressed", "false");
-      }
-    }
+    if (next === "cameras" && typeof maskRtspUrl === "function") maskRtspUrl();
 
     if (next === "live") {
       renderLiveWall();
@@ -99,10 +91,7 @@
   function selectedWallIds() {
     const available = new Set((state.cameras || []).map((camera) => camera.id));
     const stored = storedWallIds();
-    if (stored) {
-      const filtered = stored.filter((id) => available.has(id));
-      if (filtered.length) return filtered;
-    }
+    if (stored !== null) return stored.filter((id) => available.has(id));
     return (state.cameras || [])
       .filter((camera) => camera.enabled)
       .map((camera) => camera.id)
@@ -201,7 +190,7 @@
               select.value = camera.id;
               state.liveCameraId = camera.id;
               select.dispatchEvent(new Event("change"));
-              startLive();
+              if (!state.liveActive) startLive();
             }
           });
           card.querySelector("[data-dashboard-settings]").addEventListener("click", () => {
@@ -292,7 +281,7 @@
       select.value = camera.id;
       state.liveCameraId = camera.id;
       select.dispatchEvent(new Event("change"));
-      startLive();
+      if (!state.liveActive) startLive();
       el("go2rtcLive")?.scrollIntoView({ behavior: "smooth", block: "center" });
     });
 
@@ -329,6 +318,7 @@
   }
 
   function syncWallTile(tile, camera) {
+    tile.querySelector(".wall-tile-header strong").textContent = camera.name;
     const player = tile.querySelector("plainnvr-live-player");
     const empty = tile.querySelector(".wall-tile-empty");
     const label = tile.querySelector(".wall-tile-state");
@@ -443,9 +433,13 @@
       button.addEventListener("click", () => navigate(button.dataset.pageTarget));
     });
 
-    window.addEventListener("hashchange", () => {
-      navigate(window.location.hash, { updateHash: false });
-    });
+    const syncFromLocation = () => {
+      if (normalizedPage(window.location.hash) !== activePage) {
+        navigate(window.location.hash, { updateHash: false });
+      }
+    };
+    window.addEventListener("hashchange", syncFromLocation);
+    window.addEventListener("popstate", syncFromLocation);
 
     const layout = safeStorageGet(wallLayoutStorageKey);
     if (layout && el("wallLayout")?.querySelector(`option[value="${layout}"]`)) {

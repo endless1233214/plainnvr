@@ -264,7 +264,14 @@ function cameraPayloadFromForm() {
   };
 }
 
+function maskRtspUrl() {
+  $("rtspUrl").type = "password";
+  $("toggleRtspVisibility").textContent = "Show";
+  $("toggleRtspVisibility").setAttribute("aria-pressed", "false");
+}
+
 function resetForm() {
+  maskRtspUrl();
   state.selectedCameraId = "";
   $("editorTitle").textContent = "Add Camera";
   $("cameraId").value = "";
@@ -296,6 +303,7 @@ function resetForm() {
 }
 
 function editCamera(camera) {
+  maskRtspUrl();
   state.selectedCameraId = camera.id;
   $("editorTitle").textContent = camera.name;
   $("cameraId").value = camera.id;
@@ -645,7 +653,7 @@ function renderEvents(events) {
     row.className = "event";
     row.innerHTML = `
       <time>${formatTime(event.created_at)}</time>
-      <span class="chip ${event.level === "error" ? "off" : event.level === "warn" ? "warn" : "ok"}">${event.level}</span>
+      <span class="chip ${event.level === "error" ? "off" : event.level === "warn" ? "warn" : "ok"}">${escapeHtml(event.level)}</span>
       <span>${escapeHtml(event.message)}</span>
     `;
     target.appendChild(row);
@@ -719,6 +727,7 @@ async function loadStatus() {
 
 async function saveCamera(event) {
   event.preventDefault();
+  maskRtspUrl();
   const payload = cameraPayloadFromForm();
   setSaveState("Saving...");
   try {
@@ -793,6 +802,7 @@ function useDiscoveredStream() {
       "Run discovery again to retrieve the credentialed stream URI.";
     return;
   }
+  maskRtspUrl();
   $("rtspUrl").value = streamUrl;
   $("onvifState").textContent = `Using ${profile.name || profile.token}.`;
 }
@@ -1255,6 +1265,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
   $("playbackDate").value = today();
   $("cameraForm").addEventListener("submit", saveCamera);
+  $("cameraForm").addEventListener("invalid", maskRtspUrl, true);
   $("ptzType").addEventListener("change", updatePtzFormHints);
   $("discoverOnvif").addEventListener("click", discoverOnvif);
   $("downloadCompatibility").addEventListener("click", downloadCompatibilityReport);
