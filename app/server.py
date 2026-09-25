@@ -3217,7 +3217,16 @@ class NvrHandler(SimpleHTTPRequestHandler):
             self.send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
             return
         if parsed.path == "/api/settings":
-            self.send_json({"settings": update_app_settings(payload)})
+            previous = get_app_settings()
+            try:
+                settings = update_app_settings(payload)
+            except ValueError as exc:
+                self.send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
+                return
+            if settings["log_level"] != previous["log_level"]:
+                go2rtc.shutdown()
+                go2rtc.start(list_cameras())
+            self.send_json({"settings": settings})
             return
         match = re.match(r"^/api/cameras/([a-f0-9]+)$", parsed.path)
         if match:
