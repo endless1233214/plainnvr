@@ -3225,6 +3225,9 @@ class NvrHandler(SimpleHTTPRequestHandler):
                 return
             if settings["log_level"] != previous["log_level"]:
                 go2rtc.shutdown()
+                with go2rtc.lock:
+                    go2rtc.stream_keys.clear()
+                    go2rtc.media_states.clear()
                 go2rtc.start(list_cameras())
             self.send_json({"settings": settings})
             return
