@@ -1,30 +1,18 @@
 #!/usr/bin/env python3
-import base64
-from html import escape as html_escape
 import json
-import hmac
-import mimetypes
 import os
 import re
-import secrets
-import select
 import shutil
 import signal
 import sqlite3
-import socket
 import struct
-import subprocess
 import sys
 import threading
-import time
-import uuid
 from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from http.server import SimpleHTTPRequestHandler
 from pathlib import Path
-from urllib import error as urllib_error, request as urllib_request
-from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
+from urllib.parse import unquote, urlparse
 
 try:
     from onvif_client import (
