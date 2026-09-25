@@ -85,6 +85,11 @@ try:
         Go2RTCManager as BaseGo2RTCManager,
         Go2RTCSourceManager,
     )
+    from app.night_mode import (
+        NightModeManager as BaseNightModeManager,
+        analyze_rgb_frame,
+    )
+    from app.recording import RecorderSupervisor as BaseRecorderSupervisor
 except ModuleNotFoundError:
     from auth import (
         AUTH_HASH_ITERATIONS,
@@ -118,6 +123,11 @@ except ModuleNotFoundError:
         Go2RTCManager as BaseGo2RTCManager,
         Go2RTCSourceManager,
     )
+    from night_mode import (
+        NightModeManager as BaseNightModeManager,
+        analyze_rgb_frame,
+    )
+    from recording import RecorderSupervisor as BaseRecorderSupervisor
 
 
 APP_HOST = os.environ.get("NVR_HOST", "0.0.0.0")
@@ -1699,357 +1709,44 @@ def run_ptz_command(camera, payload):
     raise RuntimeError(f"PTZ command failed: {last_error}")
 
 
-class NightModeManager:
+class NightModeManager(BaseNightModeManager):
     def __init__(self):
-        self.lock = threading.RLock()
-        self.states = {}
-        self.stop_event = threading.Event()
-        self.thread = threading.Thread(target=self.run, daemon=True)
-
-    def start(self):
-        self.thread.start()
-
-    def shutdown(self):
-        self.stop_event.set()
-        self.thread.join(timeout=5)
-
-    def is_night(self, camera_id):
-        with self.lock:
-            return bool(self.states.get(camera_id, {}).get("night"))
-
-    def status(self):
-        with self.lock:
-            return {camera_id: dict(state) for camera_id, state in self.states.items()}
-
-    def sample_camera(self, camera):
-        command = [
-            FFMPEG_BIN,
-            "-hide_banner",
-            "-nostdin",
-            "-loglevel",
-            "error",
-        ]
-        command.extend(ffmpeg_input_args(camera, low_latency=True))
-        command.extend(
-            [
-                "-frames:v",
-                "1",
-                "-vf",
-                "scale=64:36",
-                "-f",
-                "rawvideo",
-                "-pix_fmt",
-                "rgb24",
-                "pipe:1",
-            ]
+        super().__init__(
+            ffmpeg_bin=FFMPEG_BIN,
+            ffmpeg_input_args=ffmpeg_input_args,
+            list_cameras=list_cameras,
+            iso_now=iso_now,
+            sample_interval_seconds=NIGHT_SAMPLE_INTERVAL_SECONDS,
+            on_seconds=NIGHT_ON_SECONDS,
+            off_seconds=NIGHT_OFF_SECONDS,
+            on_brightness=NIGHT_ON_BRIGHTNESS,
+            on_saturation=NIGHT_ON_SATURATION,
+            dark_brightness=NIGHT_DARK_BRIGHTNESS,
+            off_brightness=NIGHT_OFF_BRIGHTNESS,
+            off_saturation=NIGHT_OFF_SATURATION,
         )
-        try:
-            result = subprocess.run(command, capture_output=True, timeout=12)
-        except subprocess.TimeoutExpired:
-            return None, "Night sample timed out."
-        if result.returncode != 0 or not result.stdout:
-            message = result.stderr.decode("utf-8", "replace").strip().splitlines()
-            return None, message[-1] if message else "Night sample failed."
-        return analyze_rgb_frame(result.stdout), None
-
-    def update_state(self, camera, metrics, error=None):
-        camera_id = camera["id"]
-        now = time.time()
-        with self.lock:
-            state = self.states.setdefault(
-                camera_id,
-                {
-                    "night": False,
-                    "first_on_at": None,
-                    "first_off_at": None,
-                    "updated_at": None,
-                    "brightness": None,
-                    "saturation": None,
-                    "error": None,
-                },
-            )
-            if error:
-                state["error"] = error
-                state["updated_at"] = iso_now()
-                return
-
-            brightness = metrics["brightness"]
-            saturation = metrics["saturation"]
-            wants_on = (saturation <= NIGHT_ON_SATURATION and brightness <= NIGHT_ON_BRIGHTNESS) or (
-                brightness <= NIGHT_DARK_BRIGHTNESS
-            )
-            wants_off = saturation >= NIGHT_OFF_SATURATION or brightness >= NIGHT_OFF_BRIGHTNESS
-            if state["night"]:
-                state["first_on_at"] = None
-                if wants_off:
-                    state["first_off_at"] = state["first_off_at"] or now
-                    if now - state["first_off_at"] >= NIGHT_OFF_SECONDS:
-                        state["night"] = False
-                        state["first_off_at"] = None
-                else:
-                    state["first_off_at"] = None
-            else:
-                state["first_off_at"] = None
-                if wants_on:
-                    state["first_on_at"] = state["first_on_at"] or now
-                    if now - state["first_on_at"] >= NIGHT_ON_SECONDS:
-                        state["night"] = True
-                        state["first_on_at"] = None
-                else:
-                    state["first_on_at"] = None
-
-            state.update(
-                {
-                    "updated_at": iso_now(),
-                    "brightness": round(brightness, 2),
-                    "saturation": round(saturation, 2),
-                    "error": None,
-                }
-            )
-
-    def run(self):
-        while not self.stop_event.is_set():
-            cameras = [camera for camera in list_cameras() if camera.get("enabled") and camera.get("grayscale_mode") == "auto"]
-            active_ids = {camera["id"] for camera in cameras}
-            with self.lock:
-                for camera_id in list(self.states.keys()):
-                    if camera_id not in active_ids:
-                        self.states.pop(camera_id, None)
-            for camera in cameras:
-                metrics, error = self.sample_camera(camera)
-                self.update_state(camera, metrics, error=error)
-                if self.stop_event.wait(0.1):
-                    return
-            self.stop_event.wait(max(5, NIGHT_SAMPLE_INTERVAL_SECONDS))
-
-
-def analyze_rgb_frame(data):
-    if not data:
-        return {"brightness": 0.0, "saturation": 0.0}
-    total_luma = 0.0
-    total_saturation = 0.0
-    pixels = len(data) // 3
-    for index in range(0, pixels * 3, 3):
-        red = data[index]
-        green = data[index + 1]
-        blue = data[index + 2]
-        maximum = max(red, green, blue)
-        minimum = min(red, green, blue)
-        total_luma += 0.2126 * red + 0.7152 * green + 0.0722 * blue
-        total_saturation += 0.0 if maximum == 0 else ((maximum - minimum) / maximum) * 100
-    return {"brightness": total_luma / pixels, "saturation": total_saturation / pixels}
 
 
 night_modes = NightModeManager()
 
 
-class RecorderSupervisor:
+class RecorderSupervisor(BaseRecorderSupervisor):
     def __init__(self):
-        self.lock = threading.RLock()
-        self.processes = {}
-        self.paused_camera_ids = set()
-        self.stop_event = threading.Event()
-        self.last_retention = 0
-        self.thread = threading.Thread(target=self.run, daemon=True)
-
-    def start(self):
-        self.thread.start()
-
-    def shutdown(self):
-        self.stop_event.set()
-        with self.lock:
-            camera_ids = list(self.processes.keys())
-        for camera_id in camera_ids:
-            self.stop(camera_id)
-        self.thread.join(timeout=5)
-
-    def status(self):
-        with self.lock:
-            states = {}
-            for camera_id, entry in self.processes.items():
-                process = entry["process"]
-                output_age = self.output_age(camera_id)
-                states[camera_id] = {
-                    "running": process.poll() is None,
-                    "pid": process.pid,
-                    "started_at": entry["started_at"],
-                    "last_error": entry.get("last_error"),
-                    "paused": False,
-                    "output_age_seconds": round(output_age, 1) if output_age is not None else None,
-                    "relay_generation": entry.get("relay_generation"),
-                }
-            for camera_id in self.paused_camera_ids:
-                states.setdefault(
-                    camera_id,
-                    {
-                        "running": False,
-                        "pid": None,
-                        "started_at": None,
-                        "last_error": None,
-                        "paused": True,
-                    },
-                )
-            return states
-
-    def restart(self, camera_id):
-        self.stop(camera_id)
-
-    def pause(self, camera_id):
-        with self.lock:
-            self.paused_camera_ids.add(camera_id)
-        self.stop(camera_id)
-        add_event(camera_id, "info", "Recorder paused.")
-
-    def resume(self, camera):
-        with self.lock:
-            self.paused_camera_ids.discard(camera["id"])
-        add_event(camera["id"], "info", "Recorder resumed.")
-        self.ensure_running(camera)
-
-    def restart_now(self, camera):
-        with self.lock:
-            self.paused_camera_ids.discard(camera["id"])
-        self.restart(camera["id"])
-        self.ensure_running(camera)
-
-    def is_paused(self, camera_id):
-        with self.lock:
-            return camera_id in self.paused_camera_ids
-
-    def stop(self, camera_id):
-        with self.lock:
-            entry = self.processes.pop(camera_id, None)
-        if not entry:
-            return
-        self._terminate_entry(entry)
-        add_event(camera_id, "info", "Recorder stopped.")
-
-    def ensure_running(self, camera):
-        try:
-            source_camera = relay.source_camera(camera)
-        except (OSError, RuntimeError) as exc:
-            with self.lock:
-                entry = self.processes.pop(camera["id"], None)
-            if entry:
-                self._terminate_entry(entry)
-            add_event(camera["id"], "error", f"Recorder waiting for go2rtc: {redact_camera_text(str(exc), camera)}")
-            return
-
-        relay_generation = source_camera.get("_relay_generation")
-        with self.lock:
-            entry = self.processes.get(camera["id"])
-            if entry and entry["process"].poll() is None:
-                generation_matches = entry.get("relay_generation") == relay_generation
-                output_fresh = self._output_is_fresh(camera, entry)
-                if generation_matches and output_fresh:
-                    return
-                reason = (
-                    "Recorder source was replaced; restarting."
-                    if not generation_matches
-                    else "Recorder stopped producing fresh output; restarting."
-                )
-                self.processes.pop(camera["id"], None)
-                self._terminate_entry(entry)
-                add_event(camera["id"], "warn", reason)
-                entry = None
-            if entry:
-                stderr = ""
-                try:
-                    stderr = entry["process"].stderr.read() if entry["process"].stderr else ""
-                except Exception:
-                    stderr = ""
-                message = stderr.strip().splitlines()[-1] if stderr.strip() else "Recorder exited."
-                add_event(camera["id"], "warn", message)
-                self.processes.pop(camera["id"], None)
-
-            try:
-                command = build_ffmpeg_command(camera, source_camera=source_camera)
-                process = subprocess.Popen(
-                    command,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    preexec_fn=os.setsid if hasattr(os, "setsid") else None,
-                )
-            except (OSError, RuntimeError) as exc:
-                add_event(camera["id"], "error", f"Could not start FFmpeg: {exc}")
-                return
-            self.processes[camera["id"]] = {
-                "process": process,
-                "started_at": iso_now(),
-                "started_wall": time.time(),
-                "command": command,
-                "relay_generation": relay_generation,
-            }
-            add_event(camera["id"], "info", "Recorder started.")
-
-    def output_age(self, camera_id):
-        camera = get_camera(camera_id)
-        if not camera:
-            return None
-        root = camera_dir(camera)
-        try:
-            latest = max((path.stat().st_mtime for path in root.glob("*.mp4")), default=None)
-        except OSError:
-            return None
-        return time.time() - latest if latest is not None else None
-
-    def _output_is_fresh(self, camera, entry):
-        if time.time() - entry.get("started_wall", time.time()) < RECORDER_START_GRACE_SECONDS:
-            return True
-        age = self.output_age(camera["id"])
-        limit = max(RECORDER_STALE_SECONDS, min(float(camera.get("segment_seconds") or 60), 120))
-        return age is not None and age <= limit
-
-    def _terminate_entry(self, entry):
-        process = entry["process"]
-        if process.poll() is None:
-            process.terminate()
-            try:
-                process.wait(timeout=8)
-            except subprocess.TimeoutExpired:
-                process.kill()
-
-    def run_retention(self, cameras):
-        now = time.time()
-        if now - self.last_retention < RETENTION_INTERVAL_SECONDS:
-            return
-        self.last_retention = now
-        for camera in cameras:
-            root = camera_dir(camera)
-            if not root.exists():
-                continue
-            cutoff = now - (int(camera.get("retention_days") or 14) * 86400)
-            for path in root.glob("*.mp4"):
-                try:
-                    if path.stat().st_mtime < cutoff:
-                        path.unlink()
-                except OSError:
-                    continue
-
-    def run(self):
-        while not self.stop_event.is_set():
-            cameras = list_cameras()
-            relay.reconcile(cameras)
-            active_ids = set()
-            for camera in cameras:
-                should_record = (
-                    bool(camera["enabled"])
-                    and schedule_active(camera["schedule"])
-                    and not self.is_paused(camera["id"])
-                )
-                if should_record:
-                    active_ids.add(camera["id"])
-                    self.ensure_running(camera)
-                else:
-                    self.stop(camera["id"])
-
-            with self.lock:
-                for camera_id in list(self.processes.keys()):
-                    if camera_id not in active_ids and not get_camera(camera_id):
-                        self.stop(camera_id)
-            self.run_retention(cameras)
-            self.stop_event.wait(SCAN_INTERVAL_SECONDS)
+        super().__init__(
+            relay=relay,
+            build_ffmpeg_command=build_ffmpeg_command,
+            add_event=add_event,
+            redact_camera_text=redact_camera_text,
+            get_camera=get_camera,
+            camera_dir=camera_dir,
+            list_cameras=list_cameras,
+            schedule_active=schedule_active,
+            iso_now=iso_now,
+            scan_interval_seconds=SCAN_INTERVAL_SECONDS,
+            retention_interval_seconds=RETENTION_INTERVAL_SECONDS,
+            start_grace_seconds=RECORDER_START_GRACE_SECONDS,
+            stale_seconds=RECORDER_STALE_SECONDS,
+        )
 
 
 recorder = RecorderSupervisor()
