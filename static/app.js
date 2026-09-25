@@ -7,6 +7,8 @@ const state = {
   users: [],
   username: "",
   coverage: {},
+  disk: {},
+  events: [],
   selectedCameraId: "",
   liveCameraId: "",
   streamToken: "",
@@ -701,7 +703,9 @@ async function loadStatus() {
   state.users = data.users || [];
   state.username = data.username || "";
   state.streamToken = data.stream_token || "";
-  updateDiskLine(data.disk);
+  state.disk = data.disk || {};
+  state.events = data.events || [];
+  updateDiskLine(state.disk);
   renderCameras();
   renderLiveCameras();
   renderPlaybackCameras();
@@ -710,6 +714,7 @@ async function loadStatus() {
   renderSettings();
   renderUsers();
   syncLiveHealth();
+  window.plainNvrUi?.render?.();
 }
 
 async function saveCamera(event) {
