@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import base64
+from collections import deque
 from html import escape as html_escape
 import json
 import hashlib
@@ -99,6 +100,7 @@ NIGHT_OFF_SATURATION = float(os.environ.get("NVR_NIGHT_OFF_SATURATION", "35"))
 DB_PATH = DATA_DIR / "nvr.sqlite3"
 AUTH_COOKIE_NAME = "plainnvr_session"
 AUTH_SESSION_TTL_SECONDS = int(os.environ.get("NVR_SESSION_TTL_SECONDS", str(7 * 24 * 60 * 60)))
+SESSION_TOUCH_INTERVAL_SECONDS = max(60, int(os.environ.get("NVR_SESSION_TOUCH_INTERVAL_SECONDS", "900")))
 AUTH_HASH_ITERATIONS = int(os.environ.get("NVR_AUTH_HASH_ITERATIONS", "260000"))
 BOOTSTRAP_USERNAME = os.environ.get("NVR_AUTH_USERNAME", "admin").strip() or "admin"
 BOOTSTRAP_PASSWORD = os.environ.get("NVR_AUTH_PASSWORD", "")
@@ -496,14 +498,26 @@ def setting_bool(value, default=False):
         return default
 
 
+APP_SETTING_DEFAULTS = {
+    "home_assistant_enabled": False,
+    "reduce_storage_writes": True,
+}
+
+
 def get_app_settings():
-    settings = {"home_assistant_enabled": False}
+    settings = dict(APP_SETTING_DEFAULTS)
     with db_conn() as conn:
-        row = conn.execute(
-            "SELECT value FROM app_settings WHERE key = 'home_assistant_enabled'"
-        ).fetchone()
-    if row:
-        settings["home_assistant_enabled"] = setting_bool(row["value"])
+        rows = conn.execute(
+            """
+            SELECT key, value
+            FROM app_settings
+            WHERE key IN ('home_assistant_enabled', 'reduce_storage_writes')
+            """
+        ).fetchall()
+    for row in rows:
+        settings[row["key"]] = setting_bool(
+            row["value"], default=APP_SETTING_DEFAULTS[row["key"]]
+        )
     return settings
 
 
@@ -513,18 +527,20 @@ def home_assistant_enabled():
 
 def update_app_settings(payload):
     settings = get_app_settings()
-    if "home_assistant_enabled" in payload:
-        settings["home_assistant_enabled"] = setting_bool(payload.get("home_assistant_enabled"))
+    for key, default in APP_SETTING_DEFAULTS.items():
+        if key in payload:
+            settings[key] = setting_bool(payload.get(key), default=default)
     now = iso_now()
     with db_conn() as conn:
-        conn.execute(
-            """
-            INSERT INTO app_settings (key, value, updated_at)
-            VALUES ('home_assistant_enabled', ?, ?)
-            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
-            """,
-            (json.dumps(bool(settings["home_assistant_enabled"])), now),
-        )
+        for key, value in settings.items():
+            conn.execute(
+                """
+                INSERT INTO app_settings (key, value, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+                """,
+                (key, json.dumps(bool(value)), now),
+            )
     return settings
 
 
@@ -621,15 +637,41 @@ def current_session_user(session_id):
         row = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
         if not row:
             return None
+        now = utcnow()
         try:
             expires_at = datetime.fromisoformat(row["expires_at"])
         except ValueError:
             conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
             return None
-        if expires_at <= utcnow():
+        if expires_at <= now:
             conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
             return None
-        conn.execute("UPDATE sessions SET last_seen_at = ? WHERE id = ?", (iso_now(), session_id))
+
+        setting_row = conn.execute(
+            "SELECT value FROM app_settings WHERE key = 'reduce_storage_writes'"
+        ).fetchone()
+        reduce_writes = (
+            setting_bool(setting_row["value"], default=True)
+            if setting_row
+            else True
+        )
+        touch_session = not reduce_writes
+        if reduce_writes:
+            try:
+                last_seen_at = datetime.fromisoformat(row["last_seen_at"])
+                if last_seen_at.tzinfo is None:
+                    last_seen_at = last_seen_at.replace(tzinfo=timezone.utc)
+                touch_session = (
+                    now - last_seen_at
+                    >= timedelta(seconds=SESSION_TOUCH_INTERVAL_SECONDS)
+                )
+            except (TypeError, ValueError):
+                touch_session = True
+        if touch_session:
+            conn.execute(
+                "UPDATE sessions SET last_seen_at = ? WHERE id = ?",
+                (now.isoformat(), session_id),
+            )
         return row["username"]
 
 
@@ -1027,9 +1069,9 @@ class Go2RTCManager:
     def __init__(self):
         self.lock = threading.RLock()
         self.process = None
-        self.log_handle = None
+        self.log_thread = None
+        self.log_lines = deque(maxlen=200)
         self.config_path = DATA_DIR / "go2rtc.json"
-        self.log_path = DATA_DIR / "go2rtc.log"
         self.stream_keys = {}
         self.generations = {}
         self.media_states = {}
@@ -1109,14 +1151,19 @@ class Go2RTCManager:
         with self.lock:
             if self.process and self.process.poll() is None:
                 return True
-            if self.log_handle:
-                self.log_handle.close()
-            self.log_handle = self.log_path.open("a", encoding="utf-8", errors="replace")
             self.process = subprocess.Popen(
                 [binary, "-config", str(self.config_path)],
-                stdout=self.log_handle,
+                stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
             )
+            self.log_thread = threading.Thread(
+                target=self._capture_logs,
+                args=(self.process,),
+                daemon=True,
+            )
+            self.log_thread.start()
         deadline = time.time() + GO2RTC_START_TIMEOUT_SECONDS
         while time.time() < deadline:
             if not self.running():
@@ -1133,6 +1180,20 @@ class Go2RTCManager:
         print(self.last_error)
         self.shutdown()
         return False
+
+    def _capture_logs(self, process):
+        stream = process.stdout
+        if stream is None:
+            return
+        try:
+            for line in stream:
+                with self.lock:
+                    self.log_lines.append(line.rstrip())
+        finally:
+            try:
+                stream.close()
+            except OSError:
+                pass
 
     def _request(self, path, method="GET", timeout=3):
         request = urllib_request.Request(
@@ -1340,28 +1401,25 @@ class Go2RTCManager:
         }
 
     def log_tail(self, line_count=20):
-        try:
-            lines = self.log_path.read_text(
-                encoding="utf-8", errors="replace"
-            ).splitlines()
-        except OSError:
-            return ""
+        with self.lock:
+            lines = list(self.log_lines)
         return "\n".join(lines[-line_count:]).strip()
 
     def shutdown(self):
         with self.lock:
             process = self.process
+            log_thread = self.log_thread
             self.process = None
+            self.log_thread = None
         if process and process.poll() is None:
             process.terminate()
             try:
                 process.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 process.kill()
-        with self.lock:
-            if self.log_handle:
-                self.log_handle.close()
-                self.log_handle = None
+                process.wait(timeout=1)
+        if log_thread and log_thread.is_alive():
+            log_thread.join(timeout=1)
 
 
 go2rtc = Go2RTCManager()
