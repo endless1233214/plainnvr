@@ -15,6 +15,8 @@ or used on the appliance.
   FFmpeg recorders as it does in the existing deployment.
 - `systemd/plainnvr-kiosk@.service` owns Cage and Chromium on tty1. The kiosk
   displays the ordinary PlainNVR login and UI; it has no automatic admin login.
+  Its browser profile is cleared at reboot, so the console requires a fresh
+  login after each boot.
 
 ## Prototype VM setup
 
