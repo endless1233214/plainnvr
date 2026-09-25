@@ -89,7 +89,12 @@ try:
         NightModeManager as BaseNightModeManager,
         analyze_rgb_frame,
     )
-    from app.recording import RecorderSupervisor as BaseRecorderSupervisor
+    from app.recording import (
+        RecorderSupervisor as BaseRecorderSupervisor,
+        recording_coverage as recording_coverage_impl,
+        scan_segments as scan_segments_impl,
+        segment_start as segment_start_impl,
+    )
 except ModuleNotFoundError:
     from auth import (
         AUTH_HASH_ITERATIONS,
@@ -127,7 +132,12 @@ except ModuleNotFoundError:
         NightModeManager as BaseNightModeManager,
         analyze_rgb_frame,
     )
-    from recording import RecorderSupervisor as BaseRecorderSupervisor
+    from recording import (
+        RecorderSupervisor as BaseRecorderSupervisor,
+        recording_coverage as recording_coverage_impl,
+        scan_segments as scan_segments_impl,
+        segment_start as segment_start_impl,
+    )
 
 
 APP_HOST = os.environ.get("NVR_HOST", "0.0.0.0")
@@ -1753,78 +1763,24 @@ recorder = RecorderSupervisor()
 
 
 def scan_segments(camera, date_value=None):
-    root = camera_dir(camera)
-    if not root.exists():
-        return []
-    segments = []
-    for path in root.glob("*.mp4"):
-        start = segment_start(path)
-        if not start:
-            continue
-        if date_value and start.strftime("%Y-%m-%d") != date_value:
-            continue
-        try:
-            stat = path.stat()
-        except OSError:
-            continue
-        segments.append(
-            {
-                "camera_id": camera["id"],
-                "camera_name": camera["name"],
-                "filename": path.name,
-                "start": start.isoformat(),
-                "approx_end": (start + timedelta(seconds=int(camera["segment_seconds"]))).isoformat(),
-                "size": stat.st_size,
-                "url": f"/media/{camera['id']}/{path.name}",
-            }
-        )
-    segments.sort(key=lambda item: item["start"])
-    return segments
+    return scan_segments_impl(
+        camera,
+        date_value,
+        camera_dir=camera_dir,
+        segment_re=SEGMENT_RE,
+    )
 
 
 def segment_start(path):
-    match = SEGMENT_RE.match(path.name)
-    if not match:
-        return None
-    try:
-        return datetime.strptime(match.group("stamp"), "%Y%m%dT%H%M%S")
-    except ValueError:
-        return None
+    return segment_start_impl(path, SEGMENT_RE)
 
 
 def recording_coverage(camera):
-    root = camera_dir(camera)
-    summary = {
-        "camera_id": camera["id"],
-        "count": 0,
-        "total_size": 0,
-        "oldest": None,
-        "newest": None,
-        "dates": [],
-        "retention_days": int(camera.get("retention_days") or 14),
-    }
-    if not root.exists():
-        return summary
-    dates = set()
-    oldest = None
-    newest = None
-    for path in root.glob("*.mp4"):
-        start = segment_start(path)
-        if not start:
-            continue
-        try:
-            stat = path.stat()
-        except OSError:
-            continue
-        summary["count"] += 1
-        summary["total_size"] += stat.st_size
-        dates.add(start.strftime("%Y-%m-%d"))
-        oldest = start if oldest is None or start < oldest else oldest
-        newest = start if newest is None or start > newest else newest
-    summary["oldest"] = oldest.isoformat() if oldest else None
-    summary["newest"] = newest.isoformat() if newest else None
-    summary["dates"] = sorted(dates)
-    return summary
+    return recording_coverage_impl(
+        camera,
+        camera_dir=camera_dir,
+        segment_re=SEGMENT_RE,
+    )
 
 
 def probe_stream_url(url, payload, select_streams, show_entries, low_latency=True):
