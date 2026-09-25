@@ -101,8 +101,7 @@ class LiveHTTPTests(unittest.TestCase):
 
 class WebRTCConfigTests(unittest.TestCase):
     def test_go2rtc_uses_selected_log_level(self):
-        with patch.object(server, "app_log_level", return_value="debug"):
-            config = server.Go2RTCManager()._config()
+        config = server.Go2RTCManager()._config(log_level="debug")
         self.assertEqual(config["log"]["level"], "debug")
 
     def test_plainnvr_event_level_threshold(self):
