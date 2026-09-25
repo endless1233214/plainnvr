@@ -1,1 +1,1 @@
-../../../iOS/PlainNVRiPhone/PlainNVRiPhone/NativeLiveSession.swift
+../../../ios/PlainNVRiPhone/PlainNVRiPhone/NativeLiveSession.swift

@@ -21,6 +21,15 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Check shared-source links
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          broken = [str(path) for path in Path("MacOS").rglob("*") if path.is_symlink() and not path.exists()]
+          if broken:
+              raise SystemExit(f"Broken macOS source links: {', '.join(broken)}")
+          PY
       - name: Run Python tests
         run: python3 -m unittest discover -s tests -v
       - name: Set up Node.js
