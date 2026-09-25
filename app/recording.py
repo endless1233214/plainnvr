@@ -299,3 +299,122 @@ class RecorderSupervisor:
 
             self.run_retention(cameras)
             self.stop_event.wait(self.scan_interval_seconds)
+
+
+def segment_start(path, segment_re):
+    from datetime import datetime
+
+    match = segment_re.match(path.name)
+    if not match:
+        return None
+    try:
+        return datetime.strptime(match.group("stamp"), "%Y%m%dT%H%M%S")
+    except ValueError:
+        return None
+
+
+def scan_segments(
+    camera,
+    date_value=None,
+    *,
+    camera_dir,
+    segment_re,
+):
+    from datetime import timedelta
+
+    root = camera_dir(camera)
+    if not root.exists():
+        return []
+
+    segments = []
+    for path in root.glob("*.mp4"):
+        start = segment_start(path, segment_re)
+        if not start:
+            continue
+        if (
+            date_value
+            and start.strftime("%Y-%m-%d") != date_value
+        ):
+            continue
+
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+
+        segments.append(
+            {
+                "camera_id": camera["id"],
+                "camera_name": camera["name"],
+                "filename": path.name,
+                "start": start.isoformat(),
+                "approx_end": (
+                    start
+                    + timedelta(
+                        seconds=int(camera["segment_seconds"])
+                    )
+                ).isoformat(),
+                "size": stat.st_size,
+                "url": f"/media/{camera['id']}/{path.name}",
+            }
+        )
+
+    segments.sort(key=lambda item: item["start"])
+    return segments
+
+
+def recording_coverage(
+    camera,
+    *,
+    camera_dir,
+    segment_re,
+):
+    root = camera_dir(camera)
+    summary = {
+        "camera_id": camera["id"],
+        "count": 0,
+        "total_size": 0,
+        "oldest": None,
+        "newest": None,
+        "dates": [],
+        "retention_days": int(
+            camera.get("retention_days") or 14
+        ),
+    }
+    if not root.exists():
+        return summary
+
+    dates = set()
+    oldest = None
+    newest = None
+    for path in root.glob("*.mp4"):
+        start = segment_start(path, segment_re)
+        if not start:
+            continue
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+
+        summary["count"] += 1
+        summary["total_size"] += stat.st_size
+        dates.add(start.strftime("%Y-%m-%d"))
+        oldest = (
+            start
+            if oldest is None or start < oldest
+            else oldest
+        )
+        newest = (
+            start
+            if newest is None or start > newest
+            else newest
+        )
+
+    summary["oldest"] = (
+        oldest.isoformat() if oldest else None
+    )
+    summary["newest"] = (
+        newest.isoformat() if newest else None
+    )
+    summary["dates"] = sorted(dates)
+    return summary
