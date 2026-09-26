@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+export GTK_THEME=Adwaita
+xsetroot -cursor_name left_ptr
+openbox &
+exec /usr/sbin/gparted

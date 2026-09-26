@@ -1,0 +1,18 @@
+#!/bin/sh
+# apt-setup generator, used only inside the live session's installer.
+set -eu
+. /usr/share/debconf/confmodule
+test -f /cdrom/.disk/base_installable
+test -f /cdrom/live/filesystem.squashfs
+test -d /target/etc/apt/apt.conf.d
+mkdir -p /target/media/cdrom0
+if ! grep -qs ' /target/media/cdrom0 ' /proc/mounts; then
+    mount --bind /cdrom /target/media/cdrom0
+fi
+# Debian's 40cdrom generator already supports mounted hybrid media. It
+# must not eject or remount the device from which this live OS is running.
+db_set cdrom-detect/hybrid true
+cat > /target/etc/apt/apt.conf.d/00NoMountCDROM <<'APT'
+APT::CDROM::NoMount "true";
+Acquire::cdrom::mount "/media/cdrom0";
+APT

@@ -1,6 +1,62 @@
 # PlainNVR OS — native Debian x86-64 prototype handoff
 
-## Current checkpoint — September 26, 2026
+## Current checkpoint — installer revision 2, September 26, 2026
+
+The owner tested revision 1 on an older HP desktop, probably Intel HD graphics.
+The Install entry froze at the GRUB handoff, while the separate GParted live
+entry booted but had an unusable mouse. The owner requested one continuous
+installer flow. The exact HP model and graphics hardware remain unknown.
+
+Revision 2 starts the installer through the live kernel, with text-mode GRUB
+handoff messages and a separate compatibility-graphics (`nomodeset`) option.
+The GTK wizard runs with Openbox and explicit Xorg input packages:
+
+1. Locale, keyboard and timezone.
+2. GParted opens; closing it returns to the same wizard.
+3. One OS drive or two mirrored boot drives.
+4. PlainNVR administrator now, or deferred web setup.
+5. Whole-drive erase review and typed `ERASE`, then visible installation
+   progress and a reboot button.
+
+OS-drive selection replaces all partitions on those drives, including any
+created in GParted. Separate recording drives can be prepared there and
+selected during first-boot storage setup. ZFS remains recording storage;
+mirrored boot uses ext4 on Linux RAID1 with EFI/BIOS boot support.
+
+Guided installs configure wired DHCP and lock Linux password accounts. The
+advanced Debian text installer remains available for a Linux maintenance
+account. LAN first-boot setup uses port 8790. Deferred administrator creation
+requires a one-time code displayed on the appliance monitor; an administrator
+created during installation can sign in directly. Setup then selects storage
+and directories. Successful remote setup also restarts the local kiosk into
+the normal NVR login. The setup service closes after completion.
+
+Integration fixes include keeping APT on the mounted live medium, avoiding
+duplicate network/Linux-account prompts, direct EFI partition probing when
+udev properties are unavailable, ignoring empty removable drives during
+storage discovery, and preserving installer diagnostics. Image includes are
+normalized to root ownership; executable modes are set by the build wrapper.
+
+Artifact: `C:\Users\Zack\Downloads\PlainNVR-OS\plainnvr-os-0.1.4-installer2-amd64.hybrid.iso`.
+SHA-256: `332a41a8bbeeb3a58c8963082be6d8ea04833edb0df4d8d71fbd5b265f827fc5`.
+Final ISO checks passed full UEFI mirror and BIOS USB single-drive installation,
+first-boot admin/setup, remote claim-code pairing, directory selection, automatic
+kiosk transition, and independent UEFI boot from each mirror member. Seventeen
+Python tests pass. Build and disposable verification VMs are shut down.
+See `installer/VALIDATION.md` for the complete validation record. Revision 1's
+record is preserved as `installer/VALIDATION-1.md`. The HP still needs a retest;
+VM checks do not establish physical graphics/input compatibility.
+
+Continue on `feature/plainnvr-os-native-prototype`. Existing unrelated macOS
+file type changes are preserved. The production NVR and registered VirtualBox
+prototype have not been changed. Build and disposable test machines are QEMU
+guests in WSL under `/home/endless/plainnvr-os-vm`; the final verification files
+use `revision2-validation/verified3*`. The build guest uses
+`/home/debian/installer-build-4` and SSH port 2224 inside WSL when running.
+Never copy validation passwords, VM SSH keys, databases or recordings into the
+factory image. The earlier checkpoints below are historical.
+
+## Previous checkpoint — installer revision 1, September 26, 2026
 
 The sections below this checkpoint describe the original ARM-to-x86 handoff
 and are retained as historical context. This checkpoint supersedes their

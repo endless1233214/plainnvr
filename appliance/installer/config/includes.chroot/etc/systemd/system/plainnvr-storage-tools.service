@@ -5,7 +5,7 @@ Conflicts=getty@tty1.service plainnvr-kiosk@tty1.service
 ConditionKernelCommandLine=plainnvr.storage-tools
 
 [Service]
-ExecStart=/usr/bin/xinit /usr/sbin/gparted -- :0 vt1 -nolisten tcp
+ExecStart=/usr/bin/xinit /usr/lib/plainnvr/installer/gparted-session -- :0 vt1 -nolisten tcp
 StandardInput=tty
 TTYPath=/dev/tty1
 TTYReset=yes

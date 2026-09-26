@@ -1,72 +1,83 @@
-# Installer validation — September 26, 2026
+# Installer revision 2 validation — September 26, 2026
 
-Development image: `plainnvr-os-0.1.4-amd64.hybrid.iso`
+## Artifact
 
-SHA-256: `f34575334237dc24ffc41a9ac446026d1f39158c307de19a3493d0db3c5a9855`
+- `plainnvr-os-0.1.4-installer2-amd64.hybrid.iso`
+- Size: 2,032,828,416 bytes.
+- SHA-256: `332a41a8bbeeb3a58c8963082be6d8ea04833edb0df4d8d71fbd5b265f827fc5`
+- Windows copy: `C:\Users\Zack\Downloads\PlainNVR-OS`.
+- Debian package manifest is distributed alongside the ISO.
+- Revision 1's record is preserved in `VALIDATION-1.md`.
 
-Build: Debian 13 amd64, live-build 20250505+deb13u1, kernel
-6.12.107+deb13-amd64, ZFS 2.3.9, native go2rtc 1.9.14 and FFmpeg 9.0.2.
-Preserve the adjacent `.packages` manifest for exact Debian package versions.
+## Reason for revision
 
-## Completed checks
+The owner reported that the original image froze at the GRUB Install choice
+on an older HP PC, likely using Intel HD graphics. Its separate GParted entry
+booted, but the mouse was unusable. Revision 2 uses the live boot path, Openbox,
+explicit Xorg input support, a visible pointer, boot status messages, and a
+`nomodeset` compatibility entry. The HP has not yet been retested; these VM
+results do not establish its physical graphics/input compatibility.
 
-- Nine Python tests: local setup origin/Host boundary, authentication,
-  administrator replacement, completed-setup lockout, directory traversal,
-  symlinks, directory overlap, and explicit ZFS disk selection/confirmation.
-- Shell syntax, Python compilation, and Git whitespace checks.
-- ISO El Torito entries for BIOS and UEFI; Windows delivery checksum matches.
-- Embedded setup Python/HTML and boot-mirror helper match the source files.
-- Clean root contains the two nologin appliance service accounts. No test
-  credentials, pending administrator hash, setup-complete marker, recording
-  database, SSH test key or builder DKMS signing key is included.
-- Final ISO UEFI boot menu and live GParted start successfully on blank disks.
-- Initial image UEFI installation onto one blank 40 GiB disk: separate system
-  and persistent-data partitions, with two extra 3 GiB disks left untouched.
-- First-boot account creation, storage selection, local GParted launch/return,
-  and normal PlainNVR login after setup. Startup fixes found in these tests
-  are included in the final image.
-- New ZFS recording mirror on the two explicitly selected extra drives.
-  Recorded MP4 files contain H.264 video and AAC audio. Recordings and the
-  mounted pool survive reboot, and recording resumes.
-- Exporting the test recording pool makes the NVR mount assertion refuse
-  startup. It writes no recording files into the unmounted directory. Import
-  restores service.
-- Existing-pool import creates a separate new dataset and preserves the
-  original dataset and its 53 recording files.
-- BIOS installation onto two 40 GiB disks: healthy RAID1 system/data arrays.
-  With each disk independently absent, the surviving disk boots into first
-  setup. Setup also completes using default storage on the second disk alone.
-  Tests used isolated overlays, preserving the healthy original mirror.
+## Completed checks on the final ISO
 
-## Final UEFI mirror check
+| Configuration | Result |
+| --- | --- |
+| UEFI, normal graphics, two 48 GB OS disks, admin during installation | Full installation completed; installed system booted; administrator login and storage setup passed. |
+| Legacy BIOS, ISO attached as USB storage, compatibility graphics, one 48 GB OS disk, deferred admin | Full installation completed; installed system booted; remote claim-code pairing, administrator creation and storage setup passed. |
 
-Graphical installation onto two blank 40 GiB drives completed without manual
-installer repairs. First boot showed administrator creation before storage
-selection. Setup completed with custom configuration/recording directories;
-administrator API login returned HTTP 200. Both root/data arrays were healthy,
-both EFI loader copies were present, and the boot-mirror service succeeded.
+Both paths exercised locale selection, automatic GParted launch, mouse input,
+closing GParted back into the wizard, drive selection, the typed erase review,
+and visible installation progress. The mounted installer USB was excluded
+from installation targets. Installation did not repeat network or Linux-user
+questions. First boot obtained a wired DHCP address.
 
-Independent overlays of the installed drives were booted with only drive A,
-then only drive B available. Each test started with fresh firmware variables,
-using the disk's fallback EFI loader. Both reached the normal kiosk login,
-started PlainNVR, and accepted the administrator login over the forwarded LAN
-port (HTTP 200). Both arrays operated degraded with the intended surviving
-member, the surviving EFI partition mounted, and custom directories persisted.
-The VM's NIC/controller topology was kept consistent with the installed VM so
-the interface name stayed unchanged when removing a disk.
+Both installed systems completed storage setup using custom `config-verified`
+and `recordings-verified` directories on the installed data filesystem. OS
+disks were excluded from available blank recording disks. Remote GParted
+launch was rejected. The local monitor automatically changed to the normal
+NVR login after remote setup. NVR health and administrator login passed;
+the temporary setup listener closed afterward while the NVR stayed healthy.
 
-The installed payload was tested from image SHA-256
-`7e73c1d7eb8f254ee97c4640f924159cad682f3426e1cd05d8bde4523ed3a784`.
-The delivered image above contains the same filesystem and installer payload.
-Its final binary-stage rebuild adds the missing legacy-BIOS GParted menu entry
-and refreshes ISO checksums; the live-build hook now uses its actual working
-directory. The delivered BIOS menu and GParted boot were checked separately.
+During reboot validation, the test harness initially removed the live medium
+before shutdown began. Restoring it and rebooting through the console recovered
+both test systems. Media was removed at the bootloader before installed-system
+checks; the BIOS VM was reset there to select its installed disk.
 
-## Still required before a production release
+## Mirrored-drive failover
 
-Physical-PC graphics and sustained camera/decoding load; WebRTC ICE over both
-TCP and UDP; retention behavior; Docker regression; Secure Boot enrollment and
-update validation; drive-replacement recovery; and a supported production
-update/rollback mechanism. RAIDZ1/RAIDZ2 options are present but have not received
-the same VM integration pass as ZFS mirror creation/import. These VM results
-do not establish physical-hardware compatibility.
+After a clean shutdown, each installed mirror member was booted alone using
+fresh UEFI variables and a separate disposable overlay. Both reached the
+normal NVR login, passed the health check, and accepted the administrator
+created during installation. No firmware boot entry from installation was
+required. Degraded-array startup took longer than the normal two-drive boot.
+BIOS mirror failover has not been exercised in this revision.
+
+## Automated and image checks
+
+- Seventeen Python tests pass: setup origin/Host and authentication boundaries,
+  remote claim-code enforcement, changed/mounted/USB disk rejection, distinct
+  mirror members, locale injection, offline locked-account configuration,
+  storage path and ZFS-selection safety, and empty removable-drive discovery.
+- Shell syntax and Python compilation checks pass.
+- Embedded installer/setup sources match the build source. The Windows ISO
+  SHA-256 matches the Linux build output.
+- Factory image checks exclude validation accounts, administrator settings,
+  claim codes, SSH keys, machine identity and private DKMS signing keys.
+  Privileged image files have root ownership and executable entry points.
+
+## Integration fixes found during testing
+
+APT now uses the mounted live medium without unmounting it. The guided path
+configures wired DHCP in the installed target and locks Linux password
+accounts. EFI discovery probes partition metadata directly when the live
+installer lacks udev properties. Empty removable devices no longer break
+storage discovery. Installer diagnostics retain the installation log.
+
+## Remaining validation
+
+Physical-PC graphics/input and sustained camera load; WebRTC ICE/TCP/UDP;
+retention; Docker regression; Secure Boot enrollment and updates; drive
+replacement; and a supported production update/rollback process remain
+release work. ZFS mirror creation/import/recording passed in revision 1;
+those integration checks were not repeated in revision 2. RAIDZ1/RAIDZ2 have
+not had that integration pass. This remains a development image.

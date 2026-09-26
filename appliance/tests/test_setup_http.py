@@ -76,6 +76,22 @@ class LocalSetupBoundary(unittest.TestCase):
             self.assertEqual(self.post('/api/finish', {})[0], 409)
             finish.assert_not_called()
 
+    def test_remote_admin_creation_requires_pairing_code(self):
+        module.FAILURES.clear()
+        with patch.object(module.Handler, 'local', return_value=False), patch.object(module, 'REMOTE', True), patch.object(module, 'PAIR_CODE', 'ABC1234567'):
+            payload = {'username': 'owner', 'password': 'a-long-test-password'}
+            self.assertEqual(self.post('/api/admin', payload)[0], 403)
+            self.assertEqual(self.post('/api/pair', {'code': 'wrong'})[0], 403)
+            status, headers, _ = self.post('/api/pair', {'code': 'ABC1234567'})
+            self.assertEqual(status, 200)
+            cookie = headers['Set-Cookie'].split(';', 1)[0]
+            self.assertEqual(self.post('/api/admin', payload, Cookie=cookie)[0], 200)
+            self.assertEqual(self.post('/api/admin', payload, Cookie=cookie)[0], 400)
+
+    def test_remote_host_cannot_be_arbitrary(self):
+        with patch.object(module.Handler, 'local', return_value=False), patch.object(module, 'REMOTE', True):
+            self.assertEqual(self.post('/api/pair', {'code': ''}, Host='attacker.example')[0], 403)
+
 
 if __name__ == '__main__':
     unittest.main()

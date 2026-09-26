@@ -5,3 +5,10 @@ if [ -f /plainnvr-mirror-selected ]; then
     cp /plainnvr-mirror-selected /target/etc/plainnvr/mirror-selected
 fi
 in-target /usr/lib/plainnvr/finish-install
+if [ -f /plainnvr-install-settings.json ]; then
+    mkdir -p /target/etc/plainnvr
+    cp /plainnvr-install-settings.json /target/etc/plainnvr/install-settings.json
+    chmod 0600 /target/etc/plainnvr/install-settings.json
+    in-target /usr/bin/python3 /usr/lib/plainnvr/installer/provision.py
+fi
+touch /plainnvr-install-success

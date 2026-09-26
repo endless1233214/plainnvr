@@ -25,8 +25,8 @@ class Console:
                 return result['return']
 
     def key(self, key):
-        self.command('human-monitor-command', {'command-line': 'sendkey ' + key + ' 30'})
-        time.sleep(.05)
+        self.command('human-monitor-command', {'command-line': 'sendkey ' + key + ' 80'})
+        time.sleep(.2)
 
     def text(self, text):
         special = {' ': 'spc', '/': 'slash', '.': 'dot', '-': 'minus', '_': 'shift-minus',

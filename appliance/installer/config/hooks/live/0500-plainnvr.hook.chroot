@@ -14,6 +14,9 @@ version=$(cat "$1/VERSION")
 ln -s "releases/$version" /opt/plainnvr/current
 chown -R root:root /opt/plainnvr/releases
 chmod -R go-w /opt/plainnvr/releases
+# Includes copied from a developer checkout must never keep that user's UID.
+chown root:root / /etc /usr /usr/lib
+chown -R root:root /usr/lib/plainnvr /etc/plainnvr /etc/systemd /etc/apt
 systemctl enable plainnvr.service plainnvr-kiosk@tty1.service
 systemctl enable plainnvr-setup.service
 systemctl disable zfs-import-scan.service

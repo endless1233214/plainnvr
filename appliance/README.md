@@ -5,6 +5,11 @@ This directory contains the Debian 13 amd64 appliance prototype and its
 under systemd, with native go2rtc and FFmpeg binaries. Docker is not installed
 or used on the appliance.
 
+The installer opens a live wizard for locale settings, GParted, one or two
+mirrored OS drives, and administrator creation or deferred web setup. After
+installation, first boot completes recording storage and directory selection.
+See the installer guide for the graphics compatibility option and setup URL.
+
 ## Layout
 
 - `debian/build-runtime.sh` builds the pinned media binaries and stages the

@@ -6,6 +6,8 @@ if [ -d isolinux ]; then
     initrd=$(awk '$1 == "initrd" {print $2; exit}' isolinux/live.cfg)
     test -n "$kernel"
     test -n "$initrd"
+    # Live-kernel names are determined by live-build, including on BIOS media.
+    sed -i "s|@PLAINNVR_KERNEL@|$kernel|g; s|@PLAINNVR_INITRD@|$initrd|g" isolinux/menu.cfg
     printf '\nlabel plainnvr-gparted\n    menu label ^GParted storage tools (live USB)\n    linux %s\n    initrd %s\n    append boot=live components plainnvr.storage-tools systemd.unit=multi-user.target systemd.wants=plainnvr-storage-tools.service\n' \
         "$kernel" "$initrd" >> isolinux/menu.cfg
 fi

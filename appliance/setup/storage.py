@@ -86,8 +86,12 @@ def inventory():
         mounted = any(node.get('mountpoints') or [])
         if node['type'] == 'disk' and not node.get('children') and not mounted and not node.get('fstype'):
             stable = by_id(device)
+            # Empty removable drives (including legacy floppy controllers)
+            # may exist as block devices but cannot be probed with wipefs.
+            if not stable or int(node.get('size') or 0) <= 0:
+                continue
             signatures = json.loads(run('wipefs', '--json', '--no-act', device)).get('signatures', [])
-            if stable and not signatures:
+            if not signatures:
                 disks.append({'id': stable, 'device': device, 'model': node.get('model'),
                               'serial': node.get('serial'), 'bytes': node['size']})
         if node['type'] == 'part' and node.get('fstype') in ('ext4', 'xfs') and node.get('uuid') and not mounted:

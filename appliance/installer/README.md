@@ -7,23 +7,36 @@ physical-PC graphics and sustained recording tests are still required.
 ## Installation flow
 
 1. Write the ISO to a USB drive using an image-writing tool. Boot that USB in
-   UEFI or legacy BIOS mode. No disks are changed merely by booting the image.
-2. Choose the normal installer or **two mirrored boot drives**. The mirror uses
-   Linux software RAID1 for the system and default data filesystem. It is boot
-   redundancy, not a second operating system.
-3. Select language, keyboard, timezone and a local maintenance user/password.
-   This Linux account is separate from the PlainNVR administrator.
-4. Choose the intended drive(s), review the partition layout and explicitly
-   confirm the destructive changes. Use drives of at least 36 GB each; 64 GB or
-   more leaves more room for updates. The supplied layout reserves 24 GB for
-   the OS and puts `/var/lib/plainnvr` on a separate filesystem.
-   The prototype mirror recipe has no swap partition. With sufficient RAM
-   (8 GB recommended), choose **No** when asked to return to partitioning to
-   add swap, or use manual partitioning if swap is required.
-5. Remove the USB and reboot. The attached monitor opens the first-boot wizard:
-   create the PlainNVR administrator, then choose storage and directories.
-6. After setup, sign in normally. PlainNVR is available from the LAN on port
+   UEFI or legacy BIOS mode and choose **Install PlainNVR OS**. No disks are
+   changed merely by booting. For troublesome graphics, try **compatibility
+   graphics**, which uses `nomodeset` and a text-mode kernel handoff.
+2. Choose locale, keyboard and timezone. GParted opens in this live session.
+   Close its window to return to the wizard; no reboot is needed. Use it to
+   inspect disks or prepare separate recording drives. Changes you Apply in
+   GParted take effect immediately, even if you later cancel installation.
+3. Select one OS drive or **two mirrored boot drives**. The OS installation
+   replaces all partitions on those whole drives. GParted-created partitions
+   on the selected OS drives are also replaced. The mirror uses Linux RAID1
+   for system and default data; ZFS recording pools are configured afterward.
+4. Create the PlainNVR administrator, or choose **Set up later in the web UI**.
+5. Review the exact drives and type **ERASE**, then click **Install PlainNVR
+   OS**. Debian Installer runs inside the same desktop and displays progress.
+   Use drives of at least 36 GB each; 64 GB or more leaves more update space.
+   The layout reserves 24 GB for the OS and a separate `/var/lib/plainnvr`.
+   Mirrored installs have no swap partition; 8 GB RAM is recommended.
+6. Reboot and remove the USB. The monitor shows the storage/directory setup
+   wizard and its LAN address on port 8790. If you deferred account creation,
+   enter the one-time code shown on that monitor when connecting remotely.
+   If you created an administrator during installation, sign in with it to
+   finish setup. Remote GParted launch is disabled; it uses the local monitor.
+7. After setup, sign in normally. PlainNVR is available from the LAN on port
    8787. The kiosk requires login again after each reboot.
+
+The **Diagnostics** button shows input-device, graphics and installer logs,
+also saved to `/run/plainnvr-installer-diagnostics.txt` for that live session.
+The advanced Debian text installer remains available for manual installations
+and maintenance-account creation. The guided live wizard creates the PlainNVR
+application administrator only; Linux root and password login remain locked.
 
 The installer image carries its OS and application packages; installation does
 not require downloading PlainNVR. Network configuration can use Ethernet DHCP.
@@ -31,9 +44,11 @@ Firmware is included for common graphics and network devices.
 
 ## First-boot storage
 
-The local setup service listens only on `127.0.0.1:8790` and is disabled after
-successful setup. It authenticates storage operations with the newly created
-admin account. The normal NVR service remains gated until configuration is
+The setup service on port 8790 closes after successful setup. Guided live
+installations enable LAN setup; creating a new administrator remotely requires
+the one-time code displayed locally. An existing administrator can sign in
+directly. Storage operations require administrator authentication. The normal
+NVR service remains gated until configuration is
 complete. The wizard offers:
 
 - The installed data filesystem, with separate configuration and recording
@@ -51,7 +66,7 @@ ZFS is supported for recording pools; the boot filesystem uses ext4/RAID1.
 The recording mount is asserted by systemd so a missing disk or unimported pool
 cannot redirect recordings onto the OS filesystem.
 
-GParted is available from the USB boot menu and from local first-boot setup.
+GParted is integrated into the live installation wizard and local first-boot setup.
 Closing it returns to the wizard; refresh the device list afterward. Its own
 Apply operation can erase data. It does not create ZFS pools; use the wizard
 for those. Completed storage operations are saved so interrupted setup can

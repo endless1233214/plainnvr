@@ -1,6 +1,11 @@
 #!/bin/sh
 set -eu
-case " $(cat /proc/cmdline) " in *' plainnvr.mirror=1 '*) ;; *) exit 0 ;; esac
+if [ -f /plainnvr-live-preflight ]; then
+    /bin/sh /plainnvr-live-preflight
+fi
+if [ ! -f /plainnvr-live-disks ]; then
+    case " $(cat /proc/cmdline) " in *' plainnvr.mirror=1 '*) ;; *) exit 0 ;; esac
+fi
 . /usr/share/debconf/confmodule
 db_x_loadtemplatefile /plainnvr-mirror.templates plainnvr
 choices=''
@@ -25,6 +30,14 @@ for disk in $(list-devices disk); do
     choices="${choices:+$choices, }$label"
     eligible="$eligible $disk"
 done
+if [ -f /plainnvr-live-disks ]; then
+    set -- $(cat /plainnvr-live-disks)
+    test "$#" -eq 2
+    test "$1" != "$2"
+    for disk in "$@"; do
+        case " $eligible " in *" $disk "*) ;; *) exit 1 ;; esac
+    done
+else
 db_subst plainnvr/mirror-disks DISKS "$choices"
 while :; do
     db_fset plainnvr/mirror-disks seen false
@@ -42,6 +55,7 @@ while :; do
     db_input critical plainnvr/mirror-invalid || true
     db_go || exit 1
 done
+fi
 first=$1
 second=$2
 part() {

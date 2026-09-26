@@ -1,0 +1,46 @@
+#!/bin/sh
+set -eu
+test -f /run/plainnvr-install/confirmed
+test -f /run/live/medium/live/filesystem.squashfs
+export DI_FRONTEND=gtk
+export DEBIAN_FRONTEND=noninteractive
+export TEXT=false
+export EXPERT=false
+# Use Debian's supported live installer, sharing this session's X server.
+. /usr/share/debian-installer-launcher/plugins/live
+cleanup() {
+    status=$?
+    trap - EXIT
+    if [ -f /run/live/installer/var/log/syslog ]; then
+        cp /run/live/installer/var/log/syslog /run/plainnvr-install/debian-installer.log || true
+    fi
+    live_cleanup || true
+    exit "$status"
+}
+trap cleanup EXIT
+live_prepare
+# The live host's /dev contains systemd's /dev/log symlink. Give the
+# installer's private /run its socket directory before starting syslogd.
+mv /run/live/installer/sbin/debian-installer-startup /run/live/installer/sbin/debian-installer-startup.real
+cat > /run/live/installer/sbin/debian-installer-startup <<'STARTUP'
+#!/bin/sh
+set -e
+mkdir -p /run/systemd/journal
+exec /sbin/debian-installer-startup.real "$@"
+STARTUP
+chmod 0755 /run/live/installer/sbin/debian-installer-startup
+# The live medium must stay mounted while its squashfs is in use. Prepare
+# APT's existing non-removable-media path immediately before its CD scanner.
+mkdir -p /run/live/installer/usr/lib/apt-setup/generators
+cp /usr/lib/plainnvr/installer/prepare-media /run/live/installer/usr/lib/apt-setup/generators/39plainnvr-live-media
+chmod 0755 /run/live/installer/usr/lib/apt-setup/generators/39plainnvr-live-media
+cp /run/plainnvr-install/preseed.cfg /run/live/installer/preseed.cfg
+cp /run/plainnvr-install/settings.json /run/live/installer/plainnvr-install-settings.json
+cp /run/plainnvr-install/preflight /run/live/installer/plainnvr-live-preflight
+if [ -f /run/plainnvr-install/mirror-disks ]; then
+    cp /run/plainnvr-install/mirror-disks /run/live/installer/plainnvr-live-disks
+fi
+live_run
+if [ -f /run/live/installer/plainnvr-install-success ]; then
+    touch /run/plainnvr-install/success
+fi

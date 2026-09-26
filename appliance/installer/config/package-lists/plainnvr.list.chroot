@@ -2,6 +2,7 @@ linux-image-amd64
 live-boot
 systemd-sysv
 systemd-timesyncd
+systemd-resolved
 python3
 ca-certificates
 libssl3t64
@@ -39,3 +40,12 @@ xterm
 pkexec
 adwaita-icon-theme
 fonts-dejavu-core
+python3-gi
+gir1.2-gtk-3.0
+openbox
+xserver-xorg-input-libinput
+xserver-xorg-input-evdev
+x11-xserver-utils
+xinput
+usbutils
+debian-installer-launcher

@@ -1,6 +1,7 @@
 #!/usr/bin/python3
-"""Appliance-only setup, bound to loopback and disabled after provisioning."""
+"""Appliance setup with optional LAN pairing, disabled after provisioning."""
 import http.cookies
+import ipaddress
 import json
 import os
 import pwd
@@ -25,6 +26,9 @@ TOKEN = secrets.token_hex(32)
 SESSION = secrets.token_hex(32)
 HOSTS = ('127.0.0.1:8790', 'localhost:8790')
 FAILURES = []
+REMOTE = Path('/etc/plainnvr/setup-remote').exists()
+PAIR_CODE = ''
+PAIR_SESSION = secrets.token_hex(32)
 
 
 def finish(selection):
@@ -108,6 +112,7 @@ def finish(selection):
                 with urlopen('http://127.0.0.1:8787/api/health', timeout=2) as response:
                     if json.load(response).get('ok'):
                         ADMIN.unlink()
+                        Path('/etc/plainnvr/setup-pairing-code').unlink(missing_ok=True)
                         return
             except (OSError, ValueError):
                 pass
@@ -124,16 +129,25 @@ class Handler(BaseHTTPRequestHandler):
         # Request bodies and credentials must never be logged.
         return
 
-    def authenticated(self):
+    def local(self):
+        return ipaddress.ip_address(self.client_address[0]).is_loopback
+
+    def allowed_host(self):
+        host = self.headers.get('Host', '')
+        if self.local() and host in HOSTS:
+            return True
+        return REMOTE and host == f'{self.connection.getsockname()[0]}:{self.server.server_port}'
+
+    def authenticated(self, pairing=False):
         cookies = http.cookies.SimpleCookie()
         try:
             cookies.load(self.headers.get('Cookie', ''))
         except http.cookies.CookieError:
             return False
-        cookie = cookies.get('plainnvr_setup')
-        return bool(cookie and secrets.compare_digest(cookie.value, SESSION))
+        cookie = cookies.get('plainnvr_pair' if pairing else 'plainnvr_setup')
+        return bool(cookie and secrets.compare_digest(cookie.value, PAIR_SESSION if pairing else SESSION))
 
-    def send(self, value, status=200, cookie=False, html=False):
+    def send(self, value, status=200, cookie=False, html=False, paired=False):
         body = value.encode() if html else json.dumps(value).encode()
         self.send_response(status)
         self.send_header('Content-Type', 'text/html; charset=utf-8' if html else 'application/json')
@@ -144,18 +158,25 @@ class Handler(BaseHTTPRequestHandler):
                          f"default-src 'self'; script-src 'nonce-{TOKEN}'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'")
         if cookie:
             self.send_header('Set-Cookie', f'plainnvr_setup={SESSION}; HttpOnly; SameSite=Strict; Path=/')
+        if paired:
+            self.send_header('Set-Cookie', f'plainnvr_pair={PAIR_SESSION}; HttpOnly; SameSite=Strict; Path=/')
         self.end_headers()
         self.wfile.write(body)
 
     def do_GET(self):
-        if self.headers.get('Host') not in HOSTS:
+        if not self.allowed_host():
             return self.send({'error': 'Local setup only.'}, 403)
         if self.path == '/':
             page = Path(__file__).with_name('index.html').read_text().replace('__TOKEN__', TOKEN)
             return self.send(page, html=True)
         if self.path == '/api/state':
-            return self.send({'account_exists': ADMIN.exists(), 'authenticated': self.authenticated(),
-                              'complete': COMPLETE.exists()})
+            state = {'account_exists': ADMIN.exists(), 'authenticated': self.authenticated(),
+                     'complete': COMPLETE.exists(), 'local': self.local(),
+                     'pairing_required': not self.local() and not self.authenticated(pairing=True) and not ADMIN.exists()}
+            if self.local() and REMOTE and not COMPLETE.exists():
+                state['setup_code'] = PAIR_CODE
+                state['setup_urls'] = [f'http://{ip}:8790/' for ip in subprocess.check_output(['hostname', '-I'], text=True).split() if ':' not in ip and not ip.startswith('127.')]
+            return self.send(state)
         if self.path == '/api/storage' and self.authenticated() and not COMPLETE.exists():
             try:
                 result = storage.inventory()
@@ -172,8 +193,8 @@ class Handler(BaseHTTPRequestHandler):
         return self.send({'error': 'Not found.'}, 404)
 
     def do_POST(self):
-        if (self.headers.get('Host') not in HOSTS or
-            self.headers.get('Origin') not in tuple('http://' + host for host in HOSTS) or
+        if (not self.allowed_host() or
+            self.headers.get('Origin') != 'http://' + self.headers.get('Host', '') or
             not secrets.compare_digest(self.headers.get('X-Setup-Token', ''), TOKEN)):
             return self.send({'error': 'Reload the local setup page.'}, 403)
         if COMPLETE.exists():
@@ -185,7 +206,18 @@ class Handler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(length))
             if not isinstance(payload, dict):
                 raise ValueError('Invalid request.')
+            if self.path == '/api/pair':
+                recent = time.monotonic() - 60
+                FAILURES[:] = [t for t in FAILURES if t > recent]
+                if len(FAILURES) >= 5:
+                    return self.send({'error': 'Wait one minute before trying again.'}, 429)
+                if not REMOTE or not PAIR_CODE or not secrets.compare_digest(str(payload.get('code', '')).strip(), PAIR_CODE):
+                    FAILURES.append(time.monotonic())
+                    return self.send({'error': 'Incorrect setup code. Read it from the appliance monitor.'}, 403)
+                return self.send({'ok': True}, paired=True)
             if self.path == '/api/admin':
+                if not self.local() and not self.authenticated(pairing=True):
+                    return self.send({'error': 'Enter the setup code from the appliance monitor first.'}, 403)
                 if ADMIN.exists():
                     raise ValueError('An administrator already exists. Sign in to continue.')
                 username = validate_username(payload.get('username'))
@@ -205,6 +237,8 @@ class Handler(BaseHTTPRequestHandler):
             if not self.authenticated():
                 return self.send({'error': 'Sign in to continue.'}, 403)
             if self.path == '/api/gparted':
+                if not self.local():
+                    raise ValueError('GParted must be opened from the appliance monitor.')
                 if (STATE / 'installation.json').exists():
                     raise ValueError('Storage setup has started. Finish or recover it before opening GParted.')
                 storage.run('systemctl', 'start', '--no-block', 'plainnvr-gparted.service')
@@ -212,6 +246,11 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == '/api/finish':
                 finish(payload)
                 self.send({'ok': True, 'url': 'http://127.0.0.1:8787/'})
+                # A setup completed remotely must also move the local monitor
+                # from its old setup page to the normal NVR login screen.
+                threading.Timer(2, lambda: subprocess.run(
+                    ['systemctl', 'try-restart', '--no-block', 'plainnvr-kiosk@tty1.service'],
+                    capture_output=True, timeout=15)).start()
                 threading.Timer(10, self.server.shutdown).start()
                 return
             return self.send({'error': 'Not found.'}, 404)
@@ -223,4 +262,9 @@ if __name__ == '__main__':
     os.umask(0o077)
     STATE.mkdir(mode=0o700, parents=True, exist_ok=True)
     if not COMPLETE.exists():
-        HTTPServer(('127.0.0.1', 8790), Handler).serve_forever()
+        if REMOTE:
+            code_file = Path('/etc/plainnvr/setup-pairing-code')
+            if not code_file.exists():
+                code_file.write_text(secrets.token_hex(5).upper())
+            PAIR_CODE = code_file.read_text().strip()
+        HTTPServer(('0.0.0.0' if REMOTE else '127.0.0.1', 8790), Handler).serve_forever()

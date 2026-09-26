@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+# A window manager provides focus, move/resize and close controls for GParted
+# and Debian Installer. Input devices are discovered through Xorg/udev.
+export GTK_THEME=Adwaita
+export GDK_BACKEND=x11
+xset s off
+xset -dpms || true
+xsetroot -cursor_name left_ptr
+openbox &
+exec /usr/bin/python3 /usr/lib/plainnvr/installer/wizard.py

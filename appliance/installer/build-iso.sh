@@ -19,6 +19,8 @@ if [ -e "$2" ]; then
     exit 1
 fi
 version=$(cat "$runtime/VERSION")
+revision=$(cat "$repo_dir/appliance/installer/REVISION")
+case "$revision" in *[!0-9]*|'') exit 1 ;; esac
 case "$version" in *[!0-9A-Za-z.+~-]*|'') exit 1 ;; esac
 test "$version" = "$(cat "$repo_dir/VERSION")"
 for file in bin/go2rtc ffmpeg/bin/ffmpeg ffmpeg/bin/ffprobe kiosk/start.sh; do
@@ -36,10 +38,12 @@ lb config --mode debian --distribution trixie --architectures amd64 \
     --apt-recommends false --security true --updates true --backports false \
     --firmware-binary true --firmware-chroot true \
     --iso-application 'PlainNVR OS Installer' --iso-volume PLAINNVR_INSTALL \
-    --image-name "plainnvr-os-$version" \
+    --image-name "plainnvr-os-$version-installer$revision" \
     --bootappend-install 'hostname=plainnvr'
 
 cp -R "$repo_dir/appliance/installer/config/." config/
+cp "$repo_dir/appliance/installer/config/includes.installer/preseed.cfg" \
+    config/includes.chroot/usr/lib/plainnvr/installer/preseed.cfg
 release="config/includes.chroot/opt/plainnvr/releases/$version"
 mkdir -p "$release" config/includes.chroot/etc/systemd/system config/includes.chroot/etc/pam.d
 cp -a "$runtime/." "$release/"
@@ -60,6 +64,7 @@ chmod +x config/includes.installer/plainnvr-partman config/includes.installer/pl
 chmod +x config/includes.chroot/usr/lib/plainnvr/boot-mirror config/includes.chroot/etc/kernel/postinst.d/zz-plainnvr-boot-mirror
 chmod +x config/hooks/live/*.hook.chroot config/includes.chroot/usr/lib/plainnvr/finish-install
 chmod +x config/hooks/live/*.hook.binary
+chmod +x config/includes.chroot/usr/lib/plainnvr/installer/session config/includes.chroot/usr/lib/plainnvr/installer/launch config/includes.chroot/usr/lib/plainnvr/installer/gparted-session config/includes.chroot/usr/lib/plainnvr/installer/prepare-media
 lb build
 test -s binary/live/filesystem.squashfs
 for file in server.py storage.py seed-admin.py index.html; do

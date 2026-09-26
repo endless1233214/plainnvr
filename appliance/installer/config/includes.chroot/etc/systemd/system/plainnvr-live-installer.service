@@ -1,0 +1,15 @@
+[Unit]
+Description=PlainNVR live installation wizard
+After=systemd-udev-settle.service systemd-user-sessions.service
+Wants=systemd-udev-settle.service
+Conflicts=getty@tty1.service plainnvr-kiosk@tty1.service plainnvr-storage-tools.service
+ConditionKernelCommandLine=plainnvr.installer
+
+[Service]
+ExecStart=/usr/bin/xinit /usr/lib/plainnvr/installer/session -- :0 vt1 -nolisten tcp
+StandardInput=tty
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+Restart=on-failure
+RestartSec=3

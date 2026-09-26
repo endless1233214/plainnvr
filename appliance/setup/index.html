@@ -5,7 +5,7 @@
 :root{font:16px system-ui,sans-serif;color:#17231f;background:#f2f6f5}*{box-sizing:border-box}body{margin:0;padding:32px}main{max-width:800px;margin:0 auto;background:white;border:1px solid #d5e2de;border-radius:18px;padding:32px}h1{margin:8px 0}p{line-height:1.5;color:#52675f}.brand{color:#198d81;font-weight:750;letter-spacing:.08em}label{display:block;font-weight:600;margin:20px 0 6px}input,select,button{font:inherit;border-radius:8px;padding:12px;border:1px solid #bdcfc8;width:100%}button{background:#168b7f;color:white;border:0;cursor:pointer;margin:20px 0 0}button.secondary{background:#e8f1ee;color:#214e43}button:disabled{opacity:.5;cursor:wait}.row{display:grid;grid-template-columns:1fr 1fr;gap:20px}.hint{font-size:14px}.error{color:#a42c2c;white-space:pre-wrap}#disks label{font-weight:400;font-size:14px;background:#f2f6f5;padding:10px;border-radius:8px}input[type=checkbox]{width:auto;margin-right:12px}.hidden,[hidden]{display:none!important}footer{font-size:13px;margin-top:24px;color:#52675f}code{overflow-wrap:anywhere}@media(max-width:600px){body{padding:12px}main{padding:20px}.row{grid-template-columns:1fr}}
 </style></head><body><main>
 <div class="brand">PLAINNVR OS</div><p id="step">Step 1 of 2 · Administrator</p>
-<section id="account"><h1 id="account-title">Create your administrator</h1><p id="account-copy">This account manages cameras, recordings and settings. Keep its password somewhere safe.</p>
+<section id="remote-info" hidden><p id="remote-copy"></p></section><section id="pair" hidden><h1>Connect to this appliance</h1><p>Enter the one-time setup code shown on the PlainNVR monitor.</p><form id="pair-form"><label for="pair-code">Setup code</label><input id="pair-code" required autocomplete="off"><button>Continue setup</button></form></section><section id="account"><h1 id="account-title">Create your administrator</h1><p id="account-copy">This account manages cameras, recordings and settings. Keep its password somewhere safe.</p>
 <form id="account-form"><label for="username">Username</label><input id="username" autocomplete="username" required minlength="3" maxlength="40" value="admin">
 <label for="password">Password</label><input id="password" type="password" autocomplete="new-password" required minlength="12" maxlength="1024">
 <div id="confirm-row"><label for="confirm">Confirm password</label><input id="confirm" type="password" autocomplete="new-password"></div>
@@ -19,7 +19,7 @@
 <button id="finish">Finish setup</button></form>
 <div class="row"><button class="secondary" id="gparted">Open GParted</button><button class="secondary" id="refresh">Refresh storage</button></div><p class="hint">GParted opens on this monitor. Closing it returns to setup. Changes applied in GParted can erase data.</p></section>
 <p id="message" role="status" aria-live="polite"></p><p id="error" class="error" role="alert"></p>
-<footer>First-time setup is available on this monitor. LAN access starts when setup finishes.</footer>
+<footer>Complete setup on this monitor or at the setup address shown here. The setup service closes when configuration finishes.</footer>
 </main><script nonce="__TOKEN__">
 const $=id=>document.getElementById(id);let state={},inventory={};
 async function api(path,body){const options=body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json','X-Setup-Token':'__TOKEN__'},body:JSON.stringify(body)};const response=await fetch('/api/'+path,options);const result=await response.json();if(!response.ok)throw Error(result.error||'Request failed');return result;}
@@ -56,7 +56,8 @@ async function refresh(){
  }
  fields();
 }
-async function load(){state=await api('state');if(state.complete){location.href='http://127.0.0.1:8787/';return;}if(state.authenticated){$('account').hidden=true;$('storage').hidden=false;$('step').textContent='Step 2 of 2 · Storage';await refresh();}else if(state.account_exists){$('account-title').textContent='Continue setup';$('account-copy').textContent='Sign in with the administrator you created to continue storage setup.';$('account-next').textContent='Sign in and continue';$('confirm-row').hidden=true;$('password').autocomplete='current-password';}}
+async function load(){state=await api('state');$('pair').hidden=!state.pairing_required;$('account').hidden=state.pairing_required;$('gparted').hidden=!state.local;if(state.setup_urls?.length){$('remote-info').hidden=false;$('remote-copy').textContent='Set up from another computer: '+state.setup_urls.join(' or ')+' · One-time setup code: '+state.setup_code;}if(state.pairing_required)return;if(state.complete){location.href='http://'+location.hostname+':8787/';return;}if(state.authenticated){$('account').hidden=true;$('storage').hidden=false;$('step').textContent='Step 2 of 2 · Storage';await refresh();}else if(state.account_exists){$('account-title').textContent='Continue setup';$('account-copy').textContent='Sign in with the administrator you created to continue storage setup.';$('account-next').textContent='Sign in and continue';$('confirm-row').hidden=true;$('password').autocomplete='current-password';}}
+$('pair-form').addEventListener('submit',async e=>{e.preventDefault();try{await api('pair',{code:$('pair-code').value});$('pair-code').value='';await load();}catch(error){showError(error);}});
 $('account-form').addEventListener('submit',async e=>{e.preventDefault();$('error').textContent='';$('account-next').disabled=true;try{if(!state.account_exists&&$('password').value!==$('confirm').value)throw Error('Passwords do not match.');await api(state.account_exists?'login':'admin',{username:$('username').value,password:$('password').value});$('password').value='';$('confirm').value='';await load();}catch(error){showError(error);}finally{$('account-next').disabled=false;}});
 $('mode').onchange=fields;$('pool').oninput=fields;$('import-pool').onchange=fields;
 $('refresh').onclick=()=>refresh().catch(showError);
@@ -68,7 +69,7 @@ $('storage-form').addEventListener('submit',async e=>{
  try{
   const selection=inventory.resume_selection?{...inventory.resume_selection,dataset:$('dataset').value,data_directory:$('data-directory').value,recording_directory:$('recording-directory').value}:{mode:$('mode').value,uuid:$('filesystem').value,pool:$('pool').value,layout:$('layout').value,disks:[...document.querySelectorAll('#disks input:checked')].map(d=>d.value),pool_id:$('import-pool').value,dataset:$('dataset').value,confirmation:$('confirmation').value,data_directory:$('data-directory').value,recording_directory:$('recording-directory').value};
   const result=await api('finish',selection);
-  $('message').textContent='Setup complete. Opening PlainNVR…';location.href=result.url;
+  $('message').textContent='Setup complete. Opening PlainNVR…';location.href='http://'+location.hostname+':8787/';
  }catch(error){showError(error);buttons.forEach(b=>b.disabled=false);await refresh().catch(showError);}
 });
 load().catch(showError);

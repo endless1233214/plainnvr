@@ -1,6 +1,7 @@
 import importlib.util
 import tempfile
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -11,6 +12,16 @@ spec.loader.exec_module(storage)
 
 
 class StorageSafety(unittest.TestCase):
+    def test_empty_removable_drive_does_not_break_inventory(self):
+        empty = {'name': '/dev/fd0', 'type': 'disk', 'size': 0}
+        with patch.object(storage, 'system_devices', return_value=set()), \
+             patch.object(storage, 'device_tree', return_value=[empty]), \
+             patch.object(storage, 'by_id', return_value='/dev/disk/by-id/empty'), \
+             patch.object(storage, 'run') as probe, \
+             patch.object(storage.subprocess, 'run', return_value=SimpleNamespace(returncode=0, stdout='')):
+            self.assertEqual(storage.inventory()['disks'], [])
+            probe.assert_not_called()
+
     def selection(self, **changes):
         result = {'mode': 'default', 'data_directory': 'config', 'recording_directory': 'recordings'}
         result.update(changes)

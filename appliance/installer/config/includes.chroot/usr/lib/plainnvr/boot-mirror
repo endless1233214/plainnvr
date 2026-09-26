@@ -30,11 +30,19 @@ def initialize():
     esps = []
     efi = Path('/sys/firmware/efi').exists()
     for disk in selected if efi else []:
-        tree = json.loads(run('lsblk', '-Jpo', 'NAME,UUID,PARTTYPE', disk))['blockdevices'][0]
-        choices = [n for n in tree.get('children', []) if n.get('parttype') == 'c12a7328-f81f-11d2-ba4b-00a0c93ec93b']
-        if len(choices) != 1 or not choices[0].get('uuid'):
+        tree = json.loads(run('lsblk', '-Jpo', 'NAME,TYPE', disk))['blockdevices'][0]
+        choices = []
+        for node in tree.get('children', []):
+            if node.get('type') != 'part':
+                continue
+            # The live installer's target may lack udev's property database.
+            # Probe the partition itself rather than relying on cached UUIDs.
+            properties = dict(line.split('=', 1) for line in run('blkid', '-p', '-o', 'export', node['name']).splitlines() if '=' in line)
+            if properties.get('PART_ENTRY_TYPE') == 'c12a7328-f81f-11d2-ba4b-00a0c93ec93b':
+                choices.append(properties.get('UUID'))
+        if len(choices) != 1 or not choices[0]:
             raise RuntimeError('Each boot drive needs one formatted EFI system partition.')
-        esps.append(choices[0]['uuid'])
+        esps.append(choices[0])
     config = {'efi': efi, 'esp_uuids': esps}
     CONFIG.write_text(json.dumps(config, indent=2) + '\n')
     arrays = []
@@ -73,7 +81,8 @@ def sync():
     primary.mkdir(parents=True, exist_ok=True)
     if subprocess.run(['mountpoint', '-q', str(primary)]).returncode:
         run('mount', '-t', 'vfat', f'UUID={available[0]}', str(primary))
-    primary_uuid = run('findmnt', '-nro', 'UUID', '--mountpoint', str(primary))
+    primary_source = run('findmnt', '-nro', 'SOURCE', '--mountpoint', str(primary)).split('[')[0]
+    primary_uuid = run('blkid', '-s', 'UUID', '-o', 'value', primary_source)
     if primary_uuid not in config['esp_uuids']:
         raise RuntimeError('/boot/efi is not one of the selected mirror ESPs.')
     source = primary / 'EFI/debian'
