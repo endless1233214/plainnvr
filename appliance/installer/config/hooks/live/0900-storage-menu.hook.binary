@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+# live-build executes binary hooks with binary/ as the working directory.
+if [ -d isolinux ]; then
+    kernel=$(awk '$1 == "linux" {print $2; exit}' isolinux/live.cfg)
+    initrd=$(awk '$1 == "initrd" {print $2; exit}' isolinux/live.cfg)
+    test -n "$kernel"
+    test -n "$initrd"
+    printf '\nlabel plainnvr-gparted\n    menu label ^GParted storage tools (live USB)\n    linux %s\n    initrd %s\n    append boot=live components plainnvr.storage-tools systemd.unit=multi-user.target systemd.wants=plainnvr-storage-tools.service\n' \
+        "$kernel" "$initrd" >> isolinux/menu.cfg
+fi

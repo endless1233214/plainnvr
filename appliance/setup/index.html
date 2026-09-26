@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Set up PlainNVR OS</title>
+<style>
+:root{font:16px system-ui,sans-serif;color:#17231f;background:#f2f6f5}*{box-sizing:border-box}body{margin:0;padding:32px}main{max-width:800px;margin:0 auto;background:white;border:1px solid #d5e2de;border-radius:18px;padding:32px}h1{margin:8px 0}p{line-height:1.5;color:#52675f}.brand{color:#198d81;font-weight:750;letter-spacing:.08em}label{display:block;font-weight:600;margin:20px 0 6px}input,select,button{font:inherit;border-radius:8px;padding:12px;border:1px solid #bdcfc8;width:100%}button{background:#168b7f;color:white;border:0;cursor:pointer;margin:20px 0 0}button.secondary{background:#e8f1ee;color:#214e43}button:disabled{opacity:.5;cursor:wait}.row{display:grid;grid-template-columns:1fr 1fr;gap:20px}.hint{font-size:14px}.error{color:#a42c2c;white-space:pre-wrap}#disks label{font-weight:400;font-size:14px;background:#f2f6f5;padding:10px;border-radius:8px}input[type=checkbox]{width:auto;margin-right:12px}.hidden,[hidden]{display:none!important}footer{font-size:13px;margin-top:24px;color:#52675f}code{overflow-wrap:anywhere}@media(max-width:600px){body{padding:12px}main{padding:20px}.row{grid-template-columns:1fr}}
+</style></head><body><main>
+<div class="brand">PLAINNVR OS</div><p id="step">Step 1 of 2 · Administrator</p>
+<section id="account"><h1 id="account-title">Create your administrator</h1><p id="account-copy">This account manages cameras, recordings and settings. Keep its password somewhere safe.</p>
+<form id="account-form"><label for="username">Username</label><input id="username" autocomplete="username" required minlength="3" maxlength="40" value="admin">
+<label for="password">Password</label><input id="password" type="password" autocomplete="new-password" required minlength="12" maxlength="1024">
+<div id="confirm-row"><label for="confirm">Confirm password</label><input id="confirm" type="password" autocomplete="new-password"></div>
+<button id="account-next">Create account and continue</button></form></section>
+<section id="storage" hidden><h1>Choose your storage</h1><p>Keep recordings on the installed storage, use an existing filesystem, or configure a ZFS pool.</p>
+<form id="storage-form"><label for="mode">Recording storage</label><select id="mode"><option value="default">Installed recording partition</option><option value="filesystem">Existing ext4 or XFS partition</option><option value="zfs-create">Create a ZFS pool</option><option value="zfs-import">Import an existing ZFS pool</option></select>
+<div id="filesystem-fields" hidden><label for="filesystem">Available filesystem</label><select id="filesystem"></select><p class="hint">The filesystem is mounted without formatting it. Choose a new, empty directory below.</p></div>
+<div id="zfs-fields" hidden><p class="hint">ZFS protects recording storage. Boot-drive redundancy is configured during installation.</p><div id="create-fields"><div class="row"><div><label for="pool">Pool name</label><input id="pool" value="recordings"></div><div><label for="layout">Pool layout</label><select id="layout"><option value="mirror">Mirror (2 or more drives)</option><option value="raidz1">RAIDZ1 (3 or more drives)</option><option value="raidz2">RAIDZ2 (4 or more drives)</option><option value="single">Single drive (no redundancy)</option></select></div></div><label>Blank, unused drives</label><div id="disks"></div><p class="hint">Only drives without partitions or filesystem signatures appear. Boot drives are excluded. Use GParted to prepare other drives deliberately.</p></div>
+<div id="import-fields" hidden><label for="import-pool">Exported pool</label><select id="import-pool"></select><p class="hint">Setup imports the selected pool and creates a new dataset. Existing datasets are preserved.</p></div><label for="dataset">New dataset name</label><input id="dataset" value="plainnvr"><label for="confirmation" id="confirmation-label">Type CREATE recordings to confirm</label><input id="confirmation" autocomplete="off"></div>
+<div class="row"><div><label for="data-directory">Configuration directory</label><input id="data-directory" value="config" required><p class="hint">Inside <code>/var/lib/plainnvr/</code></p></div><div><label for="recording-directory">Recording directory</label><input id="recording-directory" value="recordings" required><p class="hint" id="recording-location">Inside /var/lib/plainnvr/</p></div></div>
+<button id="finish">Finish setup</button></form>
+<div class="row"><button class="secondary" id="gparted">Open GParted</button><button class="secondary" id="refresh">Refresh storage</button></div><p class="hint">GParted opens on this monitor. Closing it returns to setup. Changes applied in GParted can erase data.</p></section>
+<p id="message" role="status" aria-live="polite"></p><p id="error" class="error" role="alert"></p>
+<footer>First-time setup is available on this monitor. LAN access starts when setup finishes.</footer>
+</main><script nonce="__TOKEN__">
+const $=id=>document.getElementById(id);let state={},inventory={};
+async function api(path,body){const options=body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json','X-Setup-Token':'__TOKEN__'},body:JSON.stringify(body)};const response=await fetch('/api/'+path,options);const result=await response.json();if(!response.ok)throw Error(result.error||'Request failed');return result;}
+function showError(error){$('error').textContent=error.message||String(error);$('message').textContent='';}
+function option(select,value,label){const node=document.createElement('option');node.value=value;node.textContent=label;select.append(node);}
+const size=bytes=>(bytes/1e9).toFixed(1)+' GB';
+function fields(){const mode=$('mode').value;$('filesystem-fields').hidden=mode!=='filesystem';$('zfs-fields').hidden=!mode.startsWith('zfs-');$('create-fields').hidden=mode!=='zfs-create';$('import-fields').hidden=mode!=='zfs-import';$('recording-location').textContent='Inside '+(mode==='default'?'/var/lib/plainnvr/':'/srv/plainnvr-storage/');const pool=mode==='zfs-import'?$('import-pool').selectedOptions[0]?.textContent:$('pool').value;$('confirmation-label').textContent='Type '+(mode==='zfs-import'?'IMPORT ':'CREATE ')+(pool||'pool name')+' to confirm';}
+async function refresh(){
+ inventory=await api('storage');
+ $('filesystem').replaceChildren();
+ for(const f of inventory.filesystems)option($('filesystem'),f.uuid,`${f.device} · ${f.filesystem} · ${size(f.bytes)}`);
+ $('import-pool').replaceChildren();
+ for(const p of inventory.pools)option($('import-pool'),p.id,p.name);
+ $('disks').replaceChildren();
+ for(const d of inventory.disks){
+  const label=document.createElement('label');const checkbox=document.createElement('input');
+  checkbox.type='checkbox';checkbox.value=d.id;
+  label.append(checkbox,document.createTextNode(`${d.device} · ${d.model||'Drive'} · ${size(d.bytes)} · ${d.serial||d.id}`));
+  $('disks').append(label);
+ }
+ if(!inventory.disks.length)$('disks').textContent='No eligible blank drives found.';
+ if(inventory.resume_selection){
+  const saved=inventory.resume_selection;
+  for(const field of ['mode','pool','layout','dataset','confirmation'])$(field).value=saved[field];
+  $('data-directory').value=saved.data_directory;$('recording-directory').value=saved.recording_directory;
+  if(saved.uuid){option($('filesystem'),saved.uuid,'Saved filesystem: '+saved.uuid);$('filesystem').value=saved.uuid;}
+  if(saved.pool_id){option($('import-pool'),saved.pool_id,'Saved pool');$('import-pool').value=saved.pool_id;}
+  if(saved.disks?.length)$('disks').textContent='Saved drives: '+saved.disks.join(', ');
+  document.querySelectorAll('#storage-form input,#storage-form select').forEach(input=>input.disabled=true);
+  if(inventory.can_change_directories){$('data-directory').disabled=false;$('recording-directory').disabled=false;}
+  if(inventory.can_change_dataset)$('dataset').disabled=false;
+  $('gparted').disabled=true;
+  $('message').textContent='Setup was interrupted. Finish setup resumes the saved storage choices shown here.';
+ }
+ fields();
+}
+async function load(){state=await api('state');if(state.complete){location.href='http://127.0.0.1:8787/';return;}if(state.authenticated){$('account').hidden=true;$('storage').hidden=false;$('step').textContent='Step 2 of 2 · Storage';await refresh();}else if(state.account_exists){$('account-title').textContent='Continue setup';$('account-copy').textContent='Sign in with the administrator you created to continue storage setup.';$('account-next').textContent='Sign in and continue';$('confirm-row').hidden=true;$('password').autocomplete='current-password';}}
+$('account-form').addEventListener('submit',async e=>{e.preventDefault();$('error').textContent='';$('account-next').disabled=true;try{if(!state.account_exists&&$('password').value!==$('confirm').value)throw Error('Passwords do not match.');await api(state.account_exists?'login':'admin',{username:$('username').value,password:$('password').value});$('password').value='';$('confirm').value='';await load();}catch(error){showError(error);}finally{$('account-next').disabled=false;}});
+$('mode').onchange=fields;$('pool').oninput=fields;$('import-pool').onchange=fields;
+$('refresh').onclick=()=>refresh().catch(showError);
+$('gparted').onclick=async()=>{try{await api('gparted',{});$('message').textContent='GParted is opening. Close it to return, then refresh storage.';}catch(error){showError(error);}};
+$('storage-form').addEventListener('submit',async e=>{
+ e.preventDefault();$('error').textContent='';
+ const buttons=[...document.querySelectorAll('button')];buttons.forEach(b=>b.disabled=true);
+ $('message').textContent='Preparing storage and starting PlainNVR. Leave the machine powered on.';
+ try{
+  const selection=inventory.resume_selection?{...inventory.resume_selection,dataset:$('dataset').value,data_directory:$('data-directory').value,recording_directory:$('recording-directory').value}:{mode:$('mode').value,uuid:$('filesystem').value,pool:$('pool').value,layout:$('layout').value,disks:[...document.querySelectorAll('#disks input:checked')].map(d=>d.value),pool_id:$('import-pool').value,dataset:$('dataset').value,confirmation:$('confirmation').value,data_directory:$('data-directory').value,recording_directory:$('recording-directory').value};
+  const result=await api('finish',selection);
+  $('message').textContent='Setup complete. Opening PlainNVR…';location.href=result.url;
+ }catch(error){showError(error);buttons.forEach(b=>b.disabled=false);await refresh().catch(showError);}
+});
+load().catch(showError);
+</script></body></html>

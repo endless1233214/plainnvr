@@ -1,0 +1,109 @@
+#!/usr/bin/python3
+"""Maintain boot code only on the two explicitly selected RAID1 boot drives."""
+import json
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+CONFIG = Path('/etc/plainnvr/boot-mirror.json')
+
+
+def run(*args):
+    return subprocess.check_output(args, text=True, stderr=subprocess.STDOUT).strip()
+
+
+def root_disks():
+    source = run('findmnt', '-nro', 'SOURCE', '--target', '/').split('[')[0]
+    details = run('mdadm', '--detail', '--export', source)
+    if 'MD_LEVEL=raid1' not in details.splitlines() or 'MD_DEVICES=2' not in details.splitlines():
+        raise RuntimeError('Root must be a two-member RAID1 array.')
+    lines = run('lsblk', '--inverse', '--raw', '--noheadings', '--paths', '-o', 'NAME,TYPE', source)
+    return sorted(set(row.split()[0] for row in lines.splitlines() if row.split()[1] == 'disk'))
+
+
+def initialize():
+    selected = Path('/etc/plainnvr/mirror-selected').read_text().split()
+    if len(selected) != 2 or set(selected) != set(root_disks()):
+        raise RuntimeError('The root mirror does not match the two selected drives.')
+    esps = []
+    efi = Path('/sys/firmware/efi').exists()
+    for disk in selected if efi else []:
+        tree = json.loads(run('lsblk', '-Jpo', 'NAME,UUID,PARTTYPE', disk))['blockdevices'][0]
+        choices = [n for n in tree.get('children', []) if n.get('parttype') == 'c12a7328-f81f-11d2-ba4b-00a0c93ec93b']
+        if len(choices) != 1 or not choices[0].get('uuid'):
+            raise RuntimeError('Each boot drive needs one formatted EFI system partition.')
+        esps.append(choices[0]['uuid'])
+    config = {'efi': efi, 'esp_uuids': esps}
+    CONFIG.write_text(json.dumps(config, indent=2) + '\n')
+    arrays = []
+    for target in ('/', '/var/lib/plainnvr'):
+        source = run('findmnt', '-nro', 'SOURCE', '--target', target).split('[')[0]
+        details = run('mdadm', '--detail', '--export', source)
+        if 'MD_LEVEL=raid1' not in details.splitlines():
+            raise RuntimeError('The system and data filesystems must both be mirrored.')
+        arrays.append(run('mdadm', '--detail', '--scan', source))
+    Path('/etc/mdadm/mdadm.conf').write_text('HOMEHOST <system>\nMAILADDR root\n' + '\n'.join(arrays) + '\n')
+    # A missing primary ESP must not stop an otherwise healthy RAID1 system.
+    fstab = Path('/etc/fstab')
+    lines = []
+    for line in fstab.read_text().splitlines():
+        fields = line.split()
+        if not line.startswith('#') and len(fields) >= 4 and fields[1] == '/boot/efi':
+            options = [o for o in fields[3].split(',') if o != 'nofail' and not o.startswith('x-systemd.device-timeout=')]
+            fields[3] = ','.join(options + ['nofail', 'x-systemd.device-timeout=5s'])
+            line = '\t'.join(fields)
+        lines.append(line)
+    fstab.write_text('\n'.join(lines) + '\n')
+    run('update-initramfs', '-u', '-k', 'all')
+
+
+def sync():
+    config = json.loads(CONFIG.read_text())
+    disks = root_disks()
+    if not config['efi']:
+        for disk in disks:
+            run('grub-install', '--target=i386-pc', '--recheck', disk)
+        return
+    available = [uuid for uuid in config['esp_uuids'] if Path('/dev/disk/by-uuid', uuid).exists()]
+    if not available:
+        raise RuntimeError('Neither boot EFI partition is available.')
+    primary = Path('/boot/efi')
+    primary.mkdir(parents=True, exist_ok=True)
+    if subprocess.run(['mountpoint', '-q', str(primary)]).returncode:
+        run('mount', '-t', 'vfat', f'UUID={available[0]}', str(primary))
+    primary_uuid = run('findmnt', '-nro', 'UUID', '--mountpoint', str(primary))
+    if primary_uuid not in config['esp_uuids']:
+        raise RuntimeError('/boot/efi is not one of the selected mirror ESPs.')
+    source = primary / 'EFI/debian'
+    if not (source / 'grubx64.efi').is_file():
+        raise RuntimeError('The Debian EFI bootloader is missing.')
+    # Debian may install GRUB directly when Secure Boot is disabled.
+    loader = source / ('shimx64.efi' if (source / 'shimx64.efi').is_file() else 'grubx64.efi')
+    for uuid in available:
+        destination = primary if uuid == primary_uuid else Path('/run/plainnvr-esp') / uuid
+        mounted_here = destination != primary
+        if mounted_here:
+            destination.mkdir(parents=True, exist_ok=True)
+            run('mount', '-t', 'vfat', f'UUID={uuid}', str(destination))
+        try:
+            if mounted_here:
+                shutil.copytree(source, destination / 'EFI/debian', dirs_exist_ok=True)
+            fallback = destination / 'EFI/BOOT'
+            fallback.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(loader, fallback / 'BOOTX64.EFI')
+            for filename in ('grubx64.efi', 'mmx64.efi', 'grub.cfg'):
+                if (source / filename).exists():
+                    shutil.copyfile(source / filename, fallback / filename)
+            os.sync()
+        finally:
+            if mounted_here:
+                run('umount', str(destination))
+
+
+if __name__ == '__main__':
+    if '--initialize' in sys.argv:
+        initialize()
+    if CONFIG.exists():
+        sync()

@@ -1,0 +1,14 @@
+[Unit]
+Description=PlainNVR local first-boot setup
+After=local-fs.target
+ConditionPathExists=!/etc/plainnvr/setup-complete
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/lib/plainnvr/setup/server.py
+Restart=on-failure
+RestartSec=3
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

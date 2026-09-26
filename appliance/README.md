@@ -1,7 +1,7 @@
 # PlainNVR OS: native Debian prototype
 
-This directory is a developer prototype for Debian 13 amd64. It is not yet an
-end-user installer ISO. The appliance runs the existing PlainNVR server directly
+This directory contains the Debian 13 amd64 appliance prototype and its
+[bootable installer](installer/README.md). The appliance runs the existing PlainNVR server directly
 under systemd, with native go2rtc and FFmpeg binaries. Docker is not installed
 or used on the appliance.
 
@@ -23,7 +23,7 @@ or used on the appliance.
 Use a Debian 13 amd64 VM with a graphical display and Ethernet. Attach a
 persistent virtual data disk, format and mount it at `/var/lib/plainnvr` using
 the VM's normal disk tools, and add it to `/etc/fstab` by UUID. The scripts in
-this directory never select, partition, or format a disk. The server refuses
+`debian/` never select, partition, or format a disk. The server refuses
 to start if `/var/lib/plainnvr` is not a mount point, so recordings cannot
 silently fall back to the OS filesystem.
 
@@ -69,8 +69,9 @@ Test on a VM, then on the intended old PC: first account setup, LAN access,
 live wall with several cameras, recording across reboot, clean shutdown,
 recovery after restarting either service, and CPU/decoding load. The physical
 PC test decides whether Cage/Wayland works well on its graphics hardware;
-an Xorg kiosk fallback can be added if required. Disk selection, final ISO,
-automatic updates, and rollback are later milestones.
+an Xorg kiosk fallback can be added if required. The bootable installer and
+first-boot setup are described in [installer/README.md](installer/README.md).
+Automatic updates and rollback remain later milestones.
 
 The Debian 13 amd64 VM prototype has now completed the native validation pass:
 
@@ -88,6 +89,8 @@ The Debian 13 amd64 VM prototype has now completed the native validation pass:
   `http://192.168.1.150:8787/` during validation. The address is assigned by
   DHCP and will change on another network.
 
-The remaining validation is on the intended old physical PC, including its
-graphics hardware and sustained CPU/decoding load. No installer ISO or
-production update mechanism has been created yet.
+Remaining validation includes the intended old physical PC, graphics hardware,
+sustained CPU/decoding load, WebRTC ICE over TCP/UDP, retention, and a Docker
+regression build. There is no production update mechanism yet. See
+[installer/README.md](installer/README.md) for the installer work and first-boot
+storage setup.

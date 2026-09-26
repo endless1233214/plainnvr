@@ -1,0 +1,26 @@
+#!/bin/sh
+set -eu
+# Executed by d-i in the installed target, after mounting its filesystems.
+if ! mountpoint -q /var/lib/plainnvr; then
+    echo 'PlainNVR needs a separate partition mounted at /var/lib/plainnvr.' >&2
+    echo 'Return to partitioning and choose the PlainNVR layout or add that mount.' >&2
+    exit 1
+fi
+chown plainnvr:plainnvr /var/lib/plainnvr
+chmod 0700 /var/lib/plainnvr
+install -d -m 0700 -o plainnvr -g plainnvr /var/lib/plainnvr/recordings
+systemctl enable plainnvr.service plainnvr-kiosk@tty1.service
+systemctl set-default graphical.target
+systemctl enable plainnvr-boot-mirror.service
+if [ -f /etc/plainnvr/mirror-selected ]; then
+    /usr/lib/plainnvr/boot-mirror --initialize
+fi
+case "$(systemd-detect-virt --vm || true)" in
+    kvm|qemu|oracle)
+        install -d /etc/systemd/system/plainnvr-kiosk@tty1.service.d
+        printf '[Service]\nEnvironment=WLR_RENDERER=pixman\n' > /etc/systemd/system/plainnvr-kiosk@tty1.service.d/virtual-display.conf
+        ;;
+esac
+# Firmware/software rendering can be selected deliberately for troublesome VMs
+# or hardware with: systemctl edit plainnvr-kiosk@tty1.service
+systemd-analyze verify /etc/systemd/system/plainnvr.service /etc/systemd/system/plainnvr-kiosk@.service

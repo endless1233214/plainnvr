@@ -1,0 +1,9 @@
+[Unit]
+Description=PlainNVR local disk editor
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/openvt -c 8 -s -w -- /usr/bin/xinit /usr/sbin/gparted -- :1 vt8 -nolisten tcp
+ExecStopPost=/usr/bin/chvt 1
+TimeoutStartSec=infinity
+TimeoutStopSec=15

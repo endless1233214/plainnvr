@@ -1,0 +1,30 @@
+#!/bin/sh
+set -eu
+groupadd --system plainnvr
+useradd --system --gid plainnvr --home-dir /var/lib/plainnvr --no-create-home --shell /usr/sbin/nologin plainnvr
+groupadd --system plainnvr-kiosk
+useradd --system --gid plainnvr-kiosk --home-dir /var/lib/plainnvr-kiosk --create-home --shell /usr/sbin/nologin plainnvr-kiosk
+chmod 0700 /var/lib/plainnvr-kiosk
+mkdir -p /var/lib/plainnvr
+mkdir -p /etc/plainnvr
+touch /etc/plainnvr/first-boot
+set -- /opt/plainnvr/releases/*
+test "$#" -eq 1
+version=$(cat "$1/VERSION")
+ln -s "releases/$version" /opt/plainnvr/current
+chown -R root:root /opt/plainnvr/releases
+chmod -R go-w /opt/plainnvr/releases
+systemctl enable plainnvr.service plainnvr-kiosk@tty1.service
+systemctl enable plainnvr-setup.service
+systemctl disable zfs-import-scan.service
+systemctl set-default graphical.target
+# DKMS updates must generate signing keys on the installed machine. Never
+# distribute the image builder's private module-signing key.
+rm -f /var/lib/dkms/mok.key /var/lib/dkms/mok.pub
+# Fresh installations generate their own identity. No accounts, database,
+# recordings, SSH keys, test cameras or browser profiles come from the builder.
+truncate -s 0 /etc/machine-id
+if [ -e /var/lib/dbus/machine-id ]; then
+    rm /var/lib/dbus/machine-id
+fi
+ln -s /etc/machine-id /var/lib/dbus/machine-id

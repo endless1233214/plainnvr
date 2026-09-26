@@ -1,0 +1,12 @@
+[Unit]
+Description=Keep mirrored EFI boot partitions synchronized
+After=local-fs.target
+Before=plainnvr.service plainnvr-setup.service
+ConditionPathExists=/etc/plainnvr/boot-mirror.json
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/plainnvr/boot-mirror
+
+[Install]
+WantedBy=multi-user.target

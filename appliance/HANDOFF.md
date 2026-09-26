@@ -1,5 +1,67 @@
 # PlainNVR OS — native Debian x86-64 prototype handoff
 
+## Current checkpoint — September 26, 2026
+
+The sections below this checkpoint describe the original ARM-to-x86 handoff
+and are retained as historical context. This checkpoint supersedes their
+build/validation status and their statement that no installer exists.
+
+The owner requested a bootable installer with administrator creation first on
+the installed system's first boot, followed by storage/directory selection and
+GParted. "Two boot drives" means **mirrored boot drives for redundancy**.
+Work continues on `feature/plainnvr-os-native-prototype`; nothing is merged
+to main. Existing unrelated macOS source changes must be preserved.
+
+- Native go2rtc 1.9.14 and FFmpeg 9.0.2 were built and tested on Debian 13
+  amd64. The runtime carries upstream sources, build configuration, licenses
+  and dependency notices.
+- The original VM passed two-camera H.264/AAC recording, live/playback UI,
+  server/kiosk restarts, reboot, and missing-data-mount checks. A VirtualBox
+  copy named **PlainNVR OS Prototype** is registered on the Windows host.
+- `installer/build-iso.sh` builds a clean Debian live-build hybrid ISO with
+  Debian Installer, native PlainNVR, GParted, mdadm and ZFS. Disk selection
+  and destructive confirmation remain explicit.
+- `setup/` implements the local first-boot wizard. It creates the ordinary
+  PlainNVR admin account, then configures recording storage and directories.
+  Setup listens only on loopback and stops after success. The normal NVR is
+  gated until setup finishes; the kiosk then opens the normal login.
+- Mirrored installation uses ext4 on two RAID1 arrays (system and default
+  data). ZFS is for recording pools. New pools and imports require explicit
+  selection and typed confirmation. Existing datasets are preserved.
+- Initial installer validation passed UEFI single-drive installation,
+  administrator/storage setup, GParted launch/return, ZFS mirror creation,
+  recording and reboot, missing-pool refusal, and pool import preserving
+  recordings. BIOS mirror installation booted into the wizard with each
+  drive independently absent; default-storage setup also completed on the
+  surviving second drive.
+- Validation found and fixed the USB GParted service conflicting with normal
+  startup, a multiline Debconf recipe, BIOS bootloader target handling,
+  optional EFI shim handling, and the kiosk password-save prompt.
+- Nine setup boundary/storage tests pass. UEFI mirror installation, first-boot
+  setup with custom directories, and boot/login with each drive independently
+  absent all passed. The final BIOS USB GParted menu entry is fixed as well.
+- The development installer is at
+  `C:\Users\Zack\Downloads\PlainNVR-OS\plainnvr-os-0.1.4-amd64.hybrid.iso`,
+  with `SHA256SUMS`, package manifest and installation/validation notes.
+  SHA-256: `f34575334237dc24ffc41a9ac446026d1f39158c307de19a3493d0db3c5a9855`.
+  Consult `installer/VALIDATION.md` for test coverage and remaining release work.
+
+Build/test work uses isolated QEMU overlays in WSL Ubuntu under
+`/home/endless/plainnvr-os-vm`. The Debian build guest's SSH endpoint is
+127.0.0.1:2224 **inside WSL** when running. Build/test guests are powered off
+after validation. The original prototype and the production NVR
+are separate. Do not bundle VM test credentials, SSH keys, configuration
+databases, or recordings in the installer. NoVNC requires a VNC backend;
+VirtualBox's RDP endpoint is not interchangeable with VNC.
+
+Remaining release validation: physical-PC graphics and sustained recording
+load, WebRTC ICE/TCP/UDP, retention, Docker regression, Secure Boot enrollment
+and updates, and a production update/rollback mechanism. This is an appliance
+development image. See `installer/README.md` for the build and installation
+workflow. The original handoff follows for historical context.
+
+---
+
 ## Objective and boundaries
 
 Build a dedicated x86-64 PlainNVR appliance OS for an old PC. The eventual user

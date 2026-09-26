@@ -55,6 +55,18 @@ cp "$repo_dir/build/go2rtc/go.mod" "$repo_dir/build/go2rtc/go.sum" "$work_dir/go
         exit 1
     fi
     CGO_ENABLED=0 go build -mod=readonly -trimpath -o "$release/bin/go2rtc" .
+    mkdir -p "$release/licenses/go2rtc"
+    cp LICENSE "$release/licenses/go2rtc/LICENSE"
+    cp "$(go env GOROOT)/LICENSE" "$release/licenses/go2rtc/GO-LICENSE"
+    go list -m -f '{{if .Dir}}{{.Path}} {{.Version}} {{.Dir}}{{end}}' all |
+    while read -r module module_version directory; do
+        [ -n "$directory" ] || continue
+        target="$release/licenses/go2rtc/$module@$module_version"
+        mkdir -p "$target"
+        find "$directory" -maxdepth 1 -type f \
+            \( -iname 'license*' -o -iname 'copying*' -o -iname 'notice*' \) \
+            -exec cp '{}' "$target/" \;
+    done
 )
 
 curl --fail --location --silent --show-error \
@@ -72,11 +84,22 @@ tar -xJf "$work_dir/ffmpeg.tar.xz" -C "$work_dir/ffmpeg" --strip-components=1
     FFMPEG_PREFIX=/opt/plainnvr/current/ffmpeg \
         FFMPEG_DESTDIR="$stage" \
         sh "$repo_dir/build/ffmpeg/configure.sh"
+    mkdir -p "$release/licenses/ffmpeg" "$release/share/plainnvr"
+    cp COPYING.LGPLv3 "$release/licenses/ffmpeg/"
+    cp config_components.h "$release/share/plainnvr/ffmpeg-config-components.h"
 )
 
+# Ship the exact upstream sources, locks and local patch used for the bundled
+# media programs, together with build instructions and their license notices.
+mkdir -p "$release/share/plainnvr/sources"
+cp "$work_dir/go2rtc.tar.gz" "$work_dir/ffmpeg.tar.xz" "$release/share/plainnvr/sources/"
+cp -R "$repo_dir/build" "$release/share/plainnvr/sources/"
+cp "$work_dir/go2rtc-deps.txt" "$release/share/plainnvr/go2rtc-compiled-packages.txt"
+cp "$repo_dir/appliance/debian/build-runtime.sh" "$release/share/plainnvr/sources/"
 cp -R "$repo_dir/app/." "$release/app/"
 cp -R "$repo_dir/static/." "$release/static/"
 cp -R "$repo_dir/appliance/kiosk" "$release/kiosk"
+chmod 0755 "$release/kiosk/start.sh"
 printf '%s\n' "$version" > "$release/VERSION"
 mkdir -p "$output_dir"
 cp -R "$release/." "$output_dir/"

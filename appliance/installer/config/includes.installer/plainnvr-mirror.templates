@@ -1,0 +1,13 @@
+Template: plainnvr/mirror-disks
+Type: multiselect
+Choices: ${DISKS}
+Description: Select exactly two drives for the PlainNVR boot mirror:
+ The selected drives will hold identical system and recording partitions.
+ Review their names, models and sizes carefully. The installer will ask for
+ confirmation before writing the partition tables. All existing data on
+ these two drives will be erased if you approve those changes.
+
+Template: plainnvr/mirror-invalid
+Type: note
+Description: Choose exactly two eligible drives
+ Both drives must be at least 36 GB. The installation medium cannot be used.

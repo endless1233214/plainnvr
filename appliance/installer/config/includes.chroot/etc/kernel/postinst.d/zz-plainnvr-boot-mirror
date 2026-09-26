@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+if [ -f /etc/plainnvr/boot-mirror.json ]; then
+    /usr/lib/plainnvr/boot-mirror
+fi

@@ -1,0 +1,1 @@
+DPkg::Post-Invoke { "if test -f /etc/plainnvr/boot-mirror.json; then /usr/lib/plainnvr/boot-mirror; fi"; };

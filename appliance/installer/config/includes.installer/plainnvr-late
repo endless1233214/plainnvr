@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+if [ -f /plainnvr-mirror-selected ]; then
+    mkdir -p /target/etc/plainnvr
+    cp /plainnvr-mirror-selected /target/etc/plainnvr/mirror-selected
+fi
+in-target /usr/lib/plainnvr/finish-install

@@ -1,0 +1,60 @@
+#!/bin/sh
+set -eu
+case " $(cat /proc/cmdline) " in *' plainnvr.mirror=1 '*) ;; *) exit 0 ;; esac
+. /usr/share/debconf/confmodule
+db_x_loadtemplatefile /plainnvr-mirror.templates plainnvr
+choices=''
+eligible=''
+for disk in $(list-devices disk); do
+    name=${disk##*/}
+    test -r "/sys/class/block/$name/size" || continue
+    sectors=$(cat "/sys/class/block/$name/size")
+    test "$sectors" -ge 70312500 || continue
+    media=false
+    for device in $(awk '$2 == "/cdrom" || $2 == "/hd-media" { print $1 }' /proc/mounts); do
+        parent=$(readlink -f "/sys/class/block/${device##*/}")
+        case "$parent/" in */"$name"/*) media=true ;; esac
+    done
+    $media && continue
+    model=''
+    if [ -r "/sys/class/block/$name/device/model" ]; then
+        model=$(tr ',\n' '  ' < "/sys/class/block/$name/device/model")
+    fi
+    gb=$((sectors / 2097152))
+    label="$disk ($gb GiB $model)"
+    choices="${choices:+$choices, }$label"
+    eligible="$eligible $disk"
+done
+db_subst plainnvr/mirror-disks DISKS "$choices"
+while :; do
+    db_fset plainnvr/mirror-disks seen false
+    db_input critical plainnvr/mirror-disks || true
+    db_go || exit 1
+    db_get plainnvr/mirror-disks
+    selected=$(printf '%s\n' "$RET" | sed 's/ ([^)]*)//g; s/,/ /g')
+    set -- $selected
+    valid=true
+    test "$#" -eq 2 || valid=false
+    for disk in "$@"; do
+        case " $eligible " in *" $disk "*) ;; *) valid=false ;; esac
+    done
+    if $valid && [ "$1" != "$2" ]; then break; fi
+    db_input critical plainnvr/mirror-invalid || true
+    db_go || exit 1
+done
+first=$1
+second=$2
+part() {
+    case "$1" in *[0-9]) printf '%sp%s' "$1" "$2" ;; *) printf '%s%s' "$1" "$2" ;; esac
+}
+db_set partman-partitioning/default_label gpt
+db_set partman-partitioning/choose_label gpt
+db_set partman-auto/disk "$first $second"
+db_set partman-auto/method raid
+db_set partman-auto/choose_recipe plainnvr-mirror
+# Debconf's line protocol requires this value to stay on one line.
+db_set partman-auto/expert_recipe 'plainnvr-mirror :: 1 1 1 free $primary{ } method{ biosgrub } . 512 512 512 free $primary{ } method{ efi } format{ } . 24000 24000 24000 raid $primary{ } method{ raid } . 8000 10000 -1 raid $primary{ } method{ raid } .'
+db_set partman-auto-raid/recipe "1 2 0 ext4 / $(part "$first" 3)#$(part "$second" 3) . 1 2 0 ext4 /var/lib/plainnvr $(part "$first" 4)#$(part "$second" 4) ."
+# grub-installer accepts one initial target; finish-install maintains both.
+db_set grub-installer/bootdev "$first"
+printf '%s\n%s\n' "$first" "$second" > /plainnvr-mirror-selected
