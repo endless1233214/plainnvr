@@ -57,9 +57,13 @@ cp "$repo_dir/appliance/systemd/"*.service config/includes.chroot/etc/systemd/sy
 cp "$repo_dir/appliance/kiosk/plainnvr-kiosk.pam" config/includes.chroot/etc/pam.d/plainnvr-kiosk
 cp -R /usr/share/live/build/bootloaders config/
 cp "$repo_dir/appliance/installer/grub.cfg" config/bootloaders/grub-pc/grub.cfg
+cp "$repo_dir/appliance/installer/grub-console.cfg" config/bootloaders/grub-pc/config.cfg
 cp "$repo_dir/appliance/installer/theme.cfg" config/bootloaders/grub-pc/theme.cfg
 cp "$repo_dir/appliance/installer/menu.cfg" config/bootloaders/syslinux_common/menu.cfg
 cp "$repo_dir/appliance/installer/stdmenu.cfg" config/bootloaders/syslinux_common/stdmenu.cfg
+# live-build's default BIOS module list only includes the graphical menu.
+mkdir -p config/includes.binary/isolinux
+cp /usr/lib/syslinux/modules/bios/menu.c32 /usr/lib/syslinux/modules/bios/libutil.c32 config/includes.binary/isolinux/
 chmod +x config/includes.installer/plainnvr-partman config/includes.installer/plainnvr-late
 chmod +x config/includes.chroot/usr/lib/plainnvr/boot-mirror config/includes.chroot/etc/kernel/postinst.d/zz-plainnvr-boot-mirror
 chmod +x config/hooks/live/*.hook.chroot config/includes.chroot/usr/lib/plainnvr/finish-install

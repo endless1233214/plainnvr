@@ -1,6 +1,35 @@
 # PlainNVR OS — native Debian x86-64 prototype handoff
 
-## Current checkpoint — installer revision 2, September 26, 2026
+## Current checkpoint - installer revision 3, September 26, 2026
+
+The physical machine is HP 200 G1 MT, Pentium J2900 (2.41 GHz), 8 GB DDR3,
+board ID 2B1A, BIOS SHA v80.08 dated July 18, 2014. The keyboard is USB directly
+into the motherboard. Revision 2's boot menu did not respond; no menu photo
+was available, so input loss versus a complete bootloader hang is unresolved.
+
+Revision 3 removes the upstream graphical GRUB initialization entirely via
+`grub-console.cfg`, uses native firmware console input/output, and adds a
+10-second automatic start of the live wizard. BIOS uses SYSLINUX `menu.c32`
+instead of `vesamenu.c32`, also with a 10-second countdown. Automatic startup
+does not partition disks. The normal installer review/confirmation remains.
+
+Artifact: `C:\Users\Zack\Downloads\PlainNVR-OS\plainnvr-os-0.1.4-installer3-amd64.hybrid.iso`.
+SHA-256: `d4c54a9ff034d42f6cfd402fd5cf006fb8e16def916b1f8c28f8300d27dba871`.
+Linux/live and Debian Installer payload checksums are unchanged from revision 2.
+Both UEFI and BIOS VMs booted the ISO as USB storage automatically without keys.
+With PS/2 disabled, USB keys selected and booted the compatibility entry on both.
+The HP still needs a physical retest. Do not claim its hardware problem fixed.
+See `installer/VALIDATION.md`; previous records are `VALIDATION-2.md` and
+`VALIDATION-1.md`.
+
+Build guest still uses `/home/debian/installer-build-4`; its boot configuration
+and output name now reflect revision 3. The focused rebuild script is
+`/home/debian/build_revision3.sh`; payload checksum evidence is
+`/home/debian/revision3-payload.sha256`. WSL test files are under
+`/home/endless/plainnvr-os-vm/revision3-validation`. Build/test VMs are shut down.
+The owner was going to bed; another physical test/photo can wait until later.
+
+## Previous checkpoint - installer revision 2, September 26, 2026
 
 The owner tested revision 1 on an older HP desktop, probably Intel HD graphics.
 The Install entry froze at the GRUB handoff, while the separate GParted live

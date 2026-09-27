@@ -7,8 +7,9 @@ physical-PC graphics and sustained recording tests are still required.
 ## Installation flow
 
 1. Write the ISO to a USB drive using an image-writing tool. Boot that USB in
-   UEFI or legacy BIOS mode and choose **Install PlainNVR OS**. No disks are
-   changed merely by booting. For troublesome graphics, try **compatibility
+   UEFI or legacy BIOS mode. The text menu starts **Install PlainNVR OS** after
+   10 seconds without keyboard input, or press Enter to start immediately.
+   No disks are changed merely by booting. For troublesome graphics, try **compatibility
    graphics**, which uses `nomodeset` and a text-mode kernel handoff.
 2. Choose locale, keyboard and timezone. GParted opens in this live session.
    Close its window to return to the wizard; no reboot is needed. Use it to
@@ -37,6 +38,12 @@ also saved to `/run/plainnvr-installer-diagnostics.txt` for that live session.
 The advanced Debian text installer remains available for manual installations
 and maintenance-account creation. The guided live wizard creates the PlainNVR
 application administrator only; Linux root and password login remain locked.
+
+Revision 3 uses GRUB's firmware console without loading its graphical terminal
+or changing video mode. Legacy BIOS uses the SYSLINUX text menu. If a USB
+keyboard is unavailable only at the boot menu, leave it untouched for the
+countdown so Linux can take over input. A firmware/bootloader hang can still
+prevent the countdown; this change has not yet been retested on the HP 200 G1.
 
 The installer image carries its OS and application packages; installation does
 not require downloading PlainNVR. Network configuration can use Ethernet DHCP.

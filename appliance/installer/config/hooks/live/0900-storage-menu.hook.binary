@@ -2,6 +2,10 @@
 set -eu
 # live-build executes binary hooks with binary/ as the working directory.
 if [ -d isolinux ]; then
+    # Avoid the VESA menu on older firmware. SYSLINUX timeouts use tenths
+    # of a second; launch only the live wizard when no key is available.
+    test -f isolinux/menu.c32
+    sed -i 's/^default vesamenu\.c32$/default menu.c32/; s/^timeout .*/timeout 100/' isolinux/isolinux.cfg
     kernel=$(awk '$1 == "linux" {print $2; exit}' isolinux/live.cfg)
     initrd=$(awk '$1 == "initrd" {print $2; exit}' isolinux/live.cfg)
     test -n "$kernel"

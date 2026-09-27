@@ -1,83 +1,56 @@
-# Installer revision 2 validation — September 26, 2026
+# Installer revision 3 validation - September 26, 2026
 
 ## Artifact
 
-- `plainnvr-os-0.1.4-installer2-amd64.hybrid.iso`
+- `plainnvr-os-0.1.4-installer3-amd64.hybrid.iso`
 - Size: 2,032,828,416 bytes.
-- SHA-256: `332a41a8bbeeb3a58c8963082be6d8ea04833edb0df4d8d71fbd5b265f827fc5`
-- Windows copy: `C:\Users\Zack\Downloads\PlainNVR-OS`.
-- Debian package manifest is distributed alongside the ISO.
-- Revision 1's record is preserved in `VALIDATION-1.md`.
+- SHA-256: `d4c54a9ff034d42f6cfd402fd5cf006fb8e16def916b1f8c28f8300d27dba871`
+- Windows directory: `C:\Users\Zack\Downloads\PlainNVR-OS`.
 
-## Reason for revision
+## Hardware report and scope
 
-The owner reported that the original image froze at the GRUB Install choice
-on an older HP PC, likely using Intel HD graphics. Its separate GParted entry
-booted, but the mouse was unusable. Revision 2 uses the live boot path, Openbox,
-explicit Xorg input support, a visible pointer, boot status messages, and a
-`nomodeset` compatibility entry. The HP has not yet been retested; these VM
-results do not establish its physical graphics/input compatibility.
+The owner identified the affected machine as HP 200 G1 MT, Intel Pentium
+J2900 at 2.41 GHz, 8192 MB DDR3, motherboard ID 2B1A, BIOS SHA v80.08 dated
+July 18, 2014. The keyboard is USB directly into the motherboard. BIOS input
+works, but installer 2's boot menu is unresponsive. A photograph of that menu
+was unavailable, so whether this is lost keyboard input or a complete
+bootloader hang remains unconfirmed.
 
-## Completed checks on the final ISO
+Inspection found that revision 2 sourced live-build's graphical GRUB console
+configuration before applying text payload settings inside its menu entries.
+It also waited indefinitely for input. Revision 3 replaces that initialization
+with the native firmware console and a visible 10-second menu timeout. BIOS
+uses `menu.c32` instead of `vesamenu.c32`, also with a 10-second timeout. The
+default action starts the live wizard; drive changes still require explicit
+selection and confirmation later.
 
-| Configuration | Result |
-| --- | --- |
-| UEFI, normal graphics, two 48 GB OS disks, admin during installation | Full installation completed; installed system booted; administrator login and storage setup passed. |
-| Legacy BIOS, ISO attached as USB storage, compatibility graphics, one 48 GB OS disk, deferred admin | Full installation completed; installed system booted; remote claim-code pairing, administrator creation and storage setup passed. |
+## Image checks
 
-Both paths exercised locale selection, automatic GParted launch, mouse input,
-closing GParted back into the wizard, drive selection, the typed erase review,
-and visible installation progress. The mounted installer USB was excluded
-from installation targets. Installation did not repeat network or Linux-user
-questions. First boot obtained a wired DHCP address.
+The live squashfs, live kernel/initrd, and text Debian Installer kernel/initrd
+were checked unchanged by SHA-256 against revision 2's validated build tree.
+Only boot-menu files and the added BIOS text-menu module changed in the ISO,
+plus generated checksums. GRUB syntax checks passed. The copied Windows ISO
+hash matches the build output. The package manifest is unchanged.
 
-Both installed systems completed storage setup using custom `config-verified`
-and `recordings-verified` directories on the installed data filesystem. OS
-disks were excluded from available blank recording disks. Remote GParted
-launch was rejected. The local monitor automatically changed to the normal
-NVR login after remote setup. NVR health and administrator login passed;
-the temporary setup listener closed afterward while the NVR stayed healthy.
+Revision 2's full UEFI mirrored and BIOS single-drive installs, administrator
+and storage setup, and independent UEFI mirror-member boot are recorded in
+`VALIDATION-2.md`. Full installation was not repeated for this boot-menu-only
+revision. Revision 1's record is in `VALIDATION-1.md`.
 
-During reboot validation, the test harness initially removed the live medium
-before shutdown began. Restoring it and rebooting through the console recovered
-both test systems. Media was removed at the bootloader before installed-system
-checks; the BIOS VM was reset there to select its installed disk.
+## Boot/input checks
 
-## Mirrored-drive failover
+Disposable QEMU/KVM guests used UEFI/OVMF and legacy BIOS/SeaBIOS, each booting
+the final ISO as USB storage. The PS/2 controller was disabled (`i8042=off`);
+input devices were a USB keyboard and USB tablet.
 
-After a clean shutdown, each installed mirror member was booted alone using
-fresh UEFI variables and a separate disposable overlay. Both reached the
-normal NVR login, passed the health check, and accepted the administrator
-created during installation. No firmware boot entry from installation was
-required. Degraded-array startup took longer than the normal two-drive boot.
-BIOS mirror failover has not been exercised in this revision.
+- Both menus timed out and reached the locale wizard with no keys sent.
+- On a second boot, the USB Down key selected the compatibility entry in both
+  menus, stopping the countdown. Screenshots confirmed the selected entry.
+- Enter booted the compatibility entry into the locale wizard on both systems.
 
-## Automated and image checks
+## Limits
 
-- Seventeen Python tests pass: setup origin/Host and authentication boundaries,
-  remote claim-code enforcement, changed/mounted/USB disk rejection, distinct
-  mirror members, locale injection, offline locked-account configuration,
-  storage path and ZFS-selection safety, and empty removable-drive discovery.
-- Shell syntax and Python compilation checks pass.
-- Embedded installer/setup sources match the build source. The Windows ISO
-  SHA-256 matches the Linux build output.
-- Factory image checks exclude validation accounts, administrator settings,
-  claim codes, SSH keys, machine identity and private DKMS signing keys.
-  Privileged image files have root ownership and executable entry points.
-
-## Integration fixes found during testing
-
-APT now uses the mounted live medium without unmounting it. The guided path
-configures wired DHCP in the installed target and locks Linux password
-accounts. EFI discovery probes partition metadata directly when the live
-installer lacks udev properties. Empty removable devices no longer break
-storage discovery. Installer diagnostics retain the installation log.
-
-## Remaining validation
-
-Physical-PC graphics/input and sustained camera load; WebRTC ICE/TCP/UDP;
-retention; Docker regression; Secure Boot enrollment and updates; drive
-replacement; and a supported production update/rollback process remain
-release work. ZFS mirror creation/import/recording passed in revision 1;
-those integration checks were not repeated in revision 2. RAIDZ1/RAIDZ2 have
-not had that integration pass. This remains a development image.
+The HP still needs a physical retest. These changes remove graphical GRUB
+initialization and indefinite waiting; they do not establish the exact cause
+of its firmware/input failure. No BIOS update was attempted. Previous remaining
+production-release checks in `VALIDATION-2.md` still apply.
