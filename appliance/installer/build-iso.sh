@@ -57,12 +57,16 @@ chmod 0755 config/includes.chroot/usr/lib/plainnvr/update/boot.py config/include
 cp "$repo_dir/appliance/control/"*.py "$repo_dir/appliance/control/local-tool" config/includes.chroot/usr/lib/plainnvr/control/
 chmod 0755 config/includes.chroot/usr/lib/plainnvr/control/local-tool
 mkdir -p config/includes.chroot/usr/lib/plainnvr/setup
+mkdir -p config/includes.chroot/usr/lib/plainnvr/support
+cp "$repo_dir/appliance/support/"*.py config/includes.chroot/usr/lib/plainnvr/support/
 cp "$repo_dir/appliance/setup/"*.py "$repo_dir/appliance/setup/index.html" config/includes.chroot/usr/lib/plainnvr/setup/
 # Kiosk setup routing is appliance-specific; keep it current when using a
 # previously staged native media runtime.
 cp "$repo_dir/appliance/kiosk/start.sh" "$release/kiosk/start.sh"
+cp "$repo_dir/appliance/kiosk/recovery.html" "$release/kiosk/recovery.html"
 chmod 0755 "$release/kiosk/start.sh"
 cp "$repo_dir/appliance/systemd/"*.service config/includes.chroot/etc/systemd/system/
+cp "$repo_dir/appliance/systemd/"*.timer config/includes.chroot/etc/systemd/system/
 cp "$repo_dir/appliance/kiosk/plainnvr-kiosk.pam" config/includes.chroot/etc/pam.d/plainnvr-kiosk
 cp -R /usr/share/live/build/bootloaders config/
 cp "$repo_dir/appliance/installer/grub.cfg" config/bootloaders/grub-pc/grub.cfg

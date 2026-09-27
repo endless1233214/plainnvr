@@ -11,6 +11,9 @@ import gi
 gi.require_version('Gtk', '3.0')
 from gi.repository import GdkPixbuf, GLib, Gtk
 import plan
+sys.path.insert(0, '/usr/lib/plainnvr/support')
+import recovery
+from diagnostics import redact
 
 sys.path.insert(0, '/opt/plainnvr/current')
 from app.auth import password_hash, validate_password, validate_username
@@ -52,6 +55,9 @@ class Wizard(Gtk.Window):
         diagnostics = Gtk.Button(label='Diagnostics')
         diagnostics.connect('clicked', self.diagnostics)
         row.pack_start(diagnostics, False, False, 0)
+        self.recover = Gtk.Button(label='Recover existing installation')
+        self.recover.connect('clicked', lambda *_: recovery.show(self) if not self.busy else None)
+        row.pack_start(self.recover, False, False, 0)
         self.back = Gtk.Button(label='Back')
         self.back.connect('clicked', self.previous)
         self.next = Gtk.Button(label='Continue')
@@ -88,6 +94,7 @@ class Wizard(Gtk.Window):
         self.error.set_text('')
         self.steps.set_text('Locale  →  Prepare disks  →  Install drives  →  Administrator  →  Review')
         self.back.set_sensitive(self.page > 0 and self.page < 5)
+        self.recover.set_sensitive(not self.busy and self.page < 5)
         self.next.set_sensitive(True)
         self.next.set_label('Continue')
         if self.page == 0:
@@ -242,17 +249,20 @@ class Wizard(Gtk.Window):
         for path in (Path('/var/log/Xorg.0.log'), plan.STATE / 'installer.log', plan.STATE / 'debian-installer.log'):
             if path.exists():
                 text += '\n' + str(path) + '\n' + path.read_text(errors='replace')[-200000:]
+        text = redact(text)
         Path('/run/plainnvr-installer-diagnostics.txt').write_text(text)
         dialog = Gtk.Dialog(title='Installer diagnostics', transient_for=self)
         dialog.set_default_size(820, 560)
         dialog.add_button('Close', Gtk.ResponseType.CLOSE)
+        dialog.add_button('Save log dump…', 1)
         view = Gtk.TextView(editable=False, monospace=True)
         view.get_buffer().set_text('Saved to /run/plainnvr-installer-diagnostics.txt\n' + text)
         scroll = Gtk.ScrolledWindow()
         scroll.add(view)
         dialog.get_content_area().pack_start(scroll, True, True, 0)
         dialog.show_all()
-        dialog.run()
+        while dialog.run() == 1:
+            recovery.save_dialog(dialog, text)
         dialog.destroy()
 
 

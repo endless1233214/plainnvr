@@ -21,6 +21,7 @@ chown -R root:root /usr/lib/plainnvr /etc/plainnvr /etc/systemd /etc/apt
 chmod -R go-w /usr/lib/plainnvr /etc/plainnvr /etc/systemd /etc/apt
 systemctl enable plainnvr.service plainnvr-kiosk@tty1.service
 systemctl enable plainnvr-setup.service
+systemctl enable plainnvr-diagnostics.timer
 useradd --create-home --shell /bin/bash --password '*' plainnvr-admin
 printf 'plainnvr-admin ALL=(ALL:ALL) NOPASSWD: ALL\n' > /etc/sudoers.d/plainnvr-admin
 chmod 0440 /etc/sudoers.d/plainnvr-admin

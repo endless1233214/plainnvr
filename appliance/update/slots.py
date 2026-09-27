@@ -96,6 +96,9 @@ def configure_root(root, config, slot, original_fstab=''):
         directory = root / 'etc/systemd/system' / (unit + '.d')
         directory.mkdir(parents=True, exist_ok=True)
         text = '[Unit]\nRequires=plainnvr-ab-prepare.service\nAfter=plainnvr-ab-prepare.service\n'
+        if unit == 'plainnvr-kiosk@tty1.service':
+            # The display must still offer diagnostics if A/B preparation fails.
+            text = '[Unit]\nAfter=plainnvr-ab-prepare.service\n'
         if unit == 'plainnvr-control.service':
             # systemd StateDirectory refuses symlinks. The installer already
             # owns/creates this directory on the required persistent volume.

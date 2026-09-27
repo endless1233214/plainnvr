@@ -1,0 +1,9 @@
+[Unit]
+Description=Refresh local PlainNVR startup diagnostics
+
+[Timer]
+OnBootSec=5s
+OnUnitInactiveSec=30s
+
+[Install]
+WantedBy=timers.target

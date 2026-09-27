@@ -3,15 +3,22 @@
 This builds a Debian 13 amd64 hybrid ISO containing the native PlainNVR runtime,
 Debian Installer, GParted and ZFS. It is an appliance development image. The
 owner confirmed revision 3 installed completely on the HP 200 G1 MT. Revision
-6 needs a new HP test; sustained physical recording and storage/mirror tests
+7 needs a new HP test; sustained physical recording and storage/mirror tests
 are still required.
 
-## Revision 6 and A/B updates
+## Revision 7: startup recovery and A/B updates
 
-Revision 6 fixes revision 5's final-installation failure in legacy BIOS mode.
-It adds two 32 GB system slots with signed updates and rollback; remaining
+Revision 7 includes the fixes for revision 5's final-installation failure and
+the earlier Build 6 startup-permissions issue. It uses two 32 GB system slots
+with signed updates and rollback; remaining
 space is shared configuration and recordings. See [update details](../UPDATES.md)
-and the [revision 6 validation record](VALIDATION-6.md) for the scope of testing.
+and the [revision 7 validation record](VALIDATION-7.md) for the scope of testing.
+
+For an existing single-drive A/B installation stuck at **PlainNVR is starting**,
+boot this USB and choose **Recover existing installation** on the first wizard
+page. Recovery can repair startup and install local diagnostics without
+formatting the SSD. See [recovery and log export](../RECOVERY.md). Do not choose
+drive erasure when repairing an existing installation.
 
 ## Appliance controls
 

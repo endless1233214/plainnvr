@@ -10,6 +10,10 @@ mirrored OS drives, and administrator creation or deferred web setup. After
 installation, first boot completes recording storage and directory selection.
 See the installer guide for the graphics compatibility option and setup URL.
 
+Build 7 provides a [live USB recovery tool and local log dumps](RECOVERY.md)
+for the earlier Build 6 single-drive A/B startup issue. The kiosk offers a local
+diagnostic report even when the NVR and setup services are unavailable.
+
 ## Layout
 
 - `debian/build-runtime.sh` builds the pinned media binaries and stages the
@@ -76,7 +80,8 @@ recovery after restarting either service, and CPU/decoding load. The physical
 PC test decides whether Cage/Wayland works well on its graphics hardware;
 an Xorg kiosk fallback can be added if required. The bootable installer and
 first-boot setup are described in [installer/README.md](installer/README.md).
-Automatic updates and rollback remain later milestones.
+Signed A/B updates and rollback are implemented; see [update status](UPDATES.md)
+and the [current installer validation](installer/VALIDATION-7.md).
 
 The Debian 13 amd64 VM prototype has now completed the native validation pass:
 
@@ -96,6 +101,6 @@ The Debian 13 amd64 VM prototype has now completed the native validation pass:
 
 Remaining validation includes the intended old physical PC, graphics hardware,
 sustained CPU/decoding load, WebRTC ICE over TCP/UDP, retention, and a Docker
-regression build. There is no production update mechanism yet. See
+regression build. GitHub release publication still needs end-to-end validation. See
 [installer/README.md](installer/README.md) for the installer work and first-boot
 storage setup.

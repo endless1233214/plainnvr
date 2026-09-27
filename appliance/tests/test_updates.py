@@ -65,6 +65,7 @@ class ClonedRootConfiguration(unittest.TestCase):
             self.assertIn('[Service]\nStateDirectory=\n', override)
             kiosk = (root / 'etc/systemd/system/plainnvr-kiosk@tty1.service.d/ab.conf').read_text()
             self.assertIn('After=plainnvr-ab-prepare.service', kiosk)
+            self.assertNotIn('Requires=plainnvr-ab-prepare.service', kiosk)
 
 
 class InstallerBootPartition(unittest.TestCase):

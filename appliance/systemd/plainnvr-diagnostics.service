@@ -1,0 +1,15 @@
+[Unit]
+Description=Collect PlainNVR startup diagnostics for the local display
+After=systemd-journald.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/lib/plainnvr/support/diagnostics.py
+TimeoutStartSec=90
+UMask=0077
+Nice=10
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/run

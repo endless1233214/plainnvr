@@ -1,6 +1,40 @@
 # PlainNVR OS — native Debian x86-64 prototype handoff
 
-## Current checkpoint - revision 6 repair, September 27, 2026
+## Current checkpoint - revision 7 recovery, September 27, 2026
+
+The owner installed the earlier Build 6 from Downloads (SHA-256 starts
+`d595055b`) and reported the kiosk waiting indefinitely. That image lacks the
+shared-directory traversal fix. Its replacement Build 6 (`66c1f9ef`) was built
+but never completed final validation. Do not distribute either as validated.
+
+Revision 7 is built and verified in disposable SeaBIOS/KVM guests. It adds
+independent local diagnostics, bounded persistent journals, setup/dashboard
+detection, and a live-USB recovery dialog that repairs the single-drive A/B
+permissions issue and installs diagnostics into both slots without formatting.
+46 tests passed. Actual recovery UI, unchanged recording checksum, setup,
+reboot, server-unavailable diagnostics and log downloads passed. A fresh 500 GB
+installation from the final ISO also completed through account/storage setup,
+healthy NVR login, OS controls and the local login screen. See
+[validation evidence](installer/VALIDATION-7.md) and [recovery steps](RECOVERY.md).
+
+Artifact: `C:\Users\Zack\Downloads\PlainNVR-OS\plainnvr-os-0.2.0-installer7-amd64.hybrid.iso`
+(2,040,823,808 bytes). SHA-256:
+`770279e3f1346b0fb4c3ecc9dcb68182caa24d6c220b4895b4e834b560cd4b8a`.
+`BUILD7-RECOVERY.md` in that folder gives the owner the exact steps. Boot the USB,
+choose the normal installer entry, then **Recover existing installation** on
+the first wizard page; do not choose drive erasure to repair the HP.
+
+The HP still needs the physical recovery test. Its last known address (.116)
+did not answer on 8787/8790 or neighbor discovery, and the owner's latest photo
+still shows the old waiting page. No changes were made to the physical HP.
+No GitHub OS release was published. The temporary builder signing-key copy was
+removed; the permanent WSL release key was preserved. The builder and test VMs
+are shut down. Final build log is WSL `plainnvr-os-vm/revision7-build.log`;
+the repaired test disk is `revision7-repair-validation/install-a.qcow2`, and
+the fresh Build 7 install is `revision6-validation/install-a.qcow2` (historical
+directory name). All are disposable local fixtures.
+
+## Previous checkpoint - revision 6 repair, September 27, 2026
 
 The owner tested revision 5 on the HP with one 500 GB SSD and reported a
 `/plainnvr-late` failure. It reproduced in a single-drive BIOS VM. Revision 6

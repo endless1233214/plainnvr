@@ -1,13 +1,20 @@
 # Installed-system update design
 
-Status: revision 5 failed full installation on the owner's single-drive HP.
-Its earlier validation only reached the live wizard and was insufficient.
-Revision 6 corrects the BIOS boot partition type, restores both firmware GRUB
-module packages, and fixes persistent management state. Full install and A/B
-update validation is in progress. The existing GitHub repository remains the
+Status: revision 7 includes the BIOS, GRUB and persistent-state fixes developed
+for revision 6, plus recovery for its earlier startup-permissions defect.
+Signed A/B installation, rollback and failed-trial fallback passed disposable
+VM integration checks; see [revision 6 evidence](installer/VALIDATION-6.md).
+Current startup and recovery evidence is in [revision 7 validation](installer/VALIDATION-7.md).
+The existing GitHub repository remains the
 release source; check, download, install, restart, and rollback are separate
 Settings actions. Revision 4 installations require a backed-up reinstall to
 adopt the two-slot layout.
+
+An existing single-drive A/B installation from Build 6 can use the Build 7 USB's
+**Recover existing installation** action without repartitioning. This installs
+the startup repair and local diagnostics; it is not a general OS bundle update.
+See [recovery instructions](RECOVERY.md). No OS release has been published to
+GitHub or installed on the physical HP by this work.
 
 ## Recommended first release
 

@@ -9,17 +9,24 @@
     main { max-width: 36rem; padding: 2rem; text-align: center; }
     h1 { font-size: 2rem; }
     p { color: #b2c0c7; line-height: 1.5; }
+    a { color: #70ddd1; display: inline-block; margin: .6rem; }
   </style>
 </head>
 <body>
   <main>
     <h1>PlainNVR is starting</h1>
-    <p>The server is not ready yet. This screen checks again automatically. The display and recording service start separately.</p>
-    <p>If this screen stays here, check the data disk and PlainNVR service from the maintenance console.</p>
+    <p id="status">Checking account setup and the recording server. This screen checks again automatically.</p>
+    <p><a href="http://127.0.0.1:8790/">Open account setup</a>
+       <a href="http://127.0.0.1:8787/">Open dashboard</a></p>
+    <p><a href="file:///run/plainnvr-support/index.html">View startup diagnostics / save log dump</a></p>
+    <p>Diagnostics refresh every 30 seconds. If startup fails, the live USB's Recover existing installation button can inspect the disk and export logs.</p>
   </main>
   <script>
     const appUrl = 'http://127.0.0.1:8787/';
     function probe() {
+      const setup = new Image();
+      setup.onload = () => location.replace('http://127.0.0.1:8790/');
+      setup.src = 'http://127.0.0.1:8790/plainnvr-icon.png';
       const sheet = document.createElement('link');
       sheet.rel = 'stylesheet';
       sheet.href = `${appUrl}styles.css?ready=${Date.now()}`;
@@ -30,6 +37,9 @@
     }
     probe();
     setInterval(probe, 5000);
+    setTimeout(() => { document.querySelector('h1').textContent = 'PlainNVR needs attention';
+      document.getElementById('status').textContent = 'Neither service has become available yet. Open startup diagnostics to see service and storage errors. Automatic checks continue.';
+    }, 30000);
   </script>
 </body>
 </html>
