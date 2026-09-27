@@ -1,11 +1,41 @@
 #!/usr/bin/python3
 """Called once inside the freshly installed target by Debian Installer."""
 import os
+import json
 import pwd
 import shutil
 from pathlib import Path
 from common import run, save, device_ref
 from slots import configure_root, copy_kernel, grub_config
+
+
+def prepare_esp(disk):
+    """Identify the guided recipe's boot partition, probing outside udev caches.
+
+    partman-efi creates FAT at /boot/efi in a BIOS install but can leave its
+    GPT type as Linux data. Only normalize partition 2 of a verified OS disk,
+    with the recipe's filesystem and size, before installing either loader.
+    """
+    tree = json.loads(run('lsblk', '-Jpo', 'NAME,TYPE', disk))['blockdevices'][0]
+    candidates = []
+    for node in tree.get('children', []):
+        if node.get('type') != 'part': continue
+        props = dict(line.split('=', 1) for line in
+                     run('blkid', '-p', '-o', 'export', node['name'], check=False).splitlines() if '=' in line)
+        if props.get('PART_ENTRY_NUMBER') == '2': candidates.append((node['name'], props))
+    if len(candidates) != 1: raise RuntimeError(f'Missing guided boot partition on {disk}.')
+    device, props = candidates[0]
+    esp_type = 'c12a7328-f81f-11d2-ba4b-00a0c93ec93b'
+    linux_type = '0fc63daf-8483-4772-8e79-3d69d8477de4'
+    if (props.get('PART_ENTRY_SCHEME') != 'gpt' or props.get('TYPE') != 'vfat'
+            or props.get('PART_ENTRY_TYPE') not in (esp_type, linux_type)
+            or not 1_000_000_000 <= int(run('blockdev', '--getsize64', device)) <= 1_100_000_000):
+        raise RuntimeError(f'{device} does not match the guided 1 GB FAT boot partition.')
+    if props['PART_ENTRY_TYPE'] != esp_type:
+        run('parted', '--script', disk, 'set', '2', 'esp', 'on')
+    if run('blkid', '-p', '-s', 'PART_ENTRY_TYPE', '-o', 'value', device) != esp_type:
+        raise RuntimeError(f'Cannot set the EFI partition type on {device}.')
+    return device
 
 
 def initialize():
@@ -33,12 +63,7 @@ def initialize():
         raise RuntimeError('System disks do not match the reviewed drive selection.')
     esp_devices = []
     for disk in sorted(disks):
-        import json
-        tree = json.loads(run('lsblk', '-Jpo', 'NAME,PARTTYPE', disk))['blockdevices'][0]
-        choices = [p['name'] for p in tree.get('children', [])
-                   if p.get('parttype') == 'c12a7328-f81f-11d2-ba4b-00a0c93ec93b']
-        if len(choices) != 1: raise RuntimeError('Each system disk must have one EFI partition.')
-        esp_devices.append((disk, choices[0]))
+        esp_devices.append((disk, prepare_esp(disk)))
     config = {'layout': 1, 'mirror': mirror, 'slots': {k: device_ref(v) for k, v in devices.items()},
               'data_device': device_ref(data),
               'esp_uuids': [run('blkid', '-s', 'UUID', '-o', 'value', p) for _, p in esp_devices]}
@@ -53,6 +78,9 @@ def initialize():
     user = pwd.getpwnam('plainnvr')
     os.chown(mount / 'nvr', user.pw_uid, user.pw_gid)
     (mount / 'system').mkdir(mode=0o711)
+    # d-i uses umask 077: mkdir(mode=...) alone removes traversal permissions.
+    # The kiosk must reach public setup markers and OpenSSH its public keys.
+    (mount / 'system').chmod(0o711)
     for source, name in [('/etc/plainnvr', 'config'), ('/var/lib/plainnvr-setup', 'setup'),
                          ('/var/lib/plainnvr-control', 'control')]:
         if Path(source).exists(): shutil.copytree(source, mount / 'system' / name, symlinks=True)
@@ -61,7 +89,7 @@ def initialize():
     save(mount / 'system/config/ab.json', config)
     save(mount / 'system/config/update-source.json', {'repository': 'endless1233214/plainnvr', 'channel': 'stable'})
     version = Path('/usr/lib/plainnvr/update/VERSION').read_text().strip()
-    save(mount / 'system/update/slots.json', {slot: {'version': version, 'healthy': True} for slot in ('A', 'B')})
+    save(mount / 'system/update/slots.json', {slot: {'version': version, 'healthy': False} for slot in ('A', 'B')})
     mount.chmod(0o711); os.chown(mount, 0, 0)
     Path('/persist').mkdir(exist_ok=True)
     run('mount', '--bind', mount, '/persist')

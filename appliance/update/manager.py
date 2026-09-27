@@ -83,7 +83,7 @@ def locked():
 
 def status():
     if not CONFIG.exists():
-        return {'supported': False, 'message': 'This installation uses the previous disk layout. A backed-up reinstall with installer 5 is required to enable A/B updates.'}
+        return {'supported': False, 'message': 'This installation uses the previous disk layout. Back up your data and reinstall with installer 6 or newer to enable A/B updates.'}
     slot = current()
     cache = load(STATE / 'releases.json', {})
     downloaded = load(STATE / 'downloaded.json', {})

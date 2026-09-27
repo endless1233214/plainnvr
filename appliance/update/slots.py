@@ -59,7 +59,20 @@ def fstab(config, slot, original=''):
 
 def configure_root(root, config, slot, original_fstab=''):
     root = Path(root)
-    (root / 'persist').mkdir(exist_ok=True)
+    # Factory files may come from a Windows/SMB checkout. Never carry writable
+    # root/parent directories into a slot (OpenSSH also rejects that layout).
+    for directory in ('', 'etc', 'usr', 'usr/lib', 'var', 'var/lib', 'opt'):
+        path = root / directory
+        path.mkdir(parents=True, exist_ok=True)
+        path.chmod(0o755)
+        os.chown(path, 0, 0)
+    # rsync intentionally excludes mounted runtime trees during installation.
+    # Keep their empty mount targets in the cloned and update-installed roots.
+    for directory in ('persist', 'dev', 'proc', 'sys', 'run', 'tmp', 'var/tmp', 'var/lib/plainnvr'):
+        (root / directory).mkdir(parents=True, exist_ok=True)
+    for directory in ('tmp', 'var/tmp'):
+        (root / directory).chmod(0o1777)
+    (root / 'persist').chmod(0o711)
     for name, target in [('etc/plainnvr', '/persist/system/config'),
                          ('var/lib/plainnvr-setup', '/persist/system/setup'),
                          ('var/lib/plainnvr-control', '/persist/system/control')]:
@@ -78,10 +91,16 @@ def configure_root(root, config, slot, original_fstab=''):
         '[slot.rootfs.1]\ndevice=' + config['slots']['B'] + '\ntype=ext4\nbootname=B\n')
     for unit in ['plainnvr-ab-prepare.service', 'plainnvr-ab-health.service']:
         run('systemctl', '--root', root, 'enable', unit)
-    for unit in ['plainnvr.service', 'plainnvr-setup.service', 'plainnvr-control.service']:
+    for unit in ['plainnvr.service', 'plainnvr-setup.service', 'plainnvr-control.service',
+                 'plainnvr-kiosk@tty1.service']:
         directory = root / 'etc/systemd/system' / (unit + '.d')
         directory.mkdir(parents=True, exist_ok=True)
-        (directory / 'ab.conf').write_text('[Unit]\nRequires=plainnvr-ab-prepare.service\nAfter=plainnvr-ab-prepare.service\n')
+        text = '[Unit]\nRequires=plainnvr-ab-prepare.service\nAfter=plainnvr-ab-prepare.service\n'
+        if unit == 'plainnvr-control.service':
+            # systemd StateDirectory refuses symlinks. The installer already
+            # owns/creates this directory on the required persistent volume.
+            text += '[Service]\nStateDirectory=\n'
+        (directory / 'ab.conf').write_text(text)
     directory = root / 'etc/systemd/system/rauc.service.d'
     directory.mkdir(parents=True, exist_ok=True)
     (directory / 'ab.conf').write_text('[Unit]\nRequiresMountsFor=/persist\n')

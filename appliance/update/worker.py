@@ -80,7 +80,8 @@ def stage(request):
             finally: run('umount', target)
             run(LIB / 'boot.py', 'set-primary', other)
         else:
-            progress('installing', 'Writing the inactive system. Keep both boot drives connected.')
+            progress('installing', 'Writing the inactive system. ' + (
+                'Keep both boot drives connected.' if config['mirror'] else 'Keep the appliance powered on.'))
             run('rauc', 'install', STATE / 'download.raucb', timeout=2400)
         pending['phase'] = 'ready'; save(STATE / 'pending.json', pending)
         progress('awaiting-reboot', 'Ready. Restart the appliance to try system ' + other + '.')

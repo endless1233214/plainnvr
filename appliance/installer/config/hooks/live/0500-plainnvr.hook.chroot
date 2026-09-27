@@ -16,7 +16,9 @@ chown -R root:root /opt/plainnvr/releases
 chmod -R go-w /opt/plainnvr/releases
 # Includes copied from a developer checkout must never keep that user's UID.
 chown root:root / /etc /usr /usr/lib
+chmod 0755 / /etc /usr /usr/lib /var /var/lib /opt
 chown -R root:root /usr/lib/plainnvr /etc/plainnvr /etc/systemd /etc/apt
+chmod -R go-w /usr/lib/plainnvr /etc/plainnvr /etc/systemd /etc/apt
 systemctl enable plainnvr.service plainnvr-kiosk@tty1.service
 systemctl enable plainnvr-setup.service
 useradd --create-home --shell /bin/bash --password '*' plainnvr-admin

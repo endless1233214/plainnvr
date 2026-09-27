@@ -1,7 +1,8 @@
 [Unit]
 Description=PlainNVR signed OS update worker
-After=network-online.target plainnvr-ab-prepare.service
-Wants=network-online.target
+After=network.target plainnvr-ab-prepare.service
+# Downloads have their own bounded network errors. Installing a verified local
+# bundle or selecting rollback must also work with the network disconnected.
 RequiresMountsFor=/persist
 ConditionPathExists=/etc/plainnvr/ab.json
 

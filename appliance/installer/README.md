@@ -2,15 +2,23 @@
 
 This builds a Debian 13 amd64 hybrid ISO containing the native PlainNVR runtime,
 Debian Installer, GParted and ZFS. It is an appliance development image. The
-owner has confirmed a complete installation on the HP 200 G1 MT. Sustained physical recording and physical storage/mirror tests are still required.
+owner confirmed revision 3 installed completely on the HP 200 G1 MT. Revision
+6 needs a new HP test; sustained physical recording and storage/mirror tests
+are still required.
 
-## Revision 4 appliance controls
+## Revision 6 and A/B updates
+
+Revision 6 fixes revision 5's final-installation failure in legacy BIOS mode.
+It adds two 32 GB system slots with signed updates and rollback; remaining
+space is shared configuration and recordings. See [update details](../UPDATES.md)
+and the [revision 6 validation record](VALIDATION-6.md) for the scope of testing.
+
+## Appliance controls
 
 Revision 4 adds SMB recording storage, OS Settings, key-only SSH control, network
 rollback, disk/pool management, local and browser file managers/terminals, and a
 visible LAN address at login and on the dashboard. See [management details](../MANAGEMENT.md)
-and [the proposed update design](../UPDATES.md). OTA updates and an A/B boot layout
-are not implemented in this revision.
+and [the update design](../UPDATES.md).
 
 The installer, first-boot setup and web interface use the existing PlainNVR
 camera icon from the iPhone app, also included as the browser icon.
@@ -33,8 +41,9 @@ camera icon from the iPhone app, also included as the browser icon.
 4. Create the PlainNVR administrator, or choose **Set up later in the web UI**.
 5. Review the exact drives and type **ERASE**, then click **Install PlainNVR
    OS**. Debian Installer runs inside the same desktop and displays progress.
-   Use drives of at least 36 GB each; 64 GB or more leaves more update space.
-   The layout reserves 24 GB for the OS and a separate `/var/lib/plainnvr`.
+   Use drives of at least 80 GB each; 128 GB or larger is recommended.
+   The layout reserves 32 GB each for OS A and B, about 1 GB for boot files,
+   and the remainder for shared data. A single 500 GB SSD is supported.
    Mirrored installs have no swap partition; 8 GB RAM is recommended.
 6. Reboot and remove the USB. The monitor shows the storage/directory setup
    wizard and its LAN address on port 8790. If you deferred account creation,

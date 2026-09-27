@@ -1,10 +1,13 @@
 # Installed-system update design
 
-Status: implemented in installer revision 5. New installations use signed A/B
-system slots; the existing GitHub repository remains the release source. The
-revision-5 Settings page has separate check, download, install, restart, and
-rollback actions. Revision 4 installations continue to work, but report that
-an installer-5 reinstall is required before OS rollback is available.
+Status: revision 5 failed full installation on the owner's single-drive HP.
+Its earlier validation only reached the live wizard and was insufficient.
+Revision 6 corrects the BIOS boot partition type, restores both firmware GRUB
+module packages, and fixes persistent management state. Full install and A/B
+update validation is in progress. The existing GitHub repository remains the
+release source; check, download, install, restart, and rollback are separate
+Settings actions. Revision 4 installations require a backed-up reinstall to
+adopt the two-slot layout.
 
 ## Recommended first release
 
@@ -60,7 +63,7 @@ The installer puts a bootloader and independent boot state on every selected
 drive. Recording pools such as ext4, XFS, ZFS, and SMB are configured after the
 OS install and are not included in an OS bundle.
 
-The verified installer currently available for the next test is:
+The withdrawn revision 5 artifact (do not use for new installations) is:
 
 `plainnvr-os-0.2.0-installer5-amd64.hybrid.iso`
 

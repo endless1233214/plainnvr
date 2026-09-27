@@ -1,6 +1,16 @@
 # PlainNVR OS — native Debian x86-64 prototype handoff
 
-## Current checkpoint - installer revision 4, September 27, 2026
+## Current checkpoint - revision 6 repair, September 27, 2026
+
+The owner tested revision 5 on the HP with one 500 GB SSD and reported a
+`/plainnvr-late` failure. It reproduced in a single-drive BIOS VM. Revision 6
+fixes the boot partition type, offline GRUB module installation, A/B management
+state and filesystem permissions. Signed update, rollback, automatic failed
+trial fallback and SQLite restore passed in an integration probe. The final ISO
+installation test is in progress; consult installer/VALIDATION-6.md before
+claiming an artifact ready. Revision 5 is withdrawn for new installations.
+
+## Previous checkpoint - installer revision 4, September 27, 2026
 
 The owner reports the revision-3 installer completed on the HP through account,
 storage setup and the dashboard. The HP's confirmed LAN URL is

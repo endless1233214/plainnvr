@@ -1,15 +1,27 @@
 #!/bin/sh
 set -eu
+stage='initialization'
+trap 'status=$?; if [ "$status" -ne 0 ]; then echo "PlainNVR final installation failed during: $stage (exit $status)" >&2; fi' EXIT
 if [ -f /plainnvr-mirror-selected ]; then
     mkdir -p /target/etc/plainnvr
     cp /plainnvr-mirror-selected /target/etc/plainnvr/mirror-selected
 fi
+stage='appliance services'
+echo "PlainNVR: configuring $stage"
 in-target /usr/lib/plainnvr/finish-install
 if [ -f /plainnvr-install-settings.json ]; then
     mkdir -p /target/etc/plainnvr
     cp /plainnvr-install-settings.json /target/etc/plainnvr/install-settings.json
     chmod 0600 /target/etc/plainnvr/install-settings.json
+    stage='administrator and network setup'
+    echo "PlainNVR: configuring $stage"
     in-target /usr/bin/python3 /usr/lib/plainnvr/installer/provision.py
 fi
+stage='A/B system slots and bootloaders'
+echo "PlainNVR: configuring $stage"
+# grub-installer removes the unused firmware's modules from the copied live
+# system. A/B installs both BIOS and EFI loaders; restore both from this USB.
+apt-install grub-pc-bin grub-efi-amd64-bin
 in-target /usr/bin/python3 /usr/lib/plainnvr/update/initialize.py
 touch /plainnvr-install-success
+echo 'PlainNVR: final installation completed'

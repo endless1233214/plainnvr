@@ -62,6 +62,10 @@ def prepare():
             write_env(mount, ORDER=slot + ' ' + pending['target'], PENDING='none', **{
                 slot + '_OK': '1', slot + '_TRY': '0', pending['target'] + '_OK': '0',
                 pending['target'] + '_TRY': '0'})
+    versions = load(STATE / 'slots.json', {})
+    failed = versions.setdefault(pending['target'], {'version': pending['version']})
+    failed['healthy'] = False
+    save(STATE / 'slots.json', versions)
     save(STATE / 'last-result.json', {'state': 'rolled-back', 'version': pending['version'],
                                     'message': 'The trial did not complete; the previous system was restored.'})
     (STATE / 'pending.json').unlink()
