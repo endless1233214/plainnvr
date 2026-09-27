@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+openbox &
+xsetroot -cursor_name left_ptr
+case "$1" in
+    files) exec pcmanfm --no-desktop /var/lib/plainnvr ;;
+    terminal) exec xterm -T 'PlainNVR administrator terminal' -e /bin/bash ;;
+    gparted) exec gparted ;;
+    *) exit 1 ;;
+esac

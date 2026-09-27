@@ -1,0 +1,15 @@
+[Unit]
+Description=PlainNVR local maintenance tool (%i)
+Conflicts=plainnvr-kiosk@tty1.service getty@tty1.service plainnvr-gparted.service
+After=plainnvr-kiosk@tty1.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/xinit /usr/bin/dbus-run-session /usr/lib/plainnvr/control/local-tool %i -- :0 vt1 -nolisten tcp
+ExecStopPost=/usr/bin/systemctl start --no-block plainnvr-kiosk@tty1.service
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes

@@ -32,6 +32,8 @@ PAIR_SESSION = secrets.token_hex(32)
 
 
 def finish(selection):
+    selection = dict(selection)
+    smb_password = selection.pop('smb_password', None)
     editor = storage.run('systemctl', 'show', '--value', '-p', 'ActiveState', 'plainnvr-gparted.service')
     if editor in ('active', 'activating', 'deactivating'):
         raise ValueError('Close GParted before finishing storage setup.')
@@ -62,10 +64,12 @@ def finish(selection):
         journal = {'selection': selection, 'plan': storage.validate(selection), 'directories': False}
         storage.save_json(journal_file, journal)
     plan = journal['plan']
+    if plan['mode'] == 'smb' and smb_password:
+        storage.save_smb_credentials(plan, smb_password)
     try:
         recording_mount = storage.prepare(plan)
     except ValueError:
-        if plan['mode'].startswith('zfs-') and not (STATE / 'zfs-progress.json').exists():
+        if (plan['mode'].startswith('zfs-') and not (STATE / 'zfs-progress.json').exists()) or (plan['mode'] == 'smb' and subprocess.run(['mountpoint', '-q', str(storage.RECORDING_MOUNT)]).returncode):
             # The pool creation/import was rejected before any recorded change.
             # The next attempt may choose a different pool name or disk set.
             journal_file.unlink(missing_ok=True)
@@ -76,15 +80,19 @@ def finish(selection):
         raise ValueError('The recording filesystem does not permit PlainNVR to access it. Adjust its directory permissions in the maintenance console and retry.')
     if not journal['directories']:
         storage.empty_directory(storage.DATA_MOUNT, plan['data_directory'])
-        storage.empty_directory(recording_mount, plan['recording_directory'])
+        storage.empty_directory(recording_mount, plan['recording_directory'], network=plan['mode'] == 'smb')
         journal['directories'] = True
         storage.save_json(journal_file, journal)
     for path in (data, recordings):
         if path.resolve() != path or not path.is_dir():
             raise ValueError('A storage directory changed during setup.')
         user = pwd.getpwnam('plainnvr')
-        os.chown(path, user.pw_uid, user.pw_gid)
-        path.chmod(0o700)
+        if path != recordings or plan['mode'] != 'smb':
+            os.chown(path, user.pw_uid, user.pw_gid)
+            path.chmod(0o700)
+    storage.run('runuser', '-u', 'plainnvr', '--', '/usr/bin/python3', '-c',
+                'import os,sys,tempfile; f=tempfile.NamedTemporaryFile(dir=sys.argv[1]); f.write(b"PlainNVR storage check"); f.flush(); os.fsync(f.fileno()); f.close()',
+                str(recordings), timeout=30)
     admin = json.loads(ADMIN.read_text())
     result = subprocess.run(['runuser', '-u', 'plainnvr', '--', '/usr/bin/python3',
                              '/usr/lib/plainnvr/setup/seed-admin.py', str(data)],
@@ -98,6 +106,7 @@ def finish(selection):
     dropin = Path('/etc/systemd/system/plainnvr.service.d/storage.conf')
     dropin.parent.mkdir(parents=True, exist_ok=True)
     dropin.write_text('[Unit]\nAfter=zfs-mount.service\n'
+                      + (f'BindsTo={storage.run("systemd-escape", "--path", "--suffix=mount", str(recording_mount))}\n' if recording_mount != storage.DATA_MOUNT else '') +
                       f'RequiresMountsFor={storage.DATA_MOUNT} {recording_mount}\n'
                       f'AssertPathIsMountPoint={recording_mount}\n'
                       '[Service]\nEnvironmentFile=/etc/plainnvr/runtime.env\n'
@@ -106,6 +115,7 @@ def finish(selection):
     COMPLETE.touch(mode=0o644)
     try:
         storage.run('systemctl', 'daemon-reload')
+        storage.run('systemctl', 'start', 'plainnvr-control.service')
         storage.run('systemctl', 'start', 'plainnvr.service')
         for _ in range(30):
             try:
@@ -166,6 +176,15 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if not self.allowed_host():
             return self.send({'error': 'Local setup only.'}, 403)
+        if self.path == '/plainnvr-icon.png':
+            body = Path('/opt/plainnvr/current/static/plainnvr-icon.png').read_bytes()
+            self.send_response(200)
+            self.send_header('Content-Type', 'image/png')
+            self.send_header('Content-Length', str(len(body)))
+            self.send_header('X-Content-Type-Options', 'nosniff')
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if self.path == '/':
             page = Path(__file__).with_name('index.html').read_text().replace('__TOKEN__', TOKEN)
             return self.send(page, html=True)

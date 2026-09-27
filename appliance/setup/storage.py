@@ -1,5 +1,6 @@
 """Storage operations for the local, authenticated first-boot wizard."""
 import json
+import ipaddress
 import os
 import pwd
 import re
@@ -10,6 +11,26 @@ STATE = Path('/var/lib/plainnvr-setup')
 RECORDING_MOUNT = Path('/srv/plainnvr-storage')
 DATA_MOUNT = Path('/var/lib/plainnvr')
 SAFE_NAME = re.compile(r'^[A-Za-z][A-Za-z0-9_-]{0,47}$')
+SMB_CREDENTIALS = Path('/etc/plainnvr/smb.credentials')
+
+
+def smb_options(plan):
+    user = pwd.getpwnam('plainnvr')
+    return (f'credentials={SMB_CREDENTIALS},vers=3,uid={user.pw_uid},gid={user.pw_gid},'
+            'forceuid,forcegid,file_mode=0600,dir_mode=0700,nosuid,nodev,noexec,cache=strict')
+
+
+def save_smb_credentials(plan, password):
+    if not isinstance(password, str) or not password or len(password) > 1024 or any(c in password for c in '\r\n\x00'):
+        raise ValueError('Enter the SMB password without line breaks.')
+    SMB_CREDENTIALS.parent.mkdir(parents=True, exist_ok=True)
+    temporary = SMB_CREDENTIALS.with_suffix('.tmp')
+    with open(temporary, 'w', encoding='utf-8') as stream:
+        os.chmod(temporary, 0o600)
+        stream.write(f'username={plan["smb_username"]}\npassword={password}\ndomain={plan["smb_domain"]}\n')
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, SMB_CREDENTIALS)
 
 
 def run(*args, timeout=90):
@@ -63,10 +84,11 @@ def system_devices():
     for target in ('/', '/boot', '/boot/efi', str(DATA_MOUNT)):
         if not Path(target).exists():
             continue
-        source = run('findmnt', '-nro', 'SOURCE', '--target', target).split('[')[0]
-        if source.startswith('/dev/'):
-            for name in run('lsblk', '--inverse', '--raw', '--noheadings', '--paths', '--output', 'NAME', source).splitlines():
-                protected.add(str(Path(name.strip()).resolve()))
+        for source in run('findmnt', '-nro', 'SOURCE', '--target', target).splitlines():
+            source = source.split('[')[0]
+            if source.startswith('/dev/'):
+                for name in run('lsblk', '--inverse', '--raw', '--noheadings', '--paths', '--output', 'NAME', source).splitlines():
+                    protected.add(str(Path(name.strip()).resolve()))
     return protected
 
 
@@ -114,7 +136,7 @@ def validate(request):
     if not isinstance(request, dict):
         raise ValueError('Invalid storage selection.')
     mode = request.get('mode')
-    if mode not in ('default', 'filesystem', 'zfs-create', 'zfs-import'):
+    if mode not in ('default', 'filesystem', 'zfs-create', 'zfs-import', 'smb'):
         raise ValueError('Choose a storage type.')
     plan = {'mode': mode, 'data_directory': subdirectory(request.get('data_directory')),
             'recording_directory': subdirectory(request.get('recording_directory'))}
@@ -122,6 +144,29 @@ def validate(request):
         left, right = plan['data_directory'], plan['recording_directory']
         if left == right or left.startswith(right + '/') or right.startswith(left + '/'):
             raise ValueError('Configuration and recording directories must be separate.')
+        return plan
+    if mode == 'smb':
+        host = str(request.get('smb_host', '')).strip()
+        if '%' in host:
+            raise ValueError('Scoped SMB addresses are not supported; use a hostname or unscoped IP.')
+        try:
+            ipaddress.ip_address(host)
+        except ValueError:
+            if not re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?', host):
+                raise ValueError('Enter an SMB server IP address or hostname, without slashes.')
+        share = str(request.get('smb_share', '')).strip()
+        if not re.fullmatch(r'[A-Za-z0-9_$.-]{1,80}', share) or share in ('.', '..'):
+            raise ValueError('Enter a share name using letters, numbers, dots, dashes, underscores or $.')
+        username, domain = request.get('smb_username', ''), request.get('smb_domain', '')
+        for value in (username, domain):
+            if not isinstance(value, str) or len(value) > 128 or any(c in value for c in '\r\n\x00'):
+                raise ValueError('Invalid SMB username or domain.')
+        if not username.strip():
+            raise ValueError('Enter an SMB username.')
+        if request.get('smb_acknowledged') is not True:
+            raise ValueError('Acknowledge the SMB performance and network availability warning.')
+        plan.update(smb_host=host, smb_share=share, smb_username=username, smb_domain=domain,
+                    smb_acknowledged=True)
         return plan
     devices = inventory()
     if mode == 'filesystem':
@@ -162,7 +207,7 @@ def assert_mount(path):
         raise ValueError(f'{path} is not mounted. Setup stopped to protect the system disk.')
 
 
-def empty_directory(base, relative):
+def empty_directory(base, relative, network=False):
     # Reject symlinks at every component, including a final dangling symlink.
     current = base
     user = pwd.getpwnam('plainnvr')
@@ -171,8 +216,11 @@ def empty_directory(base, relative):
         if current.is_symlink():
             raise ValueError('Storage directories cannot contain symbolic links.')
         if not current.exists():
-            current.mkdir(mode=0o700)
-            os.chown(current, user.pw_uid, user.pw_gid)
+            if network:
+                run('runuser', '-u', 'plainnvr', '--', 'mkdir', '-m', '0700', '--', str(current))
+            else:
+                current.mkdir(mode=0o700)
+                os.chown(current, user.pw_uid, user.pw_gid)
         elif current.stat().st_uid != user.pw_uid:
             raise ValueError('Choose a new directory; an existing parent belongs to another user.')
     if any(current.iterdir()):
@@ -187,7 +235,25 @@ def prepare(plan):
     RECORDING_MOUNT.mkdir(parents=True, exist_ok=True)
     if RECORDING_MOUNT.is_symlink():
         raise ValueError('Recording mount cannot be a symbolic link.')
-    if plan['mode'] == 'filesystem':
+    if plan['mode'] == 'smb':
+        if not SMB_CREDENTIALS.is_file():
+            raise ValueError('Enter the SMB credentials again.')
+        host = plan['smb_host']
+        source = f'//{("[" + host + "]") if ":" in host else host}/{plan["smb_share"]}'
+        if subprocess.run(['mountpoint', '-q', str(RECORDING_MOUNT)]).returncode:
+            if any(RECORDING_MOUNT.iterdir()):
+                raise ValueError('Recording mount directory is not empty.')
+            run('mount', '-t', 'cifs', source, str(RECORDING_MOUNT), '-o', smb_options(plan), timeout=30)
+        actual = run('findmnt', '-nro', 'SOURCE,FSTYPE', '--mountpoint', str(RECORDING_MOUNT)).split()
+        if actual != [source, 'cifs']:
+            raise ValueError('The recording mount belongs to a different share or filesystem.')
+        unit = Path('/etc/systemd/system') / run('systemd-escape', '--path', '--suffix=mount', str(RECORDING_MOUNT))
+        unit.write_text('[Unit]\nDescription=PlainNVR SMB recordings\nRequires=plainnvr-network-online.service\nAfter=plainnvr-network-online.service\n'
+                        f'[Mount]\nWhat={source}\nWhere={RECORDING_MOUNT}\nType=cifs\nOptions={smb_options(plan)}\nTimeoutSec=30\n'
+                        '[Install]\nWantedBy=multi-user.target\n')
+        run('systemctl', 'daemon-reload')
+        run('systemctl', 'enable', unit.name)
+    elif plan['mode'] == 'filesystem':
         source = f'UUID={plan["uuid"]}'
         if subprocess.run(['mountpoint', '-q', str(RECORDING_MOUNT)]).returncode:
             if any(RECORDING_MOUNT.iterdir()):

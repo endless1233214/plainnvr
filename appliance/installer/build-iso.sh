@@ -47,6 +47,12 @@ cp "$repo_dir/appliance/installer/config/includes.installer/preseed.cfg" \
 release="config/includes.chroot/opt/plainnvr/releases/$version"
 mkdir -p "$release" config/includes.chroot/etc/systemd/system config/includes.chroot/etc/pam.d
 cp -a "$runtime/." "$release/"
+# Refresh application/UI sources alongside the appliance management layer.
+cp -R "$repo_dir/app/." "$release/app/"
+cp -R "$repo_dir/static/." "$release/static/"
+mkdir -p config/includes.chroot/usr/lib/plainnvr/control
+cp "$repo_dir/appliance/control/"*.py "$repo_dir/appliance/control/local-tool" config/includes.chroot/usr/lib/plainnvr/control/
+chmod 0755 config/includes.chroot/usr/lib/plainnvr/control/local-tool
 mkdir -p config/includes.chroot/usr/lib/plainnvr/setup
 cp "$repo_dir/appliance/setup/"*.py "$repo_dir/appliance/setup/index.html" config/includes.chroot/usr/lib/plainnvr/setup/
 # Kiosk setup routing is appliance-specific; keep it current when using a

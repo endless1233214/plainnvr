@@ -1,6 +1,37 @@
 # PlainNVR OS — native Debian x86-64 prototype handoff
 
-## Current checkpoint - installer revision 3, September 26, 2026
+## Current checkpoint - installer revision 4, September 27, 2026
+
+The owner reports the revision-3 installer completed on the HP through account,
+storage setup and the dashboard. The HP's confirmed LAN URL is
+http://192.168.1.116:8787/ (health verified September 27). Address .215 serves the
+PlainNVR public website, not this appliance. No update has been deployed to the HP.
+
+Revision 4 implements SMB recording storage during first boot and afterward,
+OS settings for system/network/SSH/storage/logs/power, local PCManFM/xterm/GParted,
+and authenticated browser Files and Terminal. The existing iPhone camera icon now brands the installer, setup, login, sidebar and browser tabs. Login and dashboard display the
+current LAN URL. See MANAGEMENT.md for capabilities and limitations and
+installer/VALIDATION.md for test evidence and the final artifact.
+
+The owner asked about GitHub-managed OTA and suggested a 500 GB boot drive with
+a 50/50 split. We discussed equal A/B *OS* slots (e.g. 32 GB each), small boot
+partitions and shared recordings in remaining space. A 500 GB all-in-one drive
+can be a recommendation, but rollback alone does not require that capacity.
+The owner accepted 32 GB OS A + 32 GB OS B + small boot/recovery partitions and remaining space for shared recordings. The layout and updater are not implemented. Current install layout
+and boot-mirror behavior are unchanged. See UPDATES.md.
+
+Artifact: `C:\Users\Zack\Downloads\PlainNVR-OS\plainnvr-os-0.1.4-installer4-amd64.hybrid.iso`.
+SHA-256: `cfdccad8e44335fd195bbf72bec600070decbc5e5b164ee108bd7851da3ac171`.
+
+Disposable test scripts/disks are in WSL `/home/endless/plainnvr-os-vm`.
+Revision-4 ISO installation validation uses `revision4-validation/install-branded.qcow2`.
+Management integration used `management-system.qcow2` and separate ext4/ZFS disks,
+with a loopback-only Samba fixture. The original prototype disk was an unchanged
+overlay backing file. All revision-4 build/test VMs are shut down. The full branded BIOS USB install,
+remote first-boot setup, OS controls and subsequent reboot passed. Build log is
+`revision4-validation/build.log`. See the validation record for current test results.
+
+## Previous checkpoint - installer revision 3, September 26, 2026
 
 September 27 hardware update: the owner tested revisions 1 and 2 on the current
 development laptop and reported both worked through the stages tried. Revision
@@ -8,7 +39,7 @@ development laptop and reported both worked through the stages tried. Revision
 data. No physical installation or formatting was performed. This adds a
 successful physical boot-to-GParted check and supports focusing investigation
 on HP-specific compatibility, without establishing its precise cause. Revision
-3 has not yet had a reported physical retest.
+3 has now completed a physical installation on the HP, including first-boot setup and the main dashboard (owner report, September 27).
 
 The physical machine is HP 200 G1 MT, Pentium J2900 (2.41 GHz), 8 GB DDR3,
 board ID 2B1A, BIOS SHA v80.08 dated July 18, 2014. The keyboard is USB directly
@@ -26,7 +57,7 @@ SHA-256: `d4c54a9ff034d42f6cfd402fd5cf006fb8e16def916b1f8c28f8300d27dba871`.
 Linux/live and Debian Installer payload checksums are unchanged from revision 2.
 Both UEFI and BIOS VMs booted the ISO as USB storage automatically without keys.
 With PS/2 disabled, USB keys selected and booted the compatibility entry on both.
-The HP still needs a physical retest. Do not claim its hardware problem fixed.
+The owner confirmed the HP completed installation through the dashboard. Physical mirrored boot drives, ZFS, and separate ext4 recording storage are still untested.
 See `installer/VALIDATION.md`; previous records are `VALIDATION-2.md` and
 `VALIDATION-1.md`.
 

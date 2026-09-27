@@ -1,0 +1,9 @@
+[Unit]
+Description=Wait for an appliance network address before mounting SMB
+Wants=network-online.target
+After=network-online.target systemd-resolved.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/lib/plainnvr/control/system.py --wait-online
+TimeoutStartSec=70

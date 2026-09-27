@@ -4,6 +4,8 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>PlainNVR</title>
+    <link rel="icon" type="image/png" href="/plainnvr-icon.png" />
+    <link rel="apple-touch-icon" href="/plainnvr-icon.png" />
     <script>
       (() => {
         try {
@@ -16,12 +18,13 @@
       })();
     </script>
     <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/appliance.css" />
   </head>
   <body class="app-body">
     <div class="app-shell">
       <aside class="sidebar" aria-label="Primary navigation">
         <div class="brand">
-          <div class="brand-mark" aria-hidden="true">P</div>
+          <img class="brand-mark" src="/plainnvr-icon.png" alt="" width="38" height="38" />
           <div>
             <strong>PlainNVR</strong>
             <span>Local NVR</span>
@@ -570,5 +573,8 @@
     <script type="module" src="/go2rtc-player.js"></script>
     <script src="/app.js"></script>
     <script src="/ui.js"></script>
+    <script src="/os-client.js"></script>
+    <script src="/appliance.js"></script>
+    <script src="/appliance-address.js" defer></script>
   </body>
 </html>

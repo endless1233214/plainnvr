@@ -2,7 +2,18 @@
 
 This builds a Debian 13 amd64 hybrid ISO containing the native PlainNVR runtime,
 Debian Installer, GParted and ZFS. It is an appliance development image. The
-physical-PC graphics and sustained recording tests are still required.
+owner has confirmed a complete installation on the HP 200 G1 MT. Sustained physical recording and physical storage/mirror tests are still required.
+
+## Revision 4 appliance controls
+
+Revision 4 adds SMB recording storage, OS Settings, key-only SSH control, network
+rollback, disk/pool management, local and browser file managers/terminals, and a
+visible LAN address at login and on the dashboard. See [management details](../MANAGEMENT.md)
+and [the proposed update design](../UPDATES.md). OTA updates and an A/B boot layout
+are not implemented in this revision.
+
+The installer, first-boot setup and web interface use the existing PlainNVR
+camera icon from the iPhone app, also included as the browser icon.
 
 ## Installation flow
 
@@ -43,7 +54,7 @@ Revision 3 uses GRUB's firmware console without loading its graphical terminal
 or changing video mode. Legacy BIOS uses the SYSLINUX text menu. If a USB
 keyboard is unavailable only at the boot menu, leave it untouched for the
 countdown so Linux can take over input. A firmware/bootloader hang can still
-prevent the countdown; this change has not yet been retested on the HP 200 G1.
+prevent the countdown. The owner subsequently confirmed revision 3 installed successfully on the HP 200 G1.
 
 The installer image carries its OS and application packages; installation does
 not require downloading PlainNVR. Network configuration can use Ethernet DHCP.
@@ -67,6 +78,9 @@ complete. The wizard offers:
   disks with partitions, and disks with existing signatures are excluded.
 - An exported ZFS pool, imported without forcing it, with a new dataset for
   PlainNVR. Existing datasets are preserved.
+- An SMB 3 network share, with explicit acknowledgement of reduced performance
+  and network-outage risks. Credentials stay in a root-only file and the
+  configuration database stays on local storage.
 
 The configuration database stays on the installed persistent data filesystem.
 ZFS is supported for recording pools; the boot filesystem uses ext4/RAID1.

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import gi
 gi.require_version('Gtk', '3.0')
-from gi.repository import GLib, Gtk
+from gi.repository import GdkPixbuf, GLib, Gtk
 import plan
 
 sys.path.insert(0, '/opt/plainnvr/current')
@@ -19,6 +19,8 @@ from app.auth import password_hash, validate_password, validate_username
 class Wizard(Gtk.Window):
     def __init__(self):
         super().__init__(title='Install PlainNVR OS')
+        icon = '/opt/plainnvr/current/static/plainnvr-icon.png'
+        self.set_icon_from_file(icon)
         screen = self.get_screen()
         self.set_default_size(min(860, screen.get_width() - 40), min(680, screen.get_height() - 60))
         self.set_position(Gtk.WindowPosition.CENTER)
@@ -32,7 +34,11 @@ class Wizard(Gtk.Window):
         self.add(outer)
         title = Gtk.Label(xalign=0)
         title.set_markup('<span size="xx-large" weight="bold">PlainNVR OS</span>')
-        outer.pack_start(title, False, False, 0)
+        branding = Gtk.Box(spacing=16)
+        branding.pack_start(Gtk.Image.new_from_pixbuf(
+            GdkPixbuf.Pixbuf.new_from_file_at_scale(icon, 64, 64, True)), False, False, 0)
+        branding.pack_start(title, False, False, 0)
+        outer.pack_start(branding, False, False, 0)
         self.steps = Gtk.Label(xalign=0)
         outer.pack_start(self.steps, False, False, 0)
         self.body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)

@@ -19,6 +19,12 @@ chown root:root / /etc /usr /usr/lib
 chown -R root:root /usr/lib/plainnvr /etc/plainnvr /etc/systemd /etc/apt
 systemctl enable plainnvr.service plainnvr-kiosk@tty1.service
 systemctl enable plainnvr-setup.service
+useradd --create-home --shell /bin/bash --password '*' plainnvr-admin
+printf 'plainnvr-admin ALL=(ALL:ALL) NOPASSWD: ALL\n' > /etc/sudoers.d/plainnvr-admin
+chmod 0440 /etc/sudoers.d/plainnvr-admin
+systemctl enable plainnvr-control.service
+systemctl disable ssh.service ssh.socket
+rm -f /etc/ssh/ssh_host_*key /etc/ssh/ssh_host_*key.pub
 systemctl disable zfs-import-scan.service
 systemctl set-default graphical.target
 # DKMS updates must generate signing keys on the installed machine. Never

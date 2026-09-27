@@ -4,6 +4,8 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>PlainNVR Login</title>
+    <link rel="icon" type="image/png" href="/plainnvr-icon.png" />
+    <link rel="apple-touch-icon" href="/plainnvr-icon.png" />
     <script>
       (() => {
         try {
@@ -20,6 +22,7 @@
   <body class="auth-page">
     <main class="auth-card">
       <div>
+        <img class="auth-logo" src="/plainnvr-icon.png" alt="" width="88" height="88" />
         <h1>PlainNVR</h1>
         <p id="authLead" class="muted">Sign in to manage cameras and recordings.</p>
       </div>
@@ -97,5 +100,6 @@
         message.textContent = error.message;
       });
     </script>
+    <script src="/appliance-address.js" defer></script>
   </body>
 </html>

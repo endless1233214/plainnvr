@@ -49,3 +49,8 @@ x11-xserver-utils
 xinput
 usbutils
 debian-installer-launcher
+cifs-utils
+openssh-server
+pcmanfm
+parted
+smartmontools

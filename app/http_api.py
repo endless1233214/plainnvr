@@ -8,6 +8,11 @@ from http import HTTPStatus
 from urllib import error as urllib_error, request as urllib_request
 from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 
+try:
+    from app import appliance_api
+except ModuleNotFoundError:
+    import appliance_api
+
 
 def do_GET(handler, app):
     parsed = urlparse(handler.path)
@@ -23,6 +28,12 @@ def do_GET(handler, app):
         return
 
     if parsed.path.startswith("/api/"):
+        if parsed.path == "/api/appliance/address":
+            appliance_api.address(handler)
+            return
+        if parsed.path == "/api/appliance":
+            appliance_api.handle(handler, app)
+            return
         handler.handle_api_get(parsed)
         return
     if parsed.path.startswith("/go2rtc/"):
@@ -117,6 +128,9 @@ def do_POST(handler, app):
         )
         return
 
+    if parsed.path == "/api/appliance":
+        appliance_api.handle(handler, app, payload)
+        return
     if parsed.path == "/api/auth/setup":
         handler.handle_auth_setup(payload)
         return

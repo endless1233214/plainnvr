@@ -55,3 +55,10 @@ Python and Alpine packages remain under their upstream licenses:
 - FFmpeg: https://ffmpeg.org/
 
 This notice does not replace the components' license or source obligations.
+
+## xterm.js
+
+The appliance browser terminal includes @xterm/xterm 6.0.0 (MIT).
+Upstream: https://github.com/xtermjs/xterm.js
+The license is distributed in static/vendor/xterm/LICENSE; INTEGRITY records
+the SHA-512 integrity of the verified npm source archive.

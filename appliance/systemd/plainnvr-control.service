@@ -1,0 +1,16 @@
+[Unit]
+Description=PlainNVR appliance management
+After=network.target
+ConditionPathExists=/etc/plainnvr/setup-complete
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/lib/plainnvr/control/server.py
+Restart=on-failure
+RestartSec=3
+RuntimeDirectory=plainnvr-control
+StateDirectory=plainnvr-control
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
