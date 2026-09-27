@@ -51,6 +51,9 @@ cp -a "$runtime/." "$release/"
 cp -R "$repo_dir/app/." "$release/app/"
 cp -R "$repo_dir/static/." "$release/static/"
 mkdir -p config/includes.chroot/usr/lib/plainnvr/control
+mkdir -p config/includes.chroot/usr/lib/plainnvr/update
+cp "$repo_dir/appliance/update/"*.py "$repo_dir/appliance/update/VERSION" "$repo_dir/appliance/update/release.pem" config/includes.chroot/usr/lib/plainnvr/update/
+chmod 0755 config/includes.chroot/usr/lib/plainnvr/update/boot.py config/includes.chroot/usr/lib/plainnvr/update/hook.py
 cp "$repo_dir/appliance/control/"*.py "$repo_dir/appliance/control/local-tool" config/includes.chroot/usr/lib/plainnvr/control/
 chmod 0755 config/includes.chroot/usr/lib/plainnvr/control/local-tool
 mkdir -p config/includes.chroot/usr/lib/plainnvr/setup

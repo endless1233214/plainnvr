@@ -1,0 +1,13 @@
+[Unit]
+Description=Confirm PlainNVR OS boot health or revert a failed trial
+RequiresMountsFor=/persist /var/lib/plainnvr
+After=plainnvr-ab-prepare.service plainnvr.service plainnvr-control.service plainnvr-setup.service
+ConditionPathExists=/etc/plainnvr/ab.json
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/lib/plainnvr/update/health.py confirm
+TimeoutStartSec=240
+
+[Install]
+WantedBy=multi-user.target

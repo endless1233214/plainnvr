@@ -1,0 +1,13 @@
+[Unit]
+Description=Prepare PlainNVR trial boot and recover failed update state
+RequiresMountsFor=/persist /var/lib/plainnvr
+Before=plainnvr.service plainnvr-control.service plainnvr-setup.service
+ConditionPathExists=/etc/plainnvr/ab.json
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/lib/plainnvr/update/health.py prepare
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,15 +1,19 @@
 # Installed-system update design
 
-Status: proposed, not implemented. Revision 4 has no OTA update button or
-native GitHub release workflow. The existing GitHub Actions workflow builds
-Docker images. Do not reinstall an ISO to perform a routine application update.
+Status: implemented in installer revision 5. New installations use signed A/B
+system slots; the existing GitHub repository remains the release source. The
+revision-5 Settings page has separate check, download, install, restart, and
+rollback actions. Revision 4 installations continue to work, but report that
+an installer-5 reinstall is required before OS rollback is available.
 
 ## Recommended first release
 
 Publish versioned native bundles and a signed manifest as GitHub Release assets.
 Use a separate appliance version/revision from the underlying NVR app version.
-The appliance pins the update verification public key; the signing private key
-stays in a protected release environment. A checksum alone is not a signature.
+The appliance pins `appliance/update/release.pem`; the signing private key stays
+in the protected GitHub Actions secret `PLAINNVR_OS_RELEASE_KEY`. A checksum
+alone is not a signature. The release workflow only publishes tags matching
+`os-vX.Y.Z`, and the tag must equal `appliance/update/VERSION`.
 
 Settings > Updates should display installed/available versions, release notes,
 channel and reboot requirements. Check and download in advance; install only
@@ -32,12 +36,41 @@ Package updates do not provide automatic full-system rollback.
 
 The owner approved two 32 GB OS slots, small boot/recovery partitions, and the remaining space for shared recordings on a single boot drive. Shared configuration must survive either slot being replaced. This is the target for the OTA work; revision 4 still uses the existing single-root layout.
 
-A/B root filesystem slots plus boot-success tracking can retain a previous OS
-and boot it after a failed upgrade. This requires an installer layout and boot
-integration change, tested with both UEFI and legacy BIOS and mirrored boot
-hardware. Mirrored disks protect against a disk failure; they are not A/B OS
-slots. Existing single-root installations need a planned migration rather than
-an automatic repartition during an update.
+A/B root filesystem slots plus boot-success tracking retain a previous OS and
+boot it after a failed upgrade. Each ESP gets an independent GRUB copy and
+environment block, so a mirrored drive can start the appliance on its own.
+Mirrored disks protect against a disk failure; they are not A/B OS slots.
+Existing single-root installations need a planned migration rather than an
+automatic repartition during an update.
+
+## Revision 5 installer layout
+
+The guided layout requires 80 GB and recommends 128 GB or more:
+
+| Partition | Size | Purpose |
+| --- | ---: | --- |
+| BIOS GRUB | 1 MiB | Legacy firmware boot code |
+| EFI System Partition | 1 GiB | UEFI boot code, both kernels and GRUB state |
+| System A | 32 GB | Running or trial OS |
+| System B | 32 GB | Inactive update or rollback OS |
+| Shared data | Remaining space | Recordings, configuration, update state |
+
+Two selected drives create RAID1 arrays for both system slots and shared data.
+The installer puts a bootloader and independent boot state on every selected
+drive. Recording pools such as ext4, XFS, ZFS, and SMB are configured after the
+OS install and are not included in an OS bundle.
+
+The verified installer currently available for the next test is:
+
+`plainnvr-os-0.2.0-installer5-amd64.hybrid.iso`
+
+SHA-256:
+`63685f7163f8d9c32bc9800d6b6c4411e482862acec99178792db15c0c7ea727`
+
+The public release certificate fingerprint is:
+`EB:B2:38:1B:0C:89:8C:6C:15:AD:70:FC:88:23:66:61:6C:C1:3B:00:14:28:14:ED:21:AD:67:CB:F4:8B:59:1C`.
+Back up the private key separately before enabling the GitHub release workflow;
+losing it makes future signed updates impossible for installed appliances.
 
 References:
 - GitHub release discovery and assets: https://docs.github.com/en/rest/releases/releases

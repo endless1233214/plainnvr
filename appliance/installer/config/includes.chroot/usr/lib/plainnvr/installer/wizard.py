@@ -140,6 +140,7 @@ class Wizard(Gtk.Window):
             for disk in self.selected:
                 self.label(f'ERASE: {disk["name"]} · {int(disk["size"])/1e9:.1f} GB · {disk.get("model") or "Drive"} · {disk.get("serial") or ""}')
             self.label('Administrator: ' + (self.settings['admin']['username'] if self.settings.get('admin') else 'Create later using the one-time setup code'))
+            self.label('Two 32 GB OS slots for updates and rollback, plus a 1 GB boot partition. Remaining space holds shared settings and recordings. Minimum drive size: 80 GB; 128 GB or larger recommended.')
             self.label('All partitions and data on these selected drives will be erased. Other drives are not installation targets. Changes already applied in GParted remain applied.')
             self.erase = self.entry('Type ERASE to confirm the selected drives')
             self.next.set_label('Install PlainNVR OS')

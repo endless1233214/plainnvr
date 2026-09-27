@@ -12,7 +12,7 @@ install -d -m 0700 -o plainnvr -g plainnvr /var/lib/plainnvr/recordings
 systemctl enable plainnvr.service plainnvr-kiosk@tty1.service
 systemctl set-default graphical.target
 systemctl enable plainnvr-boot-mirror.service
-if [ -f /etc/plainnvr/mirror-selected ]; then
+if [ -f /etc/plainnvr/mirror-selected ] && ! mountpoint -q /mnt/plainnvr-slot-b; then
     /usr/lib/plainnvr/boot-mirror --initialize
 fi
 case "$(systemd-detect-virt --vm || true)" in

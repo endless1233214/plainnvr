@@ -54,3 +54,6 @@ openssh-server
 pcmanfm
 parted
 smartmontools
+rauc
+rauc-service
+rsync

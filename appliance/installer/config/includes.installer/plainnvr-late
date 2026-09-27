@@ -11,4 +11,5 @@ if [ -f /plainnvr-install-settings.json ]; then
     chmod 0600 /target/etc/plainnvr/install-settings.json
     in-target /usr/bin/python3 /usr/lib/plainnvr/installer/provision.py
 fi
+in-target /usr/bin/python3 /usr/lib/plainnvr/update/initialize.py
 touch /plainnvr-install-success

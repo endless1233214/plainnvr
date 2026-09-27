@@ -1,0 +1,79 @@
+name: Build and publish PlainNVR OS release
+
+on:
+  push:
+    tags: ['os-v*.*.*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing os-vX.Y.Z tag to build
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: plainnvr-os-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Resolve release tag and version
+        id: release
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          tag="${INPUT_TAG:-${GITHUB_REF_NAME}}"
+          case "$tag" in os-v[0-9]*.[0-9]*.[0-9]*) ;; *) echo "Use an os-vX.Y.Z tag." >&2; exit 1;; esac
+          version="${tag#os-v}"
+          test "$version" = "$(cat appliance/update/VERSION)"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build Debian amd64 runtime, installer, and signed bundle
+        env:
+          RELEASE_KEY: ${{ secrets.PLAINNVR_OS_RELEASE_KEY }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          test -n "$RELEASE_KEY"
+          printf '%s\n' "$RELEASE_KEY" > release.key
+          chmod 600 release.key
+          trap 'shred -u release.key' EXIT
+          docker run --rm --privileged \
+            -e VERSION="$VERSION" \
+            -v "$PWD:/src" -w /src \
+            debian:trixie bash -euxo pipefail -c '
+              apt-get update
+              apt-get install -y --no-install-recommends \
+                ca-certificates curl gcc g++ git golang-go make nasm patch pkg-config \
+                live-build xorriso mtools dosfstools squashfs-tools rsync tar zstd \
+                grub-pc-bin grub-efi-amd64-bin grub2-common debootstrap cpio rauc
+              bash appliance/debian/build-runtime.sh /src/native-runtime
+              bash appliance/installer/build-iso.sh /src/native-runtime /src/iso-build
+              bash appliance/update/build-bundle.sh /src/iso-build/chroot \
+                /src/appliance/update/release.pem /src/release.key /src/bundle
+            '
+          test -s "bundle/plainnvr-os-${VERSION}-amd64.raucb"
+          sha256sum "bundle/plainnvr-os-${VERSION}-amd64.raucb" > bundle/SHA256SUMS
+
+      - name: Publish signed OS release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          gh release create "$TAG" \
+            "bundle/plainnvr-os-${VERSION}-amd64.raucb" \
+            bundle/SHA256SUMS \
+            --verify-tag --title "PlainNVR OS $VERSION" \
+            --generate-notes

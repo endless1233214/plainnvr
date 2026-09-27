@@ -26,7 +26,7 @@ def inventory():
         disk['blocked'] = ('Mounted or in use (including the installer USB)' if mounted(disk)
                            else 'Part of an active RAID/LVM device' if active_holder(disk)
                            else 'Read-only device' if disk['ro']
-                           else 'At least 36 GB is required' if int(disk['size']) < 36_000_000_000 else '')
+                           else 'At least 80 GB is required for two 32 GB OS slots' if int(disk['size']) < 80_000_000_000 else '')
         disks.append(disk)
     return disks
 

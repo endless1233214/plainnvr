@@ -9,12 +9,15 @@ import socketserver
 import struct
 import threading
 import time
+import sys
 from pathlib import Path
 
 import files
 import storage_manager
 import system
 from terminal import Terminals
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'update'))
+import manager as updates
 
 SOCKET = Path('/run/plainnvr-control/control.sock')
 GRANTS = {}
@@ -45,7 +48,7 @@ def dispatch(request):
     if not isinstance(payload, dict) or not isinstance(owner, str) or len(owner) != 64:
         raise ValueError('Invalid request.')
     if operation == 'status':
-        return dict(system.status(), local=request.get('local', False))
+        return dict(system.status(), local=request.get('local', False), updates=updates.status())
     if operation == 'addresses':
         urls = []
         for interface in system.interfaces():
@@ -58,6 +61,15 @@ def dispatch(request):
         return grant(owner)
     if not authorized(owner, payload.get('token')):
         raise ValueError('Unlock appliance controls with your administrator password.')
+    if operation.startswith('update-'):
+        with OPERATIONS:
+            if storage_manager.LOCK.locked() or system.PENDING.exists():
+                raise ValueError('Finish the storage or network change before updating.')
+            return updates.start(operation[7:], payload)
+    if updates.locked() and operation in ('storage-switch', 'disk-format', 'pool-scrub', 'ssh-save',
+            'network-apply', 'clock-save', 'hostname-save', 'local-tool', 'terminal-open',
+            'files-upload', 'files-mkdir', 'files-rename', 'files-delete'):
+        raise ValueError('Complete the OS update and trial boot before changing appliance settings.')
     if operation.startswith('terminal-'):
         if operation == 'terminal-open':
             return TERMINALS.create(owner)
@@ -98,13 +110,15 @@ def dispatch(request):
             return {'ok': True}
         if operation == 'logs':
             unit = payload.get('unit')
-            if unit not in ('plainnvr.service', 'plainnvr-control.service', 'systemd-networkd.service', 'ssh.service', 'plainnvr-boot-mirror.service'):
+            if unit not in ('plainnvr.service', 'plainnvr-control.service', 'systemd-networkd.service', 'ssh.service', 'plainnvr-boot-mirror.service', 'plainnvr-update.service', 'plainnvr-ab-health.service', 'rauc.service'):
                 raise ValueError('Choose an appliance service.')
             return {'text': system.run('journalctl', '-u', unit, '-n', '200', '--no-pager', '-o', 'short-iso')[-65536:]}
         if operation == 'power':
             action = payload.get('action')
             if action not in ('reboot', 'poweroff') or payload.get('confirmation') != action.upper():
                 raise ValueError('Type REBOOT or POWEROFF to confirm.')
+            if updates.load(updates.STATE / 'job.json', {}).get('state') in updates.BUSY:
+                raise ValueError('Wait for the update task to finish before restarting or shutting down.')
             threading.Timer(2, lambda: system.run('systemctl', action)).start()
             return {'ok': True}
         if operation == 'local-tool':

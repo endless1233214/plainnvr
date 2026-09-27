@@ -1,0 +1,12 @@
+[Unit]
+Description=PlainNVR signed OS update worker
+After=network-online.target plainnvr-ab-prepare.service
+Wants=network-online.target
+RequiresMountsFor=/persist
+ConditionPathExists=/etc/plainnvr/ab.json
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/lib/plainnvr/update/worker.py
+TimeoutStartSec=2h
+UMask=0077
