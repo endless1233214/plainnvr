@@ -50,6 +50,15 @@ input devices were a USB keyboard and USB tablet.
 
 ## Limits
 
+### Physical laptop report - September 27, 2026
+
+The owner reported successful testing of revisions 1 and 2 on the current
+development laptop. Revision 2 reached GParted; the test stopped there to
+preserve existing data. Revision 1's exact stopping point was not specified.
+No physical installation/formatting or revision-3 result was reported. This
+supports a machine-dependent compatibility investigation for the HP; it does
+not identify the failing firmware/bootloader/input component.
+
 The HP still needs a physical retest. These changes remove graphical GRUB
 initialization and indefinite waiting; they do not establish the exact cause
 of its firmware/input failure. No BIOS update was attempted. Previous remaining

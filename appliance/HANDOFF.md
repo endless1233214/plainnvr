@@ -2,6 +2,14 @@
 
 ## Current checkpoint - installer revision 3, September 26, 2026
 
+September 27 hardware update: the owner tested revisions 1 and 2 on the current
+development laptop and reported both worked through the stages tried. Revision
+2 reached GParted successfully; testing stopped there to preserve the laptop's
+data. No physical installation or formatting was performed. This adds a
+successful physical boot-to-GParted check and supports focusing investigation
+on HP-specific compatibility, without establishing its precise cause. Revision
+3 has not yet had a reported physical retest.
+
 The physical machine is HP 200 G1 MT, Pentium J2900 (2.41 GHz), 8 GB DDR3,
 board ID 2B1A, BIOS SHA v80.08 dated July 18, 2014. The keyboard is USB directly
 into the motherboard. Revision 2's boot menu did not respond; no menu photo
@@ -27,7 +35,6 @@ and output name now reflect revision 3. The focused rebuild script is
 `/home/debian/build_revision3.sh`; payload checksum evidence is
 `/home/debian/revision3-payload.sha256`. WSL test files are under
 `/home/endless/plainnvr-os-vm/revision3-validation`. Build/test VMs are shut down.
-The owner was going to bed; another physical test/photo can wait until later.
 
 ## Previous checkpoint - installer revision 2, September 26, 2026
 
