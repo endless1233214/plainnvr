@@ -37,7 +37,7 @@ private struct MacSignInView: View {
                 .foregroundStyle(.blue)
             VStack(spacing: 6) {
                 Text("PlainNVR").font(.largeTitle.bold())
-                Text("Your cameras, on your Mac.").foregroundStyle(.secondary)
+                Text("Your cameras, in one place.").foregroundStyle(.secondary)
             }
             Form {
                 TextField("Server address", text: $viewModel.serverAddress)
@@ -154,7 +154,7 @@ private struct MacSettingsView: View {
                 Button("Sign Out") { Task { await viewModel.logout() } }
             }
             Section("About") {
-                Text("PlainNVR for Mac")
+                Text("PlainNVR")
                 Text("Live playback prefers native WebRTC and falls back to HLS.")
                     .foregroundStyle(.secondary)
             }
