@@ -3,14 +3,14 @@
 This builds a Debian 13 amd64 hybrid ISO containing the native PlainNVR runtime,
 Debian Installer, GParted and ZFS. It is an appliance development image. The
 owner confirmed revision 3 installed completely on the HP 200 G1 MT. Revision
-9 needs a new HP boot-path test; sustained physical recording and storage/mirror tests
+8 needs a new HP boot-path test; sustained physical recording and storage/mirror tests
 are still required.
 
-## Revision 9: force every GRUB path through the A/B menu
+## Build 8: boot repair and A/B menu routing
 
 The physical startup diagnostics proved Linux could boot system A while
 `plainnvr-ab-prepare` failed because `/proc/cmdline` did not contain
-`rauc.slot=A`. Revision 9 keeps the canonical A/B menu on the EFI partition,
+`rauc.slot=A`. Build 8 keeps the canonical A/B menu on the EFI partition,
 but also replaces the root filesystems' stale Debian `/boot/grub/grub.cfg`
 menus with a small chainloader that finds an installer-recorded EFI partition
 and loads the PlainNVR menu. The live recovery bootloader repair applies the
@@ -18,14 +18,12 @@ same fix to existing single-drive A/B installs. Startup diagnostics now include
 the kernel command line, mounted root source and EFI boot entries. A new HP
 test is required before calling this revision validated.
 
-## Revision 8: BIOS and UEFI boot repair
-
 Revision 7 recovery succeeded on the HP but the machine then fell through to
-PXE. Revision 8 adds a guarded **Repair bootloader** action for the detected
+PXE. Build 8 includes a guarded **Repair bootloader** action for the detected
 single-drive A/B SSD. New UEFI installs also register a named firmware entry,
-and BIOS/UEFI GRUB both load the existing A/B menu through a verified EFI
-bootstrap. See [recovery instructions](../RECOVERY.md) and the revision 8
-validation record for current evidence. No physical HP boot result is claimed.
+and BIOS/UEFI GRUB load the existing A/B menu through a verified EFI
+bootstrap. See [recovery instructions](../RECOVERY.md) and the [Build 8
+validation record](VALIDATION-8.md). No physical HP boot result is claimed.
 
 ## Revision 7: startup recovery and A/B updates
 
