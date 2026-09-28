@@ -88,3 +88,19 @@ class RecoverySafety(unittest.TestCase):
              patch.object(recovery.Path, 'read_text', return_value='root=/dev/vda3 rauc.slot=A'), \
              self.assertRaisesRegex(ValueError, 'live USB'):
             recovery.repair({'device': 'data'})
+
+    def test_bootloader_repair_refuses_running_installed_os(self):
+        with patch.object(recovery.os, 'geteuid', return_value=0), \
+             patch.object(recovery.Path, 'read_text', return_value='root=/dev/vda3 rauc.slot=A'), \
+             patch.object(recovery, 'run') as command, \
+             self.assertRaisesRegex(ValueError, 'live USB'):
+            recovery.repair_bootloader({'device': 'data'})
+        command.assert_not_called()
+
+    def test_bootstrap_loads_menu_from_installer_recorded_efi_volume(self):
+        script = recovery.grub_bootstrap('1073-D84E')
+        self.assertIn('search --no-floppy --fs-uuid --set=root 1073-D84E', script)
+        self.assertIn('set prefix=($root)/grub', script)
+        self.assertIn('configfile $prefix/grub.cfg', script)
+        with self.assertRaises(ValueError):
+            recovery.grub_bootstrap('1073-D84E; chainloader (hd1)')

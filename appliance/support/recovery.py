@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Inspect and repair the known A/B setup-permissions issue from a live USB."""
+"""Inspect and repair a verified single-disk PlainNVR A/B install from live USB."""
 import contextlib
 import json
 import os
@@ -11,8 +11,8 @@ from pathlib import Path
 from diagnostics import command, redact, UNITS
 
 
-def run(*args):
-    result = subprocess.run(list(map(str, args)), capture_output=True, text=True, timeout=30)
+def run(*args, timeout=30):
+    result = subprocess.run(list(map(str, args)), capture_output=True, text=True, timeout=timeout)
     if result.returncode:
         raise ValueError((result.stderr or result.stdout)[-1000:])
     return result.stdout.strip()
@@ -210,6 +210,108 @@ def repair(item):
     return 'Startup access repaired and local diagnostics added to both OS slots. Reboot and remove the USB. Recordings and account data were preserved.'
 
 
+def boot_plan(item):
+    """Read-only identification of the exact SSD and boot partition to repair."""
+    source = item['device']
+    with mounted(source) as root:
+        config = configuration(root, source)
+    for ref in config['slots'].values():
+        with mounted(device(ref)) as root:
+            verify_root(root, ref)
+    uuids = config.get('esp_uuids')
+    if not isinstance(uuids, list) or len(uuids) != 1 or not re.fullmatch(r'[A-Fa-f0-9-]+', uuids[0]):
+        raise ValueError('Expected one PlainNVR EFI partition in the installed configuration.')
+    disk_name = run('lsblk', '-nro', 'PKNAME', source)
+    disk = '/dev/' + disk_name
+    if not disk_name or run('lsblk', '-dnro', 'TYPE', disk) != 'disk':
+        raise ValueError('Cannot identify the installed system disk.')
+    nodes = json.loads(run('lsblk', '-Jbpo', 'NAME,TYPE,SIZE', disk))['blockdevices']
+    if len(nodes) != 1 or nodes[0]['name'] != disk:
+        raise ValueError('System disk changed during inspection.')
+    parts = {}
+    for node in nodes[0].get('children', []):
+        if node.get('type') != 'part':
+            continue
+        props = dict(line.split('=', 1) for line in run('blkid', '-p', '-o', 'export', node['name']).splitlines() if '=' in line)
+        if props.get('PART_ENTRY_SCHEME') == 'gpt':
+            parts[props.get('PART_ENTRY_NUMBER')] = (node, props)
+    bios = parts.get('1')
+    esp = parts.get('2')
+    if not bios or bios[1].get('PART_ENTRY_TYPE', '').lower() != '21686148-6449-6e6f-744e-656564454649':
+        raise ValueError('Expected PlainNVR GPT BIOS boot partition 1 is missing.')
+    if not esp or esp[1].get('PART_ENTRY_TYPE', '').lower() != 'c12a7328-f81f-11d2-ba4b-00a0c93ec93b' or esp[1].get('TYPE') != 'vfat':
+        raise ValueError('Expected PlainNVR EFI system partition 2 is missing.')
+    if not 1_000_000_000 <= int(esp[0]['size']) <= 1_100_000_000:
+        raise ValueError('EFI partition size differs from the PlainNVR installer layout.')
+    if esp[1].get('UUID', '').lower() != uuids[0].lower():
+        raise ValueError('EFI partition UUID differs from the installed PlainNVR configuration.')
+    if run('lsblk', '-nro', 'MOUNTPOINTS', esp[0]['name']):
+        raise ValueError('EFI partition is mounted. Close disk tools before recovery.')
+    with tempfile.TemporaryDirectory(prefix='plainnvr-boot-check-') as temporary:
+        run('mount', '-t', 'vfat', '-o', 'ro,nosuid,nodev,noexec', esp[0]['name'], temporary)
+        try:
+            mount = Path(temporary)
+            cfg = mount / 'grub/grub.cfg'
+            if cfg.is_symlink() or not cfg.is_file() or cfg.stat().st_size > 65536:
+                raise ValueError('Installed PlainNVR GRUB configuration is missing or invalid.')
+            text = cfg.read_text()
+            for slot, ref in config['slots'].items():
+                root_uuid = run('blkid', '-s', 'UUID', '-o', 'value', device(ref))
+                if not root_uuid or f'root=UUID={root_uuid}' not in text or f'$prefix/slots/{slot}/vmlinuz' not in text or f'$prefix/slots/{slot}/initrd' not in text:
+                    raise ValueError('Installed GRUB configuration does not match both system slots.')
+                for filename in ('vmlinuz', 'initrd'):
+                    path = mount / 'grub/slots' / slot / filename
+                    if path.is_symlink() or not path.is_file() or path.stat().st_size < 1024:
+                        raise ValueError(f'System {slot} boot payload is missing: {filename}.')
+            if not (mount / 'grub/grubenv').is_file():
+                raise ValueError('PlainNVR GRUB environment is missing.')
+            cfg_bytes = cfg.read_bytes()
+        finally:
+            run('umount', temporary)
+    return {'disk': disk, 'esp': esp[0]['name'], 'esp_uuid': uuids[0], 'grub_cfg': cfg_bytes}
+
+
+def grub_bootstrap(uuid):
+    if not re.fullmatch(r'[A-Fa-f0-9-]+', uuid):
+        raise ValueError('Invalid EFI partition UUID.')
+    return ('insmod part_gpt\ninsmod fat\ninsmod search_fs_uuid\n'
+            f'search --no-floppy --fs-uuid --set=root {uuid}\n'
+            'set prefix=($root)/grub\nconfigfile $prefix/grub.cfg\n')
+
+
+def repair_bootloader(item):
+    if os.geteuid() != 0 or 'boot=live' not in Path('/proc/cmdline').read_text().split():
+        raise ValueError('Run this repair from the PlainNVR live USB.')
+    plan = boot_plan(item)
+    with tempfile.TemporaryDirectory(prefix='plainnvr-boot-repair-') as temporary:
+        run('mount', '-t', 'vfat', '-o', 'rw,nosuid,nodev,noexec', plan['esp'], temporary)
+        try:
+            if (Path(temporary) / 'grub/grub.cfg').read_bytes() != plan['grub_cfg'] or run('blkid', '-s', 'UUID', '-o', 'value', plan['esp']).lower() != plan['esp_uuid'].lower():
+                raise ValueError('EFI partition changed since inspection. No boot code was written.')
+            run('grub-install', '--target=i386-pc', '--boot-directory=' + temporary,
+                '--recheck', plan['disk'], timeout=180)
+            run('grub-install', '--target=x86_64-efi', '--efi-directory=' + temporary,
+                '--boot-directory=' + temporary, '--removable', '--no-nvram', '--force', timeout=180)
+            if Path('/sys/firmware/efi/efivars').is_dir():
+                run('grub-install', '--target=x86_64-efi', '--efi-directory=' + temporary,
+                    '--boot-directory=' + temporary, '--bootloader-id=PlainNVR', '--force', timeout=180)
+            bootstrap = Path(temporary) / 'boot/grub/grub.cfg'
+            bootstrap.parent.mkdir(parents=True, exist_ok=True)
+            if bootstrap.is_symlink() or (bootstrap.exists() and not bootstrap.is_file()):
+                raise ValueError('Unexpected GRUB bootstrap path. No menu was changed.')
+            staged = bootstrap.with_suffix('.new')
+            if staged.exists():
+                raise ValueError('Unexpected temporary GRUB bootstrap file.')
+            staged.write_text(grub_bootstrap(plan['esp_uuid']))
+            staged.replace(bootstrap)
+            if (Path(temporary) / 'grub/grub.cfg').read_bytes() != plan['grub_cfg']:
+                raise ValueError('GRUB configuration changed unexpectedly. Do not reboot; save a log dump.')
+            os.sync()
+        finally:
+            run('umount', temporary)
+    return f"BIOS and UEFI GRUB bootloaders reinstalled on {plan['disk']} using existing {plan['esp']}. A UEFI firmware entry was registered when available. Remove the USB and reboot. Partitions, recordings and account data were preserved."
+
+
 def show(parent):
     import gi
     gi.require_version('Gtk', '3.0')
@@ -219,6 +321,7 @@ def show(parent):
     dialog.add_button('Close', Gtk.ResponseType.CLOSE)
     dialog.add_button('Save log dump…', 1)
     dialog.add_button('Repair startup + add diagnostics', 2)
+    dialog.add_button('Repair bootloader', 4)
     dialog.add_button('Reboot (remove USB)', 3)
     dialog.set_response_sensitive(3, False)
     content = dialog.get_content_area()
@@ -245,17 +348,18 @@ def show(parent):
         view.get_buffer().set_text(state['text'])
     dialog.set_response_sensitive(1, bool(items))
     dialog.set_response_sensitive(2, bool(items))
+    dialog.set_response_sensitive(4, bool(items))
     dialog.show_all()
     while True:
         response = dialog.run()
         if response == 3:
             subprocess.Popen(['systemctl', 'reboot'])
             break
-        if response not in (1, 2):
+        if response not in (1, 2, 4):
             break
         if response == 1:
             save_dialog(dialog, state['text'])
-        else:
+        elif response == 2:
             confirmation = Gtk.MessageDialog(transient_for=dialog, modal=True, message_type=Gtk.MessageType.QUESTION,
                 buttons=Gtk.ButtonsType.OK_CANCEL, text='Repair startup on ' + items[select.get_active()]['device'] + '?')
             confirmation.format_secondary_text('This corrects directory permissions and adds local startup diagnostics with bounded persistent logs to both OS slots. It does not format partitions or change recordings or account data.')
@@ -268,6 +372,21 @@ def show(parent):
                 except (OSError, ValueError, subprocess.SubprocessError) as exc:
                     state['text'] += '\n\nRepair stopped: ' + str(exc)
                 view.get_buffer().set_text(state['text'])
+        else:
+            item = items[select.get_active()]
+            try:
+                plan = boot_plan(item)
+                confirmation = Gtk.MessageDialog(transient_for=dialog, modal=True, message_type=Gtk.MessageType.WARNING,
+                    buttons=Gtk.ButtonsType.OK_CANCEL, text='Reinstall bootloaders on ' + plan['disk'] + '?')
+                confirmation.format_secondary_text('This writes BIOS boot code to ' + plan['disk'] + ' and UEFI GRUB files to its existing ' + plan['esp'] + ' EFI partition. If booted in UEFI mode, it also registers a PlainNVR firmware boot entry. It does not format or repartition the drive or change recordings and account data. Continue only if this is your PlainNVR system disk.')
+                accepted = confirmation.run() == Gtk.ResponseType.OK
+                confirmation.destroy()
+                if accepted:
+                    state['text'] += '\n\n' + repair_bootloader(item)
+                    dialog.set_response_sensitive(3, True)
+            except (OSError, ValueError, subprocess.SubprocessError) as exc:
+                state['text'] += '\n\nBoot repair stopped: ' + str(exc)
+            view.get_buffer().set_text(state['text'])
     dialog.destroy()
 
 

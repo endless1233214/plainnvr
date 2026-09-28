@@ -19,6 +19,7 @@ locales
 console-setup
 grub-pc-bin
 grub-efi-amd64-bin
+efibootmgr
 grub2-common
 dosfstools
 e2fsprogs

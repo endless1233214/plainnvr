@@ -3,8 +3,17 @@
 This builds a Debian 13 amd64 hybrid ISO containing the native PlainNVR runtime,
 Debian Installer, GParted and ZFS. It is an appliance development image. The
 owner confirmed revision 3 installed completely on the HP 200 G1 MT. Revision
-7 needs a new HP test; sustained physical recording and storage/mirror tests
+8 needs a new HP boot-repair test; sustained physical recording and storage/mirror tests
 are still required.
+
+## Revision 8: BIOS and UEFI boot repair
+
+Revision 7 recovery succeeded on the HP but the machine then fell through to
+PXE. Revision 8 adds a guarded **Repair bootloader** action for the detected
+single-drive A/B SSD. New UEFI installs also register a named firmware entry,
+and BIOS/UEFI GRUB both load the existing A/B menu through a verified EFI
+bootstrap. See [recovery instructions](../RECOVERY.md) and the revision 8
+validation record for current evidence. No physical HP boot result is claimed.
 
 ## Revision 7: startup recovery and A/B updates
 

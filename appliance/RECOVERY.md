@@ -1,25 +1,39 @@
 # Startup recovery and log dumps
 
-Build 7 adds recovery for the single-drive A/B startup-permissions issue in
-the earlier Build 6 image. It repairs the existing installation; it does not
-repartition the SSD or replace recordings, accounts or the application database.
+Build 8 adds bootloader repair to Build 7's single-drive A/B startup recovery.
+Neither action repartitions the SSD or replaces recordings, accounts or the
+application database.
 
 ## Existing installation stuck at the kiosk
 
-1. Boot the Build 7 USB into the normal live installer wizard.
+1. Boot the Build 8 USB into the normal live installer wizard.
 2. On the first page, choose **Recover existing installation**. Do not advance
    to drive erasure. Recovery displays the detected installed shared-data volume.
 3. Review the report. **Save log dump…** exports it to a chosen path, such as a
    mounted writable USB drive. The installer ISO itself is read-only.
-4. Choose **Repair startup + add diagnostics** and confirm the shown volume.
-   The tool validates both OS slots before writing, fixes traversal permissions,
-   and installs local diagnostics and bounded persistent logging into both slots.
-5. After success, choose **Reboot (remove USB)** and remove the installer USB.
+4. If the installed SSD falls through to PXE or reports no boot disk, choose
+   **Repair bootloader**. Review the exact SSD and EFI partition shown in the
+   confirmation. The tool validates the existing A/B roots and boot files,
+   reinstalls BIOS and UEFI GRUB, and registers a UEFI firmware entry when the
+   live USB was booted in UEFI mode. It also adds the EFI menu bootstrap needed
+   on firmware that looks for `/boot/grub`.
+5. If the SSD boots but the kiosk remains at **PlainNVR is starting**, choose
+   **Repair startup + add diagnostics**. This repairs directory permissions and
+   installs local diagnostics and bounded persistent logging into both slots.
+6. After the chosen repair succeeds, choose **Reboot (remove USB)** and remove
+   the installer USB.
    First boot should open account/storage setup, or the dashboard if configured.
 
-This repair supports one-drive PlainNVR A/B installations. Mirrored layouts and
+These repairs support one-drive PlainNVR A/B installations. Mirrored layouts and
 older single-root installations require separate recovery work. Already mounted
 partitions are refused; close other disk tools first.
+
+The HP 200 G1 MT has not yet booted the repaired physical SSD. If it still
+falls through to PXE after a successful bootloader repair, check whether HP
+firmware detects the SSD and includes it in UEFI/legacy boot order. A firmware
+entry cannot compensate for a missing or undetected drive. On this HP, the USB
+keyboard currently starts working only after Debian loads, so firmware setup
+may require another compatible keyboard or a working preboot USB setting.
 
 ## Logs without a running NVR server
 

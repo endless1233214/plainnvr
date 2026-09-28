@@ -64,7 +64,15 @@ applied to this clean installation.
 
 ## Limits
 
-The HP needs a physical recovery/boot test. This recovery tool intentionally
+The owner subsequently ran Build 7 recovery on the HP: its dialog reported
+success, but after USB removal the machine fell through to Realtek PXE and
+reported no boot disk. Build 7 only repaired permissions and diagnostics; it
+did not repair boot code or register a firmware entry. A Build 7 live USB photo
+then confirmed one 500 GB SSD with GPT BIOS and EFI boot partitions, 29.8 GiB
+A/B ext4 slots, a 405.1 GiB ext4 shared volume, and **UEFI** live boot. The
+physical SSD remains unverified until a later bootloader repair test.
+
+This recovery tool intentionally
 supports a single-drive A/B installation only; mirrored and legacy single-root
 layouts are refused. This pass does not establish mirrored-drive failure
 recovery, UEFI/Secure Boot behavior, long-running physical recording, ZFS or SMB

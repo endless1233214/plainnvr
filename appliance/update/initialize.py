@@ -3,10 +3,20 @@
 import os
 import json
 import pwd
+import re
 import shutil
 from pathlib import Path
 from common import run, save, device_ref
 from slots import configure_root, copy_kernel, grub_config
+
+
+def grub_bootstrap(uuid):
+    """Load the A/B menu even when EFI GRUB embeds /boot/grub as prefix."""
+    if not re.fullmatch(r'[A-Fa-f0-9-]+', uuid):
+        raise RuntimeError('Invalid EFI partition UUID.')
+    return ('insmod part_gpt\ninsmod fat\ninsmod search_fs_uuid\n'
+            f'search --no-floppy --fs-uuid --set=root {uuid}\n'
+            'set prefix=($root)/grub\nconfigfile $prefix/grub.cfg\n')
 
 
 def prepare_esp(disk):
@@ -104,15 +114,24 @@ def initialize():
     # Firmware-independent bootloaders and independent environment blocks on
     # every ESP allow either mirror member to boot without GRUB writing RAID.
     run('umount', '/boot/efi', check=False)
-    for disk, esp in esp_devices:
+    for index, (disk, esp) in enumerate(esp_devices):
         destination = Path('/run/plainnvr-install-esp'); destination.mkdir(exist_ok=True)
         run('mount', esp, destination)
         try:
             run('grub-install', '--target=i386-pc', '--boot-directory=' + str(destination), '--recheck', disk)
             run('grub-install', '--target=x86_64-efi', '--efi-directory=' + str(destination),
                 '--boot-directory=' + str(destination), '--removable', '--no-nvram', '--force')
+            # Some UEFI firmware does not scan the removable fallback path on
+            # internal drives. Register the primary SSD as an explicit boot
+            # choice when the installer itself was booted in UEFI mode.
+            if index == 0 and Path('/sys/firmware/efi/efivars').is_dir():
+                run('grub-install', '--target=x86_64-efi', '--efi-directory=' + str(destination),
+                    '--boot-directory=' + str(destination), '--bootloader-id=PlainNVR', '--force')
             copy_kernel('/', 'A', destination); copy_kernel(root_b, 'B', destination)
             (destination / 'grub/grub.cfg').write_text(grub_config(config))
+            bootstrap = destination / 'boot/grub/grub.cfg'
+            bootstrap.parent.mkdir(parents=True, exist_ok=True)
+            bootstrap.write_text(grub_bootstrap(config['esp_uuids'][index]))
             run('grub-editenv', destination / 'grub/grubenv', 'create')
             run('grub-editenv', destination / 'grub/grubenv', 'set', 'ORDER=A B', 'PENDING=none', 'A_OK=1', 'A_TRY=0', 'B_OK=1', 'B_TRY=0')
             os.sync()

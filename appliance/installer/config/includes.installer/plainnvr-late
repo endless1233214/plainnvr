@@ -21,7 +21,7 @@ stage='A/B system slots and bootloaders'
 echo "PlainNVR: configuring $stage"
 # grub-installer removes the unused firmware's modules from the copied live
 # system. A/B installs both BIOS and EFI loaders; restore both from this USB.
-apt-install grub-pc-bin grub-efi-amd64-bin
+apt-install grub-pc-bin grub-efi-amd64-bin efibootmgr
 in-target /usr/bin/python3 /usr/lib/plainnvr/update/initialize.py
 touch /plainnvr-install-success
 echo 'PlainNVR: final installation completed'
