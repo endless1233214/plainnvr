@@ -105,6 +105,14 @@ class InstallerBootPartition(unittest.TestCase):
                 with self.assertRaises(RuntimeError): initialize.prepare_esp('/dev/vda')
                 self.assertNotIn('parted', [call.args[0] for call in command.call_args_list])
 
+    def test_root_fallback_tries_every_recorded_esp(self):
+        script = initialize.grub_fallback_bootstrap(['1073-D84E', '22AA-44BB'])
+        self.assertIn('search --no-floppy --fs-uuid --set=plainnvr_boot 1073-D84E', script)
+        self.assertIn('search --no-floppy --fs-uuid --set=plainnvr_boot 22AA-44BB', script)
+        self.assertIn('configfile $prefix/grub.cfg', script)
+        with self.assertRaises(RuntimeError):
+            initialize.grub_fallback_bootstrap(['1073-D84E; reboot'])
+
 
 class UpdateReleaseMetadata(unittest.TestCase):
     def asset(self, version='0.2.1'):

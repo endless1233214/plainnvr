@@ -3,8 +3,20 @@
 This builds a Debian 13 amd64 hybrid ISO containing the native PlainNVR runtime,
 Debian Installer, GParted and ZFS. It is an appliance development image. The
 owner confirmed revision 3 installed completely on the HP 200 G1 MT. Revision
-8 needs a new HP boot-repair test; sustained physical recording and storage/mirror tests
+9 needs a new HP boot-path test; sustained physical recording and storage/mirror tests
 are still required.
+
+## Revision 9: force every GRUB path through the A/B menu
+
+The physical startup diagnostics proved Linux could boot system A while
+`plainnvr-ab-prepare` failed because `/proc/cmdline` did not contain
+`rauc.slot=A`. Revision 9 keeps the canonical A/B menu on the EFI partition,
+but also replaces the root filesystems' stale Debian `/boot/grub/grub.cfg`
+menus with a small chainloader that finds an installer-recorded EFI partition
+and loads the PlainNVR menu. The live recovery bootloader repair applies the
+same fix to existing single-drive A/B installs. Startup diagnostics now include
+the kernel command line, mounted root source and EFI boot entries. A new HP
+test is required before calling this revision validated.
 
 ## Revision 8: BIOS and UEFI boot repair
 

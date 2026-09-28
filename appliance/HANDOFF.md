@@ -1,5 +1,25 @@
 # PlainNVR OS — native Debian x86-64 prototype handoff
 
+## Current checkpoint - revision 9 boot-path repair, September 27, 2026
+
+Physical startup diagnostics from the HP proved that system A could boot Linux
+and mount the expected A/B/shared-data layout while `plainnvr-ab-prepare`
+failed with `This system was not booted from a PlainNVR A/B slot.` The missing
+handoff was the `rauc.slot=A/B` kernel argument, which means a stale Debian
+GRUB path could bypass the canonical PlainNVR A/B menu.
+
+Revision 9 makes fresh installs and live-USB bootloader repair write a tiny
+fallback `/boot/grub/grub.cfg` into both root slots. That fallback searches
+only the installer-recorded EFI partition UUIDs and chains to
+`/grub/grub.cfg`, where the real A/B menu appends `rauc.slot=A/B`. It does
+not default the slot in userspace and does not weaken `current()`. Startup
+diagnostics now capture `/proc/cmdline`, the mounted root source and
+`efibootmgr -v`.
+
+This code is not physically validated yet. The next HP boot must show
+`rauc.slot=A` in startup diagnostics, allow `plainnvr-ab-prepare` to succeed,
+and reach setup/dashboard before revision 9 is considered good.
+
 ## Current checkpoint - revision 7 recovery, September 27, 2026
 
 The owner installed the earlier Build 6 from Downloads (SHA-256 starts

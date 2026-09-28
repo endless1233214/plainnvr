@@ -31,8 +31,11 @@ def command(*args):
 def collect():
     report = ['PlainNVR OS startup report', datetime.datetime.now(datetime.timezone.utc).isoformat(),
               'Contains device names, local IP addresses and service errors. Review before sharing.']
-    for args in [('uname', '-a'), ('ip', '-brief', 'address'),
+    for args in [('uname', '-a'), ('cat', '/proc/cmdline'),
+                 ('findmnt', '-nro', 'SOURCE,FSTYPE,OPTIONS', '/'),
+                 ('ip', '-brief', 'address'),
                  ('lsblk', '-o', 'NAME,SIZE,FSTYPE,MOUNTPOINTS'),
+                 ('efibootmgr', '-v'),
                  ('systemctl', '--failed', '--no-pager', '--no-legend')]:
         report.extend(['\n$ ' + ' '.join(args), command(*args)])
     for path in ('/persist', '/persist/system', '/persist/system/config', '/etc/plainnvr/first-boot',

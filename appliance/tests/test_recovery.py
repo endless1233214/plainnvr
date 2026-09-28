@@ -104,3 +104,11 @@ class RecoverySafety(unittest.TestCase):
         self.assertIn('configfile $prefix/grub.cfg', script)
         with self.assertRaises(ValueError):
             recovery.grub_bootstrap('1073-D84E; chainloader (hd1)')
+
+    def test_root_fallback_tries_every_recorded_efi_volume(self):
+        script = recovery.grub_fallback_bootstrap(['1073-D84E', '22AA-44BB'])
+        self.assertIn('search --no-floppy --fs-uuid --set=plainnvr_boot 1073-D84E', script)
+        self.assertIn('search --no-floppy --fs-uuid --set=plainnvr_boot 22AA-44BB', script)
+        self.assertIn('configfile $prefix/grub.cfg', script)
+        with self.assertRaises(ValueError):
+            recovery.grub_fallback_bootstrap(['1073-D84E; halt'])

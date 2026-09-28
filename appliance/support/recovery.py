@@ -268,7 +268,8 @@ def boot_plan(item):
             cfg_bytes = cfg.read_bytes()
         finally:
             run('umount', temporary)
-    return {'disk': disk, 'esp': esp[0]['name'], 'esp_uuid': uuids[0], 'grub_cfg': cfg_bytes}
+    return {'disk': disk, 'esp': esp[0]['name'], 'esp_uuid': uuids[0],
+            'esp_uuids': list(uuids), 'slots': dict(config['slots']), 'grub_cfg': cfg_bytes}
 
 
 def grub_bootstrap(uuid):
@@ -279,10 +280,37 @@ def grub_bootstrap(uuid):
             'set prefix=($root)/grub\nconfigfile $prefix/grub.cfg\n')
 
 
+def grub_fallback_bootstrap(uuids):
+    if not isinstance(uuids, (list, tuple)) or not uuids:
+        raise ValueError('Missing EFI partition identity.')
+    lines = ['insmod part_gpt', 'insmod fat', 'insmod search_fs_uuid']
+    for uuid in uuids:
+        if not isinstance(uuid, str) or not re.fullmatch(r'[A-Fa-f0-9-]+', uuid):
+            raise ValueError('Invalid EFI partition UUID.')
+        lines.extend([
+            f'if search --no-floppy --fs-uuid --set=plainnvr_boot {uuid}; then',
+            '  set root=$plainnvr_boot',
+            '  set prefix=($root)/grub',
+            '  configfile $prefix/grub.cfg',
+            'fi',
+        ])
+    lines.extend(["echo 'PlainNVR boot partition not found.'", 'sleep 10'])
+    return '\n'.join(lines) + '\n'
+
+
 def repair_bootloader(item):
     if os.geteuid() != 0 or 'boot=live' not in Path('/proc/cmdline').read_text().split():
         raise ValueError('Run this repair from the PlainNVR live USB.')
     plan = boot_plan(item)
+    # Preflight root GRUB paths read-only before touching boot code.
+    for ref in plan['slots'].values():
+        with mounted(device(ref)) as root:
+            verify_root(root, ref)
+            directory(root, 'boot/grub')
+            cfg = root / 'boot/grub/grub.cfg'
+            if cfg.is_symlink() or (cfg.exists() and not cfg.is_file()):
+                raise ValueError('Unexpected root GRUB configuration path.')
+
     with tempfile.TemporaryDirectory(prefix='plainnvr-boot-repair-') as temporary:
         run('mount', '-t', 'vfat', '-o', 'rw,nosuid,nodev,noexec', plan['esp'], temporary)
         try:
@@ -309,7 +337,16 @@ def repair_bootloader(item):
             os.sync()
         finally:
             run('umount', temporary)
-    return f"BIOS and UEFI GRUB bootloaders reinstalled on {plan['disk']} using existing {plan['esp']}. A UEFI firmware entry was registered when available. Remove the USB and reboot. Partitions, recordings and account data were preserved."
+
+    # A stale Debian GRUB core/EFI entry can still load /boot/grub/grub.cfg
+    # from system A or B. Redirect both root menus to the canonical ESP menu.
+    fallback = grub_fallback_bootstrap(plan['esp_uuids']).encode()
+    for ref in plan['slots'].values():
+        with mounted(device(ref), write=True) as root:
+            verify_root(root, ref)
+            write_support(root, 'boot/grub/grub.cfg', fallback)
+    os.sync()
+    return f"BIOS and UEFI GRUB bootloaders reinstalled on {plan['disk']} using existing {plan['esp']}, and both system-slot GRUB fallbacks now load the PlainNVR A/B menu. A UEFI firmware entry was registered when available. Remove the USB and reboot. Partitions, recordings and account data were preserved."
 
 
 def show(parent):

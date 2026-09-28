@@ -5,6 +5,7 @@ import json
 import pwd
 import re
 import shutil
+import tempfile
 from pathlib import Path
 from common import run, save, device_ref
 from slots import configure_root, copy_kernel, grub_config
@@ -17,6 +18,39 @@ def grub_bootstrap(uuid):
     return ('insmod part_gpt\ninsmod fat\ninsmod search_fs_uuid\n'
             f'search --no-floppy --fs-uuid --set=root {uuid}\n'
             'set prefix=($root)/grub\nconfigfile $prefix/grub.cfg\n')
+
+
+def grub_fallback_bootstrap(uuids):
+    """Find any installer-recorded ESP, then load its canonical A/B menu."""
+    if not isinstance(uuids, (list, tuple)) or not uuids:
+        raise RuntimeError('Missing EFI partition identity.')
+    lines = ['insmod part_gpt', 'insmod fat', 'insmod search_fs_uuid']
+    for uuid in uuids:
+        if not isinstance(uuid, str) or not re.fullmatch(r'[A-Fa-f0-9-]+', uuid):
+            raise RuntimeError('Invalid EFI partition UUID.')
+        lines.extend([
+            f'if search --no-floppy --fs-uuid --set=plainnvr_boot {uuid}; then',
+            '  set root=$plainnvr_boot',
+            '  set prefix=($root)/grub',
+            '  configfile $prefix/grub.cfg',
+            'fi',
+        ])
+    lines.extend(["echo 'PlainNVR boot partition not found.'", 'sleep 10'])
+    return '\n'.join(lines) + '\n'
+
+
+def write_root_bootstrap(root, uuids):
+    """Replace a stale Debian root GRUB menu with a chain to PlainNVR A/B GRUB."""
+    path = Path(root) / 'boot/grub/grub.cfg'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.is_symlink() or (path.exists() and not path.is_file()):
+        raise RuntimeError('Unexpected root GRUB configuration path.')
+    with tempfile.NamedTemporaryFile(mode='w', dir=path.parent, delete=False) as stream:
+        stream.write(grub_fallback_bootstrap(uuids))
+        stream.flush()
+        os.fsync(stream.fileno())
+        staged = Path(stream.name)
+    os.replace(staged, path)
 
 
 def prepare_esp(disk):
@@ -111,6 +145,12 @@ def initialize():
         '--exclude=/var/lib/plainnvr/***', '--exclude=/proc/***', '--exclude=/sys/***',
         '--exclude=/dev/***', '--exclude=/run/***', '/', str(root_b) + '/', timeout=900)
     configure_root(root_b, config, 'B', original_fstab)
+    # Debian Installer can leave an older BIOS/UEFI GRUB path pointing at a
+    # root filesystem's /boot/grub/grub.cfg. Make that path chain into the
+    # canonical PlainNVR menu too, so every known firmware path supplies
+    # rauc.slot=A/B instead of silently booting a slot without an identity.
+    write_root_bootstrap('/', config['esp_uuids'])
+    write_root_bootstrap(root_b, config['esp_uuids'])
     # Firmware-independent bootloaders and independent environment blocks on
     # every ESP allow either mirror member to boot without GRUB writing RAID.
     run('umount', '/boot/efi', check=False)
