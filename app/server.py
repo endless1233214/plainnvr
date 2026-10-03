@@ -126,6 +126,7 @@ try:
         basic_auth_credentials,
         bearer_token,
         parse_cookie_header,
+        valid_app_auth as valid_app_auth_impl,
         valid_stream_auth as valid_stream_auth_impl,
     )
     from app.media_commands import (
@@ -272,6 +273,7 @@ except ModuleNotFoundError:
         basic_auth_credentials,
         bearer_token,
         parse_cookie_header,
+        valid_app_auth as valid_app_auth_impl,
         valid_stream_auth as valid_stream_auth_impl,
     )
     from media_commands import (
@@ -377,6 +379,7 @@ SESSION_TOUCH_INTERVAL_SECONDS = max(60, int(os.environ.get("NVR_SESSION_TOUCH_I
 BOOTSTRAP_USERNAME = os.environ.get("NVR_AUTH_USERNAME", "admin").strip() or "admin"
 BOOTSTRAP_PASSWORD = os.environ.get("NVR_AUTH_PASSWORD", "")
 STREAM_TOKEN_OVERRIDE = os.environ.get("NVR_STREAM_TOKEN", "").strip()
+APP_TOKEN = os.environ.get("NVR_APP_TOKEN", "").strip()
 DEFAULT_PTZ_PROFILE_TOKEN = os.environ.get("NVR_PTZ_PROFILE_TOKEN", "Profile_1").strip() or "Profile_1"
 try:
     DEFAULT_PTZ_SPEED = float(os.environ.get("NVR_PTZ_SPEED", "0.55"))
@@ -1236,6 +1239,13 @@ def valid_stream_auth(handler, parsed):
         get_stream_token=get_stream_token,
         authenticate_user=authenticate_user,
         basic_failure_limiter=basic_failure_limiter,
+    )
+
+
+def valid_app_auth(handler):
+    return valid_app_auth_impl(
+        handler.headers,
+        APP_TOKEN,
     )
 
 

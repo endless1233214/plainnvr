@@ -137,6 +137,10 @@ def do_POST(handler, app):
         )
         return
 
+    if parsed.path == "/api/apps/events":
+        handler.handle_app_event(payload)
+        return
+
     if parsed.path == "/api/cameras":
         try:
             camera = app.create_camera(payload)
@@ -625,6 +629,72 @@ def handle_camera_tapo(
         )
         return
     handler.send_json(result)
+
+
+def handle_app_event(handler, app, payload):
+    if not isinstance(payload, dict):
+        handler.send_error_json(
+            HTTPStatus.BAD_REQUEST,
+            "App event must be a JSON object.",
+        )
+        return
+
+    camera_id = str(payload.get("camera_id") or "").strip()
+    event_type = str(payload.get("event_type") or "").strip().lower()
+    state = str(payload.get("state") or "detected").strip().lower()
+    source = str(payload.get("source") or "plainnvr-app").strip()
+    allowed_types = {"motion", "person", "face", "vehicle", "sound"}
+    if not re.fullmatch(r"[a-f0-9]{8,64}", camera_id):
+        handler.send_error_json(
+            HTTPStatus.BAD_REQUEST,
+            "Invalid camera_id.",
+        )
+        return
+    if event_type not in allowed_types:
+        handler.send_error_json(
+            HTTPStatus.BAD_REQUEST,
+            "Unsupported app event type.",
+        )
+        return
+    if state not in {"start", "stop", "detected"}:
+        handler.send_error_json(
+            HTTPStatus.BAD_REQUEST,
+            "Unsupported app event state.",
+        )
+        return
+    if not source or len(source) > 80:
+        handler.send_error_json(
+            HTTPStatus.BAD_REQUEST,
+            "Invalid app event source.",
+        )
+        return
+
+    confidence = payload.get("confidence")
+    if confidence is not None:
+        try:
+            confidence = float(confidence)
+        except (TypeError, ValueError):
+            confidence = None
+        if confidence is None or not 0 <= confidence <= 1:
+            handler.send_error_json(
+                HTTPStatus.BAD_REQUEST,
+                "confidence must be between 0 and 1.",
+            )
+            return
+
+    camera = app.get_camera(camera_id)
+    if not camera:
+        handler.send_error_json(
+            HTTPStatus.NOT_FOUND,
+            "Camera not found.",
+        )
+        return
+
+    message = f"{source}: {event_type} {state}"
+    if confidence is not None:
+        message += f" ({confidence:.2f})"
+    app.add_event(camera_id, "info", message)
+    handler.send_json({"ok": True})
 
 
 def handle_onvif_discovery(

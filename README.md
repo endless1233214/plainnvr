@@ -223,6 +223,20 @@ The control API accepts only named operations implemented by PlainNVR. It does
 not expose a generic vendor-RPC endpoint. Targets must be literal private,
 loopback, or link-local IP addresses.
 
+### Optional apps and camera drivers
+
+Optional detection apps and camera drivers are cataloged separately in the
+[PlainNVR OS Apps repository](https://github.com/endless1233214/plainnvr-os-apps).
+The core stays small; an app reads a PlainNVR restream and posts typed events,
+while a driver provides isolated vendor capabilities. Apps do not receive the
+database, camera passwords, or Docker socket.
+
+Set `NVR_APP_TOKEN` to enable the authenticated app event endpoint:
+`POST /api/apps/events`. The token is separate from the viewer stream token.
+For an app to consume a go2rtc RTSP restream from another container, explicitly
+bind `NVR_GO2RTC_RTSP_HOST=0.0.0.0` on a trusted private network; the secure
+default remains loopback-only.
+
 PTZ zoom is configured separately from pan and tilt:
 
 | Setting | Behavior |
