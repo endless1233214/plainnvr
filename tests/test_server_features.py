@@ -128,6 +128,61 @@ assert sock.sent.endswith(b'{}')
                 server.DATA_DIR = original_data
                 server.DB_PATH = original_db
 
+    def test_tapo_control_password_is_write_only(self):
+        original_data = server.DATA_DIR
+        original_db = server.DB_PATH
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+            server.go2rtc, "configure_camera"
+        ):
+            server.DATA_DIR = Path(tmp)
+            server.DB_PATH = Path(tmp) / "plainnvr.sqlite3"
+            try:
+                server.init_db()
+                camera = server.create_camera(
+                    {
+                        "name": "Tapo",
+                        "rtsp_url": (
+                            "rtsp://stream:secret@"
+                            "192.168.1.199:554/stream1"
+                        ),
+                        "tapo_enabled": True,
+                        "tapo_host": "192.168.1.199",
+                        "tapo_username": "owner@example.test",
+                        "tapo_password": "owner-secret",
+                    }
+                )
+                self.assertTrue(camera["tapo_password_set"])
+                self.assertNotIn("tapo_password", camera)
+                with server.db_conn() as conn:
+                    row = conn.execute(
+                        "SELECT tapo_password FROM cameras "
+                        "WHERE id = ?",
+                        (camera["id"],),
+                    ).fetchone()
+                self.assertEqual(
+                    row["tapo_password"],
+                    "owner-secret",
+                )
+
+                updated = server.update_camera(
+                    camera["id"],
+                    {"name": "Tapo Front"},
+                )
+                self.assertTrue(updated["tapo_password_set"])
+                with server.db_conn() as conn:
+                    row = conn.execute(
+                        "SELECT tapo_password FROM cameras "
+                        "WHERE id = ?",
+                        (camera["id"],),
+                    ).fetchone()
+                self.assertEqual(
+                    row["tapo_password"],
+                    "owner-secret",
+                )
+            finally:
+                server.DATA_DIR = original_data
+                server.DB_PATH = original_db
+
     def test_continuous_onvif_move_has_no_timeout(self):
         continuous = server.onvif_move_body(
             "left", 0.5, 300, "profile-1", continuous=True

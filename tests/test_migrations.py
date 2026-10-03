@@ -116,6 +116,14 @@ class MigrationTests(unittest.TestCase):
                 self.assertEqual(camera["ptz_type"], "onvif")
                 self.assertEqual(camera["ptz_speed"], 0.55)
                 self.assertEqual(camera["onvif"], {})
+                self.assertFalse(camera["tapo_enabled"])
+                self.assertFalse(
+                    camera["tapo_password_set"]
+                )
+                self.assertNotIn(
+                    "tapo_password",
+                    camera,
+                )
 
                 self.assertEqual(
                     server.authenticate_user(
@@ -147,6 +155,10 @@ class MigrationTests(unittest.TestCase):
                         "ptz_speed",
                         "onvif_json",
                         "onvif_updated_at",
+                        "tapo_enabled",
+                        "tapo_host",
+                        "tapo_username",
+                        "tapo_password",
                     ):
                         self.assertIn(expected, columns)
 

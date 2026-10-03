@@ -92,6 +92,10 @@ try:
         schedule_active,
         time_to_minutes,
     )
+    from app.tapo_control import (
+        TapoControlError,
+        control_request as tapo_control_request,
+    )
     from app.media_relay import (
         Go2RTCManager as BaseGo2RTCManager,
         Go2RTCSourceManager,
@@ -233,6 +237,10 @@ except ModuleNotFoundError:
         normalize_schedule,
         schedule_active,
         time_to_minutes,
+    )
+    from tapo_control import (
+        TapoControlError,
+        control_request as tapo_control_request,
     )
     from media_relay import (
         Go2RTCManager as BaseGo2RTCManager,
@@ -662,6 +670,34 @@ def get_camera(camera_id):
         camera_id,
         db_conn=db_conn,
         camera_from_row=camera_from_row,
+    )
+
+
+def run_tapo_control(
+    camera,
+    operation,
+    control=None,
+    value=None,
+):
+    with db_conn() as conn:
+        row = conn.execute(
+            "SELECT tapo_password FROM cameras "
+            "WHERE id = ?",
+            (camera["id"],),
+        ).fetchone()
+    if row is None:
+        raise ValueError("Camera not found.")
+    private_camera = {
+        **camera,
+        "tapo_password": (
+            row["tapo_password"] or ""
+        ),
+    }
+    return tapo_control_request(
+        private_camera,
+        operation,
+        control,
+        value,
     )
 
 

@@ -342,6 +342,20 @@ class NvrHandler(SimpleHTTPRequestHandler):
             payload,
         )
 
+    def handle_camera_tapo(
+        self,
+        camera_id,
+        action,
+        payload=None,
+    ):
+        return http_api.handle_camera_tapo(
+            self,
+            self.app,
+            camera_id,
+            action,
+            payload,
+        )
+
     def handle_onvif_discovery(
         self,
         payload,

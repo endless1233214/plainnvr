@@ -21,6 +21,8 @@ const state = {
   liveLastMediaTime: null,
   liveLastProgressAt: 0,
   onvifDiscovery: null,
+  tapoResults: {},
+  tapoBusy: false,
 };
 
 const dayKeys = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
@@ -242,7 +244,7 @@ function renderHaPanel(camera) {
 }
 
 function cameraPayloadFromForm() {
-  return {
+  const payload = {
     name: $("cameraName").value.trim(),
     rtsp_url: $("rtspUrl").value.trim(),
     audio_url: "",
@@ -260,8 +262,16 @@ function cameraPayloadFromForm() {
     ptz_profile_token: $("ptzProfileToken").value.trim(),
     ptz_zoom_mode: $("ptzZoomMode").value,
     ptz_speed: Number($("ptzSpeed").value),
+    tapo_enabled: $("tapoEnabled").checked,
+    tapo_host: $("tapoHost").value.trim(),
+    tapo_username: $("tapoUsername").value.trim(),
     schedule: selectedScheduleFromForm(),
   };
+  const tapoPassword = $("tapoPassword").value;
+  if (tapoPassword) {
+    payload.tapo_password = tapoPassword;
+  }
+  return payload;
 }
 
 function maskRtspUrl() {
@@ -290,6 +300,12 @@ function resetForm() {
   $("ptzProfileToken").value = "Profile_1";
   $("ptzZoomMode").value = "auto";
   $("ptzSpeed").value = "0.55";
+  $("tapoEnabled").checked = false;
+  $("tapoHost").value = "";
+  $("tapoUsername").value = "";
+  $("tapoPassword").value = "";
+  $("tapoPassword").placeholder = "Control password";
+  $("tapoProbeState").textContent = "Save the camera before testing.";
   $("cameraTime").value = localDateTimeValue();
   $("cameraTimePanel").hidden = true;
   $("cameraTimeState").textContent = "";
@@ -322,6 +338,16 @@ function editCamera(camera) {
   $("ptzProfileToken").value = camera.ptz_profile_token || "Profile_1";
   $("ptzZoomMode").value = camera.ptz_zoom_mode || "auto";
   $("ptzSpeed").value = String(camera.ptz_speed || 0.55);
+  $("tapoEnabled").checked = Boolean(camera.tapo_enabled);
+  $("tapoHost").value = camera.tapo_host || "";
+  $("tapoUsername").value = camera.tapo_username || "";
+  $("tapoPassword").value = "";
+  $("tapoPassword").placeholder = camera.tapo_password_set
+    ? "Saved — leave blank to keep"
+    : "Control password";
+  $("tapoProbeState").textContent = camera.tapo_enabled
+    ? "Ready to test the saved local-control settings."
+    : "Enable and save local controls before testing.";
   $("cameraTime").value = localDateTimeValue();
   $("cameraTimePanel").hidden = !camera.time_sync_supported;
   $("cameraTimeState").textContent = "";
@@ -468,6 +494,7 @@ function renderCameras() {
         <span class="chip">${liveModeLabel(cameraLiveMode(camera))}</span>
         ${cameraViewRotation(camera) ? `<span class="chip">${cameraViewRotation(camera)} deg</span>` : ""}
         ${camera.ptz_enabled ? '<span class="chip ok">ptz</span>' : ""}
+        ${camera.tapo_enabled ? '<span class="chip ok">local tapo</span>' : ""}
       </div>
     `;
     button.addEventListener("click", () => editCamera(camera));
@@ -583,6 +610,7 @@ function renderLiveCameras() {
     $("liveSourceLabel").textContent = selected ? liveModeLabel(cameraLiveMode(selected)) : "";
   }
   renderPtzPanel();
+  renderTapoPanel();
 }
 
 function selectedLiveCamera() {
@@ -639,6 +667,84 @@ function renderPtzPanel() {
     $("ptzPreset").appendChild(option);
   });
   $("goToPtzPreset").disabled = state.ptzBusy || presets.length === 0;
+}
+
+function renderTapoPanel() {
+  const camera = selectedLiveCamera();
+  const panel = $("tapoPanel");
+  const enabled = Boolean(camera?.tapo_enabled);
+  const result = camera ? state.tapoResults[camera.id] : null;
+  panel.hidden = !enabled;
+  if (!enabled) {
+    $("tapoState").textContent = "";
+    return;
+  }
+
+  const capabilities = result?.capabilities || null;
+  panel.querySelectorAll("[data-tapo-feature]").forEach((element) => {
+    const feature = element.dataset.tapoFeature;
+    element.hidden = Boolean(capabilities) && !capabilities[feature];
+  });
+  panel.querySelectorAll("button, input, select").forEach((element) => {
+    element.disabled = state.tapoBusy;
+  });
+  if (state.tapoBusy) {
+    $("tapoState").textContent = "Contacting camera…";
+  } else if (result) {
+    const supported = Object.keys(result.capabilities || {}).length;
+    $("tapoState").textContent = `${String(result.transport || "local").toUpperCase()}: ${supported} feature groups available`;
+  } else {
+    $("tapoState").textContent = "Read state to discover this camera’s controls.";
+  }
+}
+
+async function refreshTapoState(probe = false) {
+  const camera = probe
+    ? state.cameras.find((item) => item.id === $("cameraId").value)
+    : selectedLiveCamera();
+  const status = probe ? $("tapoProbeState") : $("tapoState");
+  if (!camera?.id) {
+    status.textContent = "Save the camera before testing.";
+    return;
+  }
+  state.tapoBusy = true;
+  renderTapoPanel();
+  status.textContent = "Contacting camera…";
+  try {
+    const result = await api(
+      `/api/cameras/${camera.id}/tapo/${probe ? "probe" : "state"}`,
+      probe ? { method: "POST", body: "{}" } : {},
+    );
+    state.tapoResults[camera.id] = result;
+    const supported = Object.keys(result.capabilities || {}).length;
+    status.textContent = `${String(result.transport || "local").toUpperCase()}: ${supported} feature groups available`;
+  } catch (error) {
+    status.textContent = error.message;
+  } finally {
+    state.tapoBusy = false;
+    renderTapoPanel();
+  }
+}
+
+async function sendTapoControl(control, value) {
+  const camera = selectedLiveCamera();
+  if (!camera?.tapo_enabled || state.tapoBusy) return;
+  state.tapoBusy = true;
+  renderTapoPanel();
+  let message = "";
+  try {
+    await api(`/api/cameras/${camera.id}/tapo/control`, {
+      method: "POST",
+      body: JSON.stringify({ control, value }),
+    });
+    message = `${control.replaceAll("_", " ")} updated`;
+  } catch (error) {
+    message = error.message;
+  } finally {
+    state.tapoBusy = false;
+    renderTapoPanel();
+    $("tapoState").textContent = message;
+  }
 }
 
 function renderEvents(events) {
@@ -735,6 +841,7 @@ async function saveCamera(event) {
     const camera = id
       ? await api(`/api/cameras/${id}`, { method: "PUT", body: JSON.stringify(payload) })
       : await api("/api/cameras", { method: "POST", body: JSON.stringify(payload) });
+    delete state.tapoResults[camera.id];
     await loadStatus();
     editCamera(camera);
     setSaveState("Saved");
@@ -1268,6 +1375,8 @@ document.addEventListener("DOMContentLoaded", () => {
   $("cameraForm").addEventListener("invalid", maskRtspUrl, true);
   $("ptzType").addEventListener("change", updatePtzFormHints);
   $("discoverOnvif").addEventListener("click", discoverOnvif);
+  $("probeTapo").addEventListener("click", () => refreshTapoState(true));
+  $("refreshTapo").addEventListener("click", () => refreshTapoState(false));
   $("downloadCompatibility").addEventListener("click", downloadCompatibilityReport);
   $("useOnvifStream").addEventListener("click", useDiscoveredStream);
   $("onvifProfile").addEventListener("change", () => {
@@ -1323,6 +1432,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const camera = selectedLiveCamera();
     $("liveSourceLabel").textContent = camera ? liveModeLabel(cameraLiveMode(camera)) : "";
     renderPtzPanel();
+    renderTapoPanel();
     if (state.liveActive) {
       startLive();
     }
@@ -1361,6 +1471,33 @@ document.addEventListener("DOMContentLoaded", () => {
         $("ptzState").textContent = error.message;
       });
     });
+  });
+  document.querySelectorAll("[data-tapo-control]").forEach((button) => {
+    button.addEventListener("click", () => {
+      sendTapoControl(
+        button.dataset.tapoControl,
+        button.dataset.tapoValue === "true",
+      );
+    });
+  });
+  document.querySelectorAll("[data-tapo-apply]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const control = button.dataset.tapoApply;
+      const inputByControl = {
+        night_vision: "tapoNightVision",
+        spotlight_intensity: "tapoSpotlightIntensity",
+        microphone_volume: "tapoMicrophoneVolume",
+        speaker_volume: "tapoSpeakerVolume",
+      };
+      const input = $(inputByControl[control]);
+      const value = control === "night_vision" ? input.value : Number(input.value);
+      sendTapoControl(control, value);
+    });
+  });
+  $("rebootTapo").addEventListener("click", () => {
+    if (window.confirm("Reboot this camera now?")) {
+      sendTapoControl("reboot", true);
+    }
   });
   $("playbackCamera").addEventListener("change", () => {
     applyPlaybackViewTransform();

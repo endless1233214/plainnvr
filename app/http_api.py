@@ -189,6 +189,21 @@ def do_POST(handler, app):
         return
 
     match = re.match(
+        (
+            r"^/api/cameras/([a-f0-9]+)/"
+            r"tapo/(probe|control)$"
+        ),
+        parsed.path,
+    )
+    if match:
+        handler.handle_camera_tapo(
+            match.group(1),
+            match.group(2),
+            payload,
+        )
+        return
+
+    match = re.match(
         r"^/api/cameras/([a-f0-9]+)/time$",
         parsed.path,
     )
@@ -568,6 +583,50 @@ def handle_camera_ptz(
     handler.send_json(result)
 
 
+def handle_camera_tapo(
+    handler,
+    app,
+    camera_id,
+    action,
+    payload=None,
+):
+    camera = app.get_camera(camera_id)
+    if not camera:
+        handler.send_error_json(
+            HTTPStatus.NOT_FOUND,
+            "Camera not found.",
+        )
+        return
+
+    try:
+        if action == "control":
+            payload = payload or {}
+            result = app.run_tapo_control(
+                camera,
+                "set",
+                str(payload.get("control") or ""),
+                payload.get("value"),
+            )
+        else:
+            result = app.run_tapo_control(
+                camera,
+                "probe",
+            )
+    except ValueError as exc:
+        handler.send_error_json(
+            HTTPStatus.BAD_REQUEST,
+            str(exc),
+        )
+        return
+    except app.TapoControlError as exc:
+        handler.send_error_json(
+            HTTPStatus.BAD_GATEWAY,
+            str(exc),
+        )
+        return
+    handler.send_json(result)
+
+
 def handle_onvif_discovery(
     handler,
     app,
@@ -775,6 +834,40 @@ def handle_api_get(handler, app, parsed):
         handler.handle_camera_time(
             match.group(1)
         )
+        return
+
+    match = re.match(
+        r"^/api/cameras/([a-f0-9]+)/tapo/state$",
+        parsed.path,
+    )
+    if match:
+        camera = app.get_camera(
+            match.group(1)
+        )
+        if not camera:
+            handler.send_error_json(
+                HTTPStatus.NOT_FOUND,
+                "Camera not found.",
+            )
+            return
+        try:
+            result = app.run_tapo_control(
+                camera,
+                "state",
+            )
+        except ValueError as exc:
+            handler.send_error_json(
+                HTTPStatus.BAD_REQUEST,
+                str(exc),
+            )
+            return
+        except app.TapoControlError as exc:
+            handler.send_error_json(
+                HTTPStatus.BAD_GATEWAY,
+                str(exc),
+            )
+            return
+        handler.send_json(result)
         return
 
     match = re.match(

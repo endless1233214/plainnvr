@@ -213,6 +213,62 @@
                 </div>
                 <span id="ptzState" class="muted"></span>
               </div>
+              <div id="tapoPanel" class="tapo-panel" hidden>
+                <div class="tapo-panel-heading">
+                  <strong>Local Tapo controls</strong>
+                  <button id="refreshTapo" type="button">Read state</button>
+                  <span id="tapoState" class="muted"></span>
+                </div>
+                <div class="tapo-actions">
+                  <span data-tapo-feature="spotlight">
+                    Spotlight
+                    <button type="button" data-tapo-control="spotlight" data-tapo-value="true">On</button>
+                    <button type="button" data-tapo-control="spotlight" data-tapo-value="false">Off</button>
+                  </span>
+                  <span data-tapo-feature="alarm">
+                    Siren
+                    <button type="button" data-tapo-control="siren" data-tapo-value="true">Start</button>
+                    <button type="button" data-tapo-control="siren" data-tapo-value="false">Stop</button>
+                  </span>
+                  <span data-tapo-feature="privacy">
+                    Privacy
+                    <button type="button" data-tapo-control="privacy" data-tapo-value="true">On</button>
+                    <button type="button" data-tapo-control="privacy" data-tapo-value="false">Off</button>
+                  </span>
+                  <span data-tapo-feature="led">
+                    LED
+                    <button type="button" data-tapo-control="led" data-tapo-value="true">On</button>
+                    <button type="button" data-tapo-control="led" data-tapo-value="false">Off</button>
+                  </span>
+                </div>
+                <div class="tapo-values">
+                  <label data-tapo-feature="night_vision">
+                    Night vision
+                    <select id="tapoNightVision">
+                      <option value="auto">Auto</option>
+                      <option value="on">On</option>
+                      <option value="off">Off</option>
+                    </select>
+                    <button type="button" data-tapo-apply="night_vision">Apply</button>
+                  </label>
+                  <label data-tapo-feature="spotlight">
+                    Spotlight intensity
+                    <input id="tapoSpotlightIntensity" type="number" min="1" max="100" value="100" />
+                    <button type="button" data-tapo-apply="spotlight_intensity">Apply</button>
+                  </label>
+                  <label data-tapo-feature="audio">
+                    Microphone
+                    <input id="tapoMicrophoneVolume" type="number" min="0" max="100" value="100" />
+                    <button type="button" data-tapo-apply="microphone_volume">Apply</button>
+                  </label>
+                  <label data-tapo-feature="audio">
+                    Speaker
+                    <input id="tapoSpeakerVolume" type="number" min="0" max="100" value="100" />
+                    <button type="button" data-tapo-apply="speaker_volume">Apply</button>
+                  </label>
+                  <button id="rebootTapo" class="danger" type="button">Reboot camera</button>
+                </div>
+              </div>
               <div class="live-frame">
                 <plainnvr-live-player id="go2rtcLive" hidden></plainnvr-live-player>
                 <div id="liveEmpty" class="empty">No live stream selected.</div>
@@ -365,6 +421,32 @@
                         </label>
                         <button id="useOnvifStream" type="button" disabled>Use Stream</button>
                       </div>
+                    </div>
+                  </fieldset>
+
+                  <fieldset class="tapo-settings form-section">
+                    <legend>Local Tapo Control</legend>
+                    <div class="toggles">
+                      <label><input id="tapoEnabled" type="checkbox" /> Enable direct local controls</label>
+                    </div>
+                    <div class="form-fields two-column">
+                      <label>
+                        Camera IP
+                        <input id="tapoHost" inputmode="decimal" autocomplete="off" placeholder="Uses the stream IP" />
+                      </label>
+                      <label>
+                        Account username
+                        <input id="tapoUsername" autocomplete="username" placeholder="Optional on newer TPAP firmware" />
+                      </label>
+                    </div>
+                    <label>
+                      Control password
+                      <input id="tapoPassword" type="password" autocomplete="new-password" placeholder="Leave blank to keep the saved password" />
+                      <small class="field-help">New TPAP firmware locally verifies the TP-Link account password. The camera does not need internet access.</small>
+                    </label>
+                    <div class="onvif-actions">
+                      <button id="probeTapo" type="button">Test local controls</button>
+                      <span id="tapoProbeState" class="muted">Save the camera before testing.</span>
                     </div>
                   </fieldset>
 
