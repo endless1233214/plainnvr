@@ -27,6 +27,7 @@ var probes = []probeSpec{
 	{"led", "getLedStatus", map[string]any{"led": map[string]any{"name": []any{"config"}}}},
 	{"spotlight", "getWhitelampConfig", map[string]any{"image": map[string]any{"name": []any{"switch"}}}},
 	{"spotlight_status", "getWhitelampStatus", map[string]any{"image": map[string]any{"get_wtl_status": []any{"null"}}}},
+	{"image", "getLdc", map[string]any{"image": map[string]any{"name": []any{"common", "switch"}}}},
 	{"night_vision", "getNightVisionCapability", map[string]any{"image_capability": map[string]any{"name": []any{"supplement_lamp"}}}},
 	{"alarm", "getAlarmConfig", map[string]any{"msg_alarm": map[string]any{}}},
 	{"audio", "getAudioConfig", map[string]any{"audio_config": map[string]any{"name": []any{"speaker", "microphone", "record_audio"}}}},
