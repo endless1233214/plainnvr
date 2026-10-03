@@ -106,6 +106,21 @@ def camera_from_row(
     data["ptz_enabled"] = bool(
         data.get("ptz_enabled", False)
     )
+    data["tapo_enabled"] = bool(
+        data.get("tapo_enabled", False)
+    )
+    tapo_password = str(
+        data.pop("tapo_password", "") or ""
+    )
+    data["tapo_password_set"] = bool(
+        tapo_password
+    )
+    data["tapo_host"] = str(
+        data.get("tapo_host") or ""
+    )
+    data["tapo_username"] = str(
+        data.get("tapo_username") or ""
+    )
     data["audio_url"] = (
         data.get("audio_url") or ""
     )
@@ -329,6 +344,15 @@ def validate_camera_payload(
     ptz_url = str(
         payload.get("ptz_url", "")
     ).strip()
+    tapo_host = str(
+        payload.get("tapo_host", "")
+    ).strip()
+    tapo_username = str(
+        payload.get("tapo_username", "")
+    ).strip()
+    tapo_password = str(
+        payload.get("tapo_password", "")
+    )
 
     if not partial or "name" in payload:
         if not name:
@@ -518,6 +542,27 @@ def validate_camera_payload(
             "hardware, or none."
         )
 
+    if tapo_host and (
+        len(tapo_host) > 64
+        or any(
+            character in tapo_host
+            for character in "/?#@"
+        )
+    ):
+        errors["tapo_host"] = (
+            "Use a local camera IP address."
+        )
+
+    if len(tapo_username) > 320:
+        errors["tapo_username"] = (
+            "Tapo username is too long."
+        )
+
+    if len(tapo_password) > 1024:
+        errors["tapo_password"] = (
+            "Tapo control password is too long."
+        )
+
     if errors:
         raise ValueError(
             json.dumps(errors)
@@ -592,12 +637,17 @@ def create_camera(
                 ptz_profile_token,
                 ptz_zoom_mode,
                 ptz_speed,
+                tapo_enabled,
+                tapo_host,
+                tapo_username,
+                tapo_password,
                 created_at, updated_at
             )
             VALUES (
                 ?, ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?, ?
+                ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?
             )
             """,
             (
@@ -676,6 +726,26 @@ def create_camera(
                     )
                 ),
                 ptz_speed,
+                normalize_bool(
+                    payload.get(
+                        "tapo_enabled", False
+                    )
+                ),
+                str(
+                    payload.get(
+                        "tapo_host", ""
+                    )
+                ).strip(),
+                str(
+                    payload.get(
+                        "tapo_username", ""
+                    )
+                ).strip(),
+                str(
+                    payload.get(
+                        "tapo_password", ""
+                    )
+                ),
                 now,
                 now,
             ),
@@ -796,6 +866,26 @@ def update_camera(
     )
 
     with db_conn() as conn:
+        secret_row = conn.execute(
+            "SELECT tapo_password FROM cameras "
+            "WHERE id = ?",
+            (camera_id,),
+        ).fetchone()
+        tapo_password = (
+            str(payload.get("tapo_password") or "")
+            if "tapo_password" in payload
+            else str(
+                secret_row["tapo_password"]
+                if secret_row
+                else ""
+            )
+        )
+        if normalize_bool(
+            payload.get(
+                "clear_tapo_password", False
+            )
+        ):
+            tapo_password = ""
         slug = unique_slug(
             conn,
             merged["name"],
@@ -822,6 +912,10 @@ def update_camera(
                 ptz_profile_token = ?,
                 ptz_zoom_mode = ?,
                 ptz_speed = ?,
+                tapo_enabled = ?,
+                tapo_host = ?,
+                tapo_username = ?,
+                tapo_password = ?,
                 onvif_json = ?,
                 onvif_updated_at = ?,
                 updated_at = ?
@@ -903,6 +997,22 @@ def update_camera(
                     )
                 ),
                 ptz_speed,
+                normalize_bool(
+                    merged.get(
+                        "tapo_enabled", False
+                    )
+                ),
+                str(
+                    merged.get(
+                        "tapo_host", ""
+                    )
+                ).strip(),
+                str(
+                    merged.get(
+                        "tapo_username", ""
+                    )
+                ).strip(),
+                tapo_password,
                 onvif_json,
                 onvif_updated_at,
                 iso_now(),

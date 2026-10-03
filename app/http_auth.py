@@ -23,6 +23,20 @@ def bearer_token(headers):
     return ""
 
 
+def valid_app_auth(headers, expected):
+    """Validate the dedicated app bearer token without accepting sessions."""
+    expected = str(expected or "")
+    provided = bearer_token(headers)
+    return bool(
+        expected
+        and provided
+        and hmac.compare_digest(
+            provided.encode("utf-8"),
+            expected.encode("utf-8"),
+        )
+    )
+
+
 def basic_auth_credentials(headers):
     value = headers.get("Authorization", "")
     scheme, _, token = value.partition(" ")
