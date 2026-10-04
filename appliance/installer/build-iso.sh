@@ -18,11 +18,13 @@ if [ -e "$2" ]; then
     echo "Choose a new build directory; existing files are never removed." >&2
     exit 1
 fi
-version=$(cat "$runtime/VERSION")
+app_version=$(cat "$runtime/VERSION")
+os_version=$(cat "$repo_dir/appliance/update/VERSION")
 revision=$(cat "$repo_dir/appliance/installer/REVISION")
 case "$revision" in *[!0-9]*|'') exit 1 ;; esac
-case "$version" in *[!0-9A-Za-z.+~-]*|'') exit 1 ;; esac
-test "$version" = "$(cat "$repo_dir/VERSION")"
+case "$app_version" in *[!0-9A-Za-z.+~-]*|'') exit 1 ;; esac
+printf '%s\n' "$os_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'
+test "$app_version" = "$(cat "$repo_dir/VERSION")"
 for file in bin/go2rtc ffmpeg/bin/ffmpeg ffmpeg/bin/ffprobe kiosk/start.sh; do
     test -x "$runtime/$file"
 done
@@ -41,13 +43,13 @@ lb config --mode debian --distribution trixie --architectures amd64 \
     --apt-recommends false --security true --updates true --backports false \
     --firmware-binary true --firmware-chroot true \
     --iso-application 'PlainNVR OS Installer' --iso-volume PLAINNVR_INSTALL \
-    --image-name "plainnvr-os-$version-installer$revision" \
+    --image-name "plainnvr-os-$os_version-installer$revision" \
     --bootappend-install 'hostname=plainnvr'
 
 cp -R "$repo_dir/appliance/installer/config/." config/
 cp "$repo_dir/appliance/installer/config/includes.installer/preseed.cfg" \
     config/includes.chroot/usr/lib/plainnvr/installer/preseed.cfg
-release="config/includes.chroot/opt/plainnvr/releases/$version"
+release="config/includes.chroot/opt/plainnvr/releases/$app_version"
 mkdir -p "$release" config/includes.chroot/etc/systemd/system config/includes.chroot/etc/pam.d
 cp -a "$runtime/." "$release/"
 # Refresh application/UI sources alongside the appliance management layer.
@@ -91,7 +93,7 @@ for file in server.py storage.py seed-admin.py index.html; do
     unsquashfs -cat binary/live/filesystem.squashfs "usr/lib/plainnvr/setup/$file" |
         cmp - "$repo_dir/appliance/setup/$file"
 done
-unsquashfs -cat binary/live/filesystem.squashfs opt/plainnvr/releases/"$version"/VERSION |
+unsquashfs -cat binary/live/filesystem.squashfs opt/plainnvr/releases/"$app_version"/VERSION |
     cmp - "$runtime/VERSION"
 sha256sum ./*.iso > SHA256SUMS
 printf '\nInstaller output: %s\n' "$(pwd)"
