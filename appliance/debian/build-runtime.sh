@@ -15,7 +15,7 @@ if ! command -v dpkg-query >/dev/null || ! grep -q '^VERSION_CODENAME=trixie$' /
     echo "Build on Debian 13 (trixie)." >&2
     exit 1
 fi
-for tool in curl sha256sum tar patch go make pkg-config gcc nasm; do
+for tool in curl sha256sum tar xz patch go make pkg-config gcc nasm; do
     command -v "$tool" >/dev/null || { echo "Missing build tool: $tool" >&2; exit 1; }
 done
 

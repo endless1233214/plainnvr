@@ -56,7 +56,7 @@ jobs:
               apt-get update
               apt-get install -y --no-install-recommends \
                 ca-certificates curl gcc g++ git golang-go make nasm patch pkg-config \
-                live-build xorriso mtools dosfstools squashfs-tools syslinux-common rsync tar zstd \
+                live-build xorriso mtools dosfstools squashfs-tools syslinux-common rsync tar xz-utils zstd \
                 grub-pc-bin grub-efi-amd64-bin grub2-common debootstrap cpio rauc
               bash appliance/debian/build-runtime.sh /src/native-runtime
               bash appliance/installer/build-iso.sh /src/native-runtime /src/iso-build
