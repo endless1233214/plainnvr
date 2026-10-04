@@ -182,6 +182,7 @@ try:
         victure_direct_step_from_speed,
         victure_direct_target as victure_direct_target_impl,
     )
+    from app import victure_sidecar
 except ModuleNotFoundError:
     from auth import (
         AUTH_HASH_ITERATIONS,
@@ -324,6 +325,7 @@ except ModuleNotFoundError:
         victure_direct_step_from_speed,
         victure_direct_target as victure_direct_target_impl,
     )
+    import victure_sidecar
 
 
 APP_HOST = os.environ.get("NVR_HOST", "0.0.0.0")
@@ -936,6 +938,8 @@ def dvrip_time_target(camera):
 
 
 def camera_time(camera, requested=None):
+    if victure_sidecar.configured():
+        return victure_sidecar.call("camera-time", camera, requested=requested)
     return camera_time_impl(
         camera,
         requested,
@@ -954,6 +958,10 @@ def run_victure_dvrip_ptz_command(
     speed,
     duration_ms,
 ):
+    if victure_sidecar.configured():
+        return victure_sidecar.call(
+            "ptz", camera, action=action, speed=speed, duration_ms=duration_ms
+        )
     return run_victure_dvrip_ptz_command_impl(
         camera,
         action,
@@ -981,6 +989,8 @@ def run_victure_direct_ptz_command(
     action,
     speed,
 ):
+    if victure_sidecar.configured():
+        return victure_sidecar.call("ptz", camera, action=action, speed=speed)
     return run_victure_direct_ptz_command_impl(
         camera,
         action,
