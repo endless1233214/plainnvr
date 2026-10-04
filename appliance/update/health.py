@@ -8,7 +8,7 @@ import sys
 import time
 from pathlib import Path
 from urllib.request import urlopen
-from common import STATE, load, save, current, configuration, esp_mounts, write_env, run
+from common import STATE, load, save, current, configuration, esp_mounts, write_env, verify_slots, run
 
 
 def database():
@@ -73,6 +73,9 @@ def prepare():
 
 
 def healthy():
+    # A responsive web server is not enough if the root identity or RAID1
+    # mirror changed underneath the trial boot.
+    verify_slots(configuration())
     configured = Path('/etc/plainnvr/setup-complete').exists()
     url = 'http://127.0.0.1:8787/api/health' if configured else 'http://127.0.0.1:8790/api/state'
     with urlopen(url, timeout=3) as response:
@@ -90,21 +93,28 @@ def confirm():
     pending = load(STATE / 'pending.json')
     successes = 0
     for _ in range(24):
-        try: successes = successes + 1 if healthy() else 0
-        except (OSError, ValueError, RuntimeError): successes = 0
-        if successes >= 3:
-            other = 'B' if slot == 'A' else 'A'
-            with esp_mounts(configuration(), require_all=False) as mounts:
-                for mount in mounts: write_env(mount, ORDER=slot + ' ' + other, PENDING='none', **{slot + '_OK': '1', slot + '_TRY': '0'})
-            versions = load(STATE / 'slots.json', {})
-            version = Path('/usr/lib/plainnvr/update/VERSION').read_text().strip()
-            versions[slot] = {'version': version, 'healthy': True}
-            save(STATE / 'slots.json', versions)
-            if pending:
-                save(STATE / 'last-result.json', {'state': 'healthy', 'version': version, 'message': 'Update boot health check passed.'})
-                (STATE / 'pending.json').unlink(missing_ok=True)
-                save(STATE / 'job.json', {'state': 'idle', 'message': 'Update completed.'})
-            return
+        try:
+            successes = successes + 1 if healthy() else 0
+            if successes >= 3:
+                other = 'B' if slot == 'A' else 'A'
+                # Both installer-recorded ESPs must be present before declaring
+                # a mirrored trial healthy; otherwise one drive keeps stale state.
+                with esp_mounts(configuration()) as mounts:
+                    for mount in mounts:
+                        write_env(mount, ORDER=slot + ' ' + other, PENDING='none',
+                                  **{slot + '_OK': '1', slot + '_TRY': '0'})
+                versions = load(STATE / 'slots.json', {})
+                version = Path('/usr/lib/plainnvr/update/VERSION').read_text().strip()
+                versions[slot] = {'version': version, 'healthy': True}
+                save(STATE / 'slots.json', versions)
+                if pending:
+                    save(STATE / 'last-result.json', {'state': 'healthy', 'version': version,
+                                                      'message': 'Update boot health check passed.'})
+                    (STATE / 'pending.json').unlink(missing_ok=True)
+                    save(STATE / 'job.json', {'state': 'idle', 'message': 'Update completed.'})
+                return
+        except (OSError, ValueError, RuntimeError):
+            successes = 0
         time.sleep(5)
     if pending and slot == pending['target']:
         save(STATE / 'last-result.json', {'state': 'failed', 'version': pending['version'], 'message': 'Trial health check failed. Rebooting to the previous system.'})

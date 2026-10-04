@@ -43,6 +43,31 @@ class FailedTrialRecovery(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'not passed a health check'):
                     manager.start('rollback', {'confirmation': 'ROLLBACK'})
 
+    def test_degraded_boot_mirror_never_counts_as_healthy(self):
+        with patch.object(health, 'configuration', return_value={'mirror': True}), \
+             patch.object(health, 'verify_slots', side_effect=RuntimeError('mirror degraded')), \
+             patch.object(health, 'urlopen') as urlopen:
+            with self.assertRaisesRegex(RuntimeError, 'mirror degraded'):
+                health.healthy()
+            urlopen.assert_not_called()
+
+    def test_missing_boot_partition_reboots_unconfirmed_trial(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            state = Path(temporary)
+            (state / 'pending.json').write_text(json.dumps({
+                'previous': 'A', 'target': 'B', 'version': '0.2.1',
+                'phase': 'trial', 'database_existed': True}))
+            with patch.object(health, 'STATE', state), patch.object(health, 'current', return_value='B'), \
+                 patch.object(health, 'healthy', return_value=True), \
+                 patch.object(health, 'configuration', return_value={'mirror': True}), \
+                 patch.object(health, 'esp_mounts', side_effect=RuntimeError('second ESP missing')), \
+                 patch.object(health.time, 'sleep'), patch.object(health, 'run') as run:
+                with self.assertRaisesRegex(RuntimeError, 'boot success was not confirmed'):
+                    health.confirm()
+            run.assert_called_once_with('systemctl', 'reboot')
+            self.assertTrue((state / 'pending.json').exists())
+            self.assertEqual(json.loads((state / 'last-result.json').read_text())['state'], 'failed')
+
 
 class ClonedRootConfiguration(unittest.TestCase):
     def test_runtime_mounts_and_persistent_control_state(self):
