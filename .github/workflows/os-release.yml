@@ -72,8 +72,13 @@ jobs:
           TAG: ${{ steps.release.outputs.tag }}
           VERSION: ${{ steps.release.outputs.version }}
         run: |
+          printf '%s\n' \
+            'HEAVY BETA — TESTING ONLY. Do not rely on this build for security-critical monitoring or irreplaceable recordings. Back up first; bugs, data loss, and reinstalls are possible.' \
+            '' \
+            'This signed A/B update is for PlainNVR OS installations using the two-slot disk layout. Use the Preview channel in Settings > Updates. Install only during a maintenance window and reboot when prompted.' \
+            > release-notes.md
           gh release create "$TAG" \
             "bundle/plainnvr-os-${VERSION}-amd64.raucb" \
             bundle/SHA256SUMS \
-            --verify-tag --title "PlainNVR OS $VERSION" \
-            --generate-notes
+            --verify-tag --prerelease --title "PlainNVR OS $VERSION (heavy beta)" \
+            --notes-file release-notes.md
