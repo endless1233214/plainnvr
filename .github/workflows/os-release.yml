@@ -55,7 +55,7 @@ jobs:
             debian:trixie bash -euxo pipefail -c '
               apt-get update
               apt-get install -y --no-install-recommends \
-                ca-certificates curl gcc g++ git golang-go libssl-dev make nasm patch pkg-config \
+                ca-certificates curl file gcc g++ git golang-go libssl-dev make nasm patch pkg-config \
                 live-build xorriso mtools dosfstools squashfs-tools syslinux-common rsync tar xz-utils zstd \
                 grub-pc-bin grub-efi-amd64-bin grub2-common debootstrap cpio rauc
               bash appliance/debian/build-runtime.sh /src/native-runtime
