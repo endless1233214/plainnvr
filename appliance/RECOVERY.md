@@ -1,6 +1,6 @@
 # Startup recovery and log dumps
 
-Build 9 extends Build 8's bootloader repair after physical diagnostics showed
+Build 8 includes bootloader repair after physical diagnostics showed
 the HP could boot Linux without the required `rauc.slot=A/B` kernel argument.
 The repair now also redirects stale GRUB menus on both OS roots into the
 canonical PlainNVR A/B menu. Neither action repartitions the SSD or replaces
@@ -8,7 +8,7 @@ recordings, accounts or the application database.
 
 ## Existing installation stuck at the kiosk
 
-1. Boot the Build 9 USB into the normal live installer wizard.
+1. Boot the Build 8 USB into the normal live installer wizard.
 2. On the first page, choose **Recover existing installation**. Do not advance
    to drive erasure. Recovery displays the detected installed shared-data volume.
 3. Review the report. **Save log dump…** exports it to a chosen path, such as a
@@ -30,8 +30,9 @@ These repairs support one-drive PlainNVR A/B installations. Mirrored layouts and
 older single-root installations require separate recovery work. Already mounted
 partitions are refused; close other disk tools first.
 
-The HP 200 G1 MT has not yet booted the repaired physical SSD. If it still
-falls through to PXE after a successful bootloader repair, check whether HP
+The HP 200 G1 MT later booted Linux on system A, but that boot lacked the
+required `rauc.slot` argument. Build 8 has not yet been tested on the HP. If it
+still falls through to PXE after a successful bootloader repair, check whether HP
 firmware detects the SSD and includes it in UEFI/legacy boot order. A firmware
 entry cannot compensate for a missing or undetected drive. On this HP, the USB
 keyboard currently starts working only after Debian loads, so firmware setup

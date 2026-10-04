@@ -30,6 +30,9 @@ test -d "$runtime/licenses"
 for tool in lb debootstrap xorriso mksquashfs unsquashfs; do
     command -v "$tool" >/dev/null || { echo "Missing build tool: $tool" >&2; exit 1; }
 done
+for file in /usr/lib/syslinux/modules/bios/menu.c32 /usr/lib/syslinux/modules/bios/libutil.c32; do
+    test -f "$file" || { echo "Missing Syslinux boot menu file: $file (install syslinux-common)" >&2; exit 1; }
+done
 mkdir -p "$2"
 cd "$2"
 lb config --mode debian --distribution trixie --architectures amd64 \

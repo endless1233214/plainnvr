@@ -1,6 +1,6 @@
 # PlainNVR OS — native Debian x86-64 prototype handoff
 
-## Current checkpoint - revision 9 boot-path repair, September 27, 2026
+## Current checkpoint - Build 8 boot-path repair, September 28, 2026
 
 Physical startup diagnostics from the HP proved that system A could boot Linux
 and mount the expected A/B/shared-data layout while `plainnvr-ab-prepare`
@@ -8,7 +8,7 @@ failed with `This system was not booted from a PlainNVR A/B slot.` The missing
 handoff was the `rauc.slot=A/B` kernel argument, which means a stale Debian
 GRUB path could bypass the canonical PlainNVR A/B menu.
 
-Revision 9 makes fresh installs and live-USB bootloader repair write a tiny
+Build 8 makes fresh installs and live-USB bootloader repair write a tiny
 fallback `/boot/grub/grub.cfg` into both root slots. That fallback searches
 only the installer-recorded EFI partition UUIDs and chains to
 `/grub/grub.cfg`, where the real A/B menu appends `rauc.slot=A/B`. It does
@@ -18,7 +18,15 @@ diagnostics now capture `/proc/cmdline`, the mounted root source and
 
 This code is not physically validated yet. The next HP boot must show
 `rauc.slot=A` in startup diagnostics, allow `plainnvr-ab-prepare` to succeed,
-and reach setup/dashboard before revision 9 is considered good.
+and reach setup/dashboard before Build 8 is considered good.
+
+Final Build 8 ISO: `C:\Users\Zack\Downloads\PlainNVR-OS\plainnvr-os-0.2.0-installer8-amd64.hybrid.iso`.
+SHA-256: `e7c0d0d6cbbfa85f1e21acfbc0a24455462efa2e13c8b3ed8427d6a5dd074458`.
+The exact ISO booted to the recovery wizard in a disposable UEFI VM, repaired
+an existing 500 GB A/B installation, registered a PlainNVR EFI entry, and
+booted the repaired disk without USB in UEFI and BIOS VMs. All 50 appliance
+tests passed. See [Build 8 validation](installer/VALIDATION-8.md) and the
+owner's `BUILD8-RECOVERY.md` in the Downloads artifact folder.
 
 ## Current checkpoint - revision 7 recovery, September 27, 2026
 
@@ -44,9 +52,11 @@ Artifact: `C:\Users\Zack\Downloads\PlainNVR-OS\plainnvr-os-0.2.0-installer7-amd6
 choose the normal installer entry, then **Recover existing installation** on
 the first wizard page; do not choose drive erasure to repair the HP.
 
-The HP still needs the physical recovery test. Its last known address (.116)
-did not answer on 8787/8790 or neighbor discovery, and the owner's latest photo
-still shows the old waiting page. No changes were made to the physical HP.
+The owner subsequently tested recovery on the HP. It reported success, then
+the next boot fell through to PXE. A later boot reached Linux system A, but
+startup diagnostics showed that GRUB omitted `rauc.slot=A/B`, so the strict A/B
+guard prevented appliance services from starting. Build 8 addresses that path;
+its physical outcome remains unverified.
 No GitHub OS release was published. The temporary builder signing-key copy was
 removed; the permanent WSL release key was preserved. The builder and test VMs
 are shut down. Final build log is WSL `plainnvr-os-vm/revision7-build.log`;
