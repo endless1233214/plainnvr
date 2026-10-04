@@ -22,6 +22,16 @@ then run from this directory:
 .\gradlew.bat :app:assembleDebug
 ```
 
+For the on-device authentication and session-cookie test, start an Android
+emulator or connect a test device, then run:
+
+```powershell
+.\gradlew.bat :app:connectedDebugAndroidTest
+```
+
+The test uses a temporary loopback HTTP fixture on the device. It does not
+connect to a production PlainNVR server.
+
 The unsigned-for-distribution debug APK is at
 `app/build/outputs/apk/debug/app-debug.apk`. It is signed with Android's local
 debug key only. To install on a USB-connected Android device:
