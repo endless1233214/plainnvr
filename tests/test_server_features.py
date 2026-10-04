@@ -17,6 +17,32 @@ class RunningProcess:
 
 
 class ServerFeatureTests(unittest.TestCase):
+    def test_configured_victure_driver_replaces_both_in_process_modes(self):
+        camera = {"ptz_type": "victure_dvrip", "ptz_url": "dvrip://192.168.1.9"}
+        with mock.patch.object(server.victure_sidecar, "configured", return_value=True), \
+             mock.patch.object(server.victure_sidecar, "call", return_value={"ok": True}) as call, \
+             mock.patch.object(server, "run_victure_dvrip_ptz_command_impl") as legacy:
+            self.assertEqual(server.run_victure_dvrip_ptz_command(camera, "left", 0.5, 300), {"ok": True})
+            call.assert_called_once_with("ptz", camera, action="left", speed=0.5, duration_ms=300)
+            legacy.assert_not_called()
+
+        camera["ptz_type"] = "victure_direct"
+        with mock.patch.object(server.victure_sidecar, "configured", return_value=True), \
+             mock.patch.object(server.victure_sidecar, "call", return_value={"ok": True}) as call, \
+             mock.patch.object(server, "run_victure_direct_ptz_command_impl") as legacy:
+            self.assertEqual(server.run_victure_direct_ptz_command(camera, "up", 0.5), {"ok": True})
+            call.assert_called_once_with("ptz", camera, action="up", speed=0.5)
+            legacy.assert_not_called()
+
+    def test_configured_victure_driver_failure_does_not_fall_back(self):
+        camera = {"ptz_type": "victure_dvrip"}
+        with mock.patch.object(server.victure_sidecar, "configured", return_value=True), \
+             mock.patch.object(server.victure_sidecar, "call", side_effect=RuntimeError("Driver unavailable")), \
+             mock.patch.object(server, "run_victure_dvrip_ptz_command_impl") as legacy:
+            with self.assertRaisesRegex(RuntimeError, "Driver unavailable"):
+                server.run_victure_dvrip_ptz_command(camera, "left", 0.5, 300)
+            legacy.assert_not_called()
+
     def test_server_facade_keeps_existing_helper_names_and_keywords(self):
         source = {"rtsp_url": "http://example.invalid/stream"}
         self.assertEqual(
