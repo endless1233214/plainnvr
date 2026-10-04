@@ -117,6 +117,26 @@ def ensure_camera_schema(conn):
             "ALTER TABLE cameras ADD COLUMN "
             "onvif_updated_at TEXT NOT NULL DEFAULT ''",
         ),
+        (
+            "tapo_enabled",
+            "ALTER TABLE cameras ADD COLUMN "
+            "tapo_enabled INTEGER NOT NULL DEFAULT 0",
+        ),
+        (
+            "tapo_host",
+            "ALTER TABLE cameras ADD COLUMN "
+            "tapo_host TEXT NOT NULL DEFAULT ''",
+        ),
+        (
+            "tapo_username",
+            "ALTER TABLE cameras ADD COLUMN "
+            "tapo_username TEXT NOT NULL DEFAULT ''",
+        ),
+        (
+            "tapo_password",
+            "ALTER TABLE cameras ADD COLUMN "
+            "tapo_password TEXT NOT NULL DEFAULT ''",
+        ),
     )
     for column, statement in migrations:
         if column not in columns:
@@ -643,6 +663,10 @@ def init_db(
                 ptz_speed REAL NOT NULL DEFAULT 0.55,
                 onvif_json TEXT NOT NULL DEFAULT '{}',
                 onvif_updated_at TEXT NOT NULL DEFAULT '',
+                tapo_enabled INTEGER NOT NULL DEFAULT 0,
+                tapo_host TEXT NOT NULL DEFAULT '',
+                tapo_username TEXT NOT NULL DEFAULT '',
+                tapo_password TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )

@@ -15,6 +15,7 @@ Home Assistant, and the bundled go2rtc live-view layer.
 - Low-latency web live view through go2rtc MSE/HLS
 - ONVIF service, profile, stream, and PTZ capability discovery
 - Press-and-hold ONVIF movement, home position, hardware zoom, and presets
+- Direct local Tapo spotlight, siren, privacy, LED, night-vision, and audio controls
 - Downloadable redacted camera compatibility reports
 - Optional Home Assistant HLS and snapshot bridge
 - Native SwiftUI companion app for iPhone
@@ -101,7 +102,9 @@ Open `http://localhost:8787`.
 
 The Docker image includes the pinned go2rtc version used by the project. Direct
 Python runs also need a `go2rtc` binary in `PATH` for live viewing and
-restream-based recording.
+restream-based recording. Local Tapo controls additionally require the
+`plainnvr-tapoctl` helper built from `build/tapoctl`; set `TAPOCTL_BIN` when it
+is not installed at `/usr/local/bin/plainnvr-tapoctl`.
 
 The initial administrator can also be created non-interactively:
 
@@ -191,9 +194,48 @@ http://USERNAME:PASSWORD@CAMERA-HOST:2020/onvif/device_service
 ```
 
 ONVIF Profile S does not by itself guarantee spotlight, siren, or two-way-talk
-control. PlainNVR does not advertise those controls unless a future integration
-can identify a standard relay/output or an explicit vendor API. Camera microphone
-audio contained in the RTSP stream is supported for live view and recording.
+control. Camera microphone audio contained in the RTSP stream is supported for
+live view and recording.
+
+### Local Tapo Controls
+
+PlainNVR can control supported Tapo cameras directly over the LAN without the
+Tapo app or an active camera-to-cloud connection. Enable **Local Tapo Control**
+for a saved camera, enter a literal local camera IP (or leave it blank to use
+the RTSP host), and test the connection. The live-view panel discovers and
+shows locally available controls for:
+
+- Spotlight power and intensity
+- Siren start and stop
+- Privacy mode and status LED
+- Night-vision mode
+- Microphone and speaker volume
+- Camera reboot
+
+The driver supports legacy, AES-CBC, and newer TPAP/SPAKE2+ local transports.
+New TPAP firmware verifies a password derived from the TP-Link account password
+locally on the camera; this is usually different from the RTSP/ONVIF account.
+Supplying it does not grant PlainNVR cloud access, and the camera can remain
+blocked from the internet. The password is sent to the local helper over stdin,
+is never placed in process arguments, and is write-only through PlainNVR's API.
+
+The control API accepts only named operations implemented by PlainNVR. It does
+not expose a generic vendor-RPC endpoint. Targets must be literal private,
+loopback, or link-local IP addresses.
+
+### Optional apps and camera drivers
+
+Optional detection apps and camera drivers are cataloged separately in the
+[PlainNVR OS Apps repository](https://github.com/endless1233214/plainnvr-os-apps).
+The core stays small; an app reads a PlainNVR restream and posts typed events,
+while a driver provides isolated vendor capabilities. Apps do not receive the
+database, camera passwords, or Docker socket.
+
+Set `NVR_APP_TOKEN` to enable the authenticated app event endpoint:
+`POST /api/apps/events`. The token is separate from the viewer stream token.
+For an app to consume a go2rtc RTSP restream from another container, explicitly
+bind `NVR_GO2RTC_RTSP_HOST=0.0.0.0` on a trusted private network; the secure
+default remains loopback-only.
 
 PTZ zoom is configured separately from pan and tilt:
 

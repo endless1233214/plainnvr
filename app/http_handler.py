@@ -171,6 +171,15 @@ class NvrHandler(SimpleHTTPRequestHandler):
         if self.is_public_path(parsed):
             return True
 
+        if parsed.path.startswith("/api/apps/"):
+            if self.app.valid_app_auth(self):
+                return True
+            self.send_error_json(
+                HTTPStatus.UNAUTHORIZED,
+                "PlainNVR app token required.",
+            )
+            return False
+
         if parsed.path.startswith(
             (
                 "/ha/",
@@ -342,6 +351,27 @@ class NvrHandler(SimpleHTTPRequestHandler):
             self,
             self.app,
             camera_id,
+            payload,
+        )
+
+    def handle_camera_tapo(
+        self,
+        camera_id,
+        action,
+        payload=None,
+    ):
+        return http_api.handle_camera_tapo(
+            self,
+            self.app,
+            camera_id,
+            action,
+            payload,
+        )
+
+    def handle_app_event(self, payload):
+        return http_api.handle_app_event(
+            self,
+            self.app,
             payload,
         )
 

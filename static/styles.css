@@ -957,7 +957,8 @@ small,
 }
 
 .ptz-panel[hidden],
-.ptz-presets[hidden] {
+.ptz-presets[hidden],
+.tapo-panel[hidden] {
   display: none;
 }
 
@@ -992,6 +993,48 @@ small,
   grid-template-columns: minmax(130px, 1fr) auto;
   align-items: end;
   gap: 8px;
+}
+
+.tapo-panel {
+  display: grid;
+  gap: 11px;
+  border-bottom: 1px solid var(--line);
+  padding: 13px 17px;
+  background: var(--panel-soft);
+}
+
+.tapo-panel-heading,
+.tapo-actions,
+.tapo-values,
+.tapo-actions > span,
+.tapo-values > label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
+
+.tapo-panel-heading .muted {
+  flex: 1 1 220px;
+}
+
+.tapo-actions > span,
+.tapo-values > label {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 7px 9px;
+  background: var(--panel);
+  font-size: 12px;
+}
+
+.tapo-values input,
+.tapo-values select {
+  width: 86px;
+  min-height: 34px;
+}
+
+.tapo-panel button {
+  min-height: 34px;
 }
 
 /* Camera settings */

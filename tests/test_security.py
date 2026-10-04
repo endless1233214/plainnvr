@@ -12,6 +12,24 @@ from test_live_streaming import CapturedHandler
 
 
 class RequestSafetyTests(unittest.TestCase):
+    def test_app_auth_requires_the_dedicated_bearer_token(self):
+        with patch.object(server, "APP_TOKEN", "app-secret"):
+            self.assertTrue(
+                server.valid_app_auth(
+                    Mock(headers={"Authorization": "Bearer app-secret"})
+                )
+            )
+            self.assertFalse(
+                server.valid_app_auth(
+                    Mock(headers={"Authorization": "Bearer stream-secret"})
+                )
+            )
+            self.assertFalse(
+                server.valid_app_auth(
+                    Mock(headers={"Authorization": "Basic YWRtaW46cGFzcw=="})
+                )
+            )
+
     def test_rejects_oversized_body_before_read(self):
         handler = Mock(headers={'Content-Length': str(server.MAX_JSON_BODY_BYTES + 1)})
         with self.assertRaises(ValueError):
