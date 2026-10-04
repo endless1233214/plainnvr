@@ -15,6 +15,7 @@ Environment=NVR_DATA_DIR=/var/lib/plainnvr
 Environment=NVR_RECORDINGS_DIR=/var/lib/plainnvr/recordings
 Environment=NVR_STATIC_DIR=/opt/plainnvr/current/static
 Environment=GO2RTC_BIN=/opt/plainnvr/current/bin/go2rtc
+Environment=TAPOCTL_BIN=/opt/plainnvr/current/bin/plainnvr-tapoctl
 Environment=FFMPEG_BIN=/opt/plainnvr/current/ffmpeg/bin/ffmpeg
 Environment=FFPROBE_BIN=/opt/plainnvr/current/ffmpeg/bin/ffprobe
 ExecStartPre=/usr/bin/test -w /var/lib/plainnvr

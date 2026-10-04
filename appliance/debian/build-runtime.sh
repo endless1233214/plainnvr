@@ -69,6 +69,16 @@ cp "$repo_dir/build/go2rtc/go.mod" "$repo_dir/build/go2rtc/go.sum" "$work_dir/go
     done
 )
 
+# The local Tapo control API invokes this native helper. Keep it in the
+# appliance runtime rather than relying on the Docker image's /usr/local/bin.
+(
+    cd "$repo_dir/build/tapoctl"
+    export GOTOOLCHAIN=go1.27.1
+    go test ./...
+    CGO_ENABLED=0 go build -mod=readonly -trimpath \
+        -o "$release/bin/plainnvr-tapoctl" .
+)
+
 curl --fail --location --silent --show-error \
     https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz \
     -o "$work_dir/ffmpeg.tar.xz"
