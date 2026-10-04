@@ -1,0 +1,7 @@
+# Debian Installer's current trixie image uses the 6.12.107 ABI. Its live
+# installer launcher rejects a live kernel with a different ABI. Keep the
+# build-time kernel metapackages aligned while security remains enabled for
+# all other packages. build-iso.sh fails if Debian Installer changes ABI.
+Package: linux-image-amd64 linux-headers-amd64
+Pin: version 6.12.107-1
+Pin-Priority: 1001

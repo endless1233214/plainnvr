@@ -89,6 +89,14 @@ chmod +x config/hooks/live/*.hook.binary
 chmod +x config/includes.chroot/usr/lib/plainnvr/installer/session config/includes.chroot/usr/lib/plainnvr/installer/launch config/includes.chroot/usr/lib/plainnvr/installer/gparted-session config/includes.chroot/usr/lib/plainnvr/installer/prepare-media
 lb build
 test -s binary/live/filesystem.squashfs
+live_kernel=$(find binary/live -maxdepth 1 -name 'vmlinuz-*' -printf '%f\n' | sed -n 's/^vmlinuz-//p')
+installer_kernel=$(gzip -dc binary/install/initrd.gz | cpio -t 2>/dev/null |
+    sed -n 's#^usr/lib/modules/\([^/]*\).*#\1#p' | head -n 1)
+if [ -z "$live_kernel" ] || [ "$live_kernel" != "$installer_kernel" ]; then
+    echo "Live kernel ($live_kernel) and Debian Installer kernel ($installer_kernel) differ." >&2
+    echo "Update the installer kernel pin before distributing this ISO." >&2
+    exit 1
+fi
 for file in server.py storage.py seed-admin.py index.html; do
     unsquashfs -cat binary/live/filesystem.squashfs "usr/lib/plainnvr/setup/$file" |
         cmp - "$repo_dir/appliance/setup/$file"
