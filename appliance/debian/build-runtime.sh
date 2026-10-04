@@ -75,7 +75,7 @@ cp "$repo_dir/build/go2rtc/go.mod" "$repo_dir/build/go2rtc/go.sum" "$work_dir/go
     cd "$repo_dir/build/tapoctl"
     export GOTOOLCHAIN=go1.27.1
     go test ./...
-    CGO_ENABLED=0 go build -mod=readonly -trimpath \
+    CGO_ENABLED=0 go build -mod=readonly -trimpath -buildvcs=false \
         -o "$release/bin/plainnvr-tapoctl" .
 )
 
