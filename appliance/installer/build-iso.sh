@@ -25,7 +25,7 @@ case "$revision" in *[!0-9]*|'') exit 1 ;; esac
 case "$app_version" in *[!0-9A-Za-z.+~-]*|'') exit 1 ;; esac
 printf '%s\n' "$os_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'
 test "$app_version" = "$(cat "$repo_dir/VERSION")"
-for file in bin/go2rtc ffmpeg/bin/ffmpeg ffmpeg/bin/ffprobe kiosk/start.sh; do
+for file in bin/go2rtc bin/plainnvr-tapoctl ffmpeg/bin/ffmpeg ffmpeg/bin/ffprobe kiosk/start.sh; do
     test -x "$runtime/$file"
 done
 test -d "$runtime/licenses"

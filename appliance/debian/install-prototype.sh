@@ -23,7 +23,7 @@ version=$(cat "$runtime_dir/VERSION")
 case "$version" in
     *[!0-9A-Za-z.+~-]*|'') echo "Invalid runtime version" >&2; exit 1 ;;
 esac
-for binary in bin/go2rtc ffmpeg/bin/ffmpeg ffmpeg/bin/ffprobe; do
+for binary in bin/go2rtc bin/plainnvr-tapoctl ffmpeg/bin/ffmpeg ffmpeg/bin/ffprobe; do
     if [ ! -x "$runtime_dir/$binary" ]; then
         echo "Missing native runtime binary: $binary" >&2
         exit 1

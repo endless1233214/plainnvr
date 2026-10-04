@@ -18,6 +18,7 @@ fi
 for tool in curl sha256sum tar xz patch go make pkg-config gcc nasm; do
     command -v "$tool" >/dev/null || { echo "Missing build tool: $tool" >&2; exit 1; }
 done
+pkg-config --exists openssl || { echo "Missing OpenSSL development headers." >&2; exit 1; }
 
 output_dir=${1:-"$repo_dir/appliance/out/plainnvr-$version-amd64"}
 case "$output_dir" in
