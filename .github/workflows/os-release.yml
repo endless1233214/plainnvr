@@ -64,7 +64,9 @@ jobs:
                 /src/appliance/update/release.pem /src/release.key /src/bundle
             '
           test -s "bundle/plainnvr-os-${VERSION}-amd64.raucb"
-          sha256sum "bundle/plainnvr-os-${VERSION}-amd64.raucb" > bundle/SHA256SUMS
+          # The privileged builder owns bundle/, so write this sidecar in the
+          # runner-owned workspace while leaving the signed bundle untouched.
+          sha256sum "bundle/plainnvr-os-${VERSION}-amd64.raucb" > SHA256SUMS
 
       - name: Publish signed OS release
         env:
@@ -79,6 +81,6 @@ jobs:
             > release-notes.md
           gh release create "$TAG" \
             "bundle/plainnvr-os-${VERSION}-amd64.raucb" \
-            bundle/SHA256SUMS \
+            SHA256SUMS \
             --verify-tag --prerelease --title "PlainNVR OS $VERSION (heavy beta)" \
             --notes-file release-notes.md
