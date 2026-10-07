@@ -64,7 +64,9 @@ jobs:
                 /src/appliance/update/release.pem /src/release.key /src/bundle
             '
           test -s "bundle/plainnvr-os-${VERSION}-amd64.raucb"
-          sha256sum "bundle/plainnvr-os-${VERSION}-amd64.raucb" > bundle/SHA256SUMS
+          # The privileged builder owns bundle/, so write this sidecar in the
+          # runner-owned workspace while leaving the signed bundle untouched.
+          sha256sum "bundle/plainnvr-os-${VERSION}-amd64.raucb" > SHA256SUMS
 
       - name: Publish signed OS release
         env:
@@ -72,8 +74,13 @@ jobs:
           TAG: ${{ steps.release.outputs.tag }}
           VERSION: ${{ steps.release.outputs.version }}
         run: |
+          printf '%s\n' \
+            'HEAVY BETA — TESTING ONLY. Do not rely on this build for security-critical monitoring or irreplaceable recordings. Back up first; bugs, data loss, and reinstalls are possible.' \
+            '' \
+            'This signed A/B update is for PlainNVR OS installations using the two-slot disk layout. Use the Preview channel in Settings > Updates. Install only during a maintenance window and reboot when prompted.' \
+            > release-notes.md
           gh release create "$TAG" \
             "bundle/plainnvr-os-${VERSION}-amd64.raucb" \
-            bundle/SHA256SUMS \
-            --verify-tag --title "PlainNVR OS $VERSION" \
-            --generate-notes
+            SHA256SUMS \
+            --verify-tag --prerelease --title "PlainNVR OS $VERSION (heavy beta)" \
+            --notes-file release-notes.md
