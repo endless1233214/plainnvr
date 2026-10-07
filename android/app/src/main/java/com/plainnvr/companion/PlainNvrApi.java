@@ -6,9 +6,6 @@ import org.json.JSONObject;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.CookieHandler;
-import java.net.CookieManager;
-import java.net.CookiePolicy;
 import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.URL;
@@ -18,6 +15,7 @@ import java.util.Locale;
 /** Only endpoints already implemented by PlainNVR's http_api.py are used here. */
 final class PlainNvrApi {
     private final String origin;
+    private String sessionCookie = "";
 
     PlainNvrApi(String address) {
         String value = address.trim();
@@ -33,7 +31,6 @@ final class PlainNvrApi {
             throw new IllegalArgumentException("Enter a PlainNVR server address, without a path or credentials.");
         }
         origin = scheme + "://" + uri.getRawAuthority();
-        CookieHandler.setDefault(new CookieManager(null, CookiePolicy.ACCEPT_ALL));
     }
 
     String origin() { return origin; }
@@ -50,6 +47,7 @@ final class PlainNvrApi {
         connection.setReadTimeout(30000);
         connection.setRequestProperty("Accept", "application/json");
         connection.setUseCaches(false);
+        if (!sessionCookie.isEmpty()) connection.setRequestProperty("Cookie", sessionCookie);
         if (body != null) {
             connection.setDoOutput(true);
             connection.setRequestProperty("Content-Type", "application/json");
@@ -58,6 +56,13 @@ final class PlainNvrApi {
         }
         try {
             int code = connection.getResponseCode();
+            String setCookie = connection.getHeaderField("Set-Cookie");
+            if (setCookie != null) {
+                int semicolon = setCookie.indexOf(';');
+                String pair = (semicolon < 0 ? setCookie : setCookie.substring(0, semicolon)).trim();
+                int equals = pair.indexOf('=');
+                sessionCookie = equals >= 0 && equals == pair.length() - 1 ? "" : pair;
+            }
             InputStream stream = code >= 400 ? connection.getErrorStream() : connection.getInputStream();
             ByteArrayOutputStream output = new ByteArrayOutputStream();
             if (stream != null) {

@@ -5,7 +5,7 @@ android {
     compileSdk 37
 
     defaultConfig {
-        applicationId 'com.plainnvr.companion'
+        applicationId 'com.versarepair.plainnvr_companion'
         minSdk 26
         targetSdk 36
         versionCode 1
