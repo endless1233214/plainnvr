@@ -1,12 +1,12 @@
 # Build media dependencies from pinned source with an auditable dependency lock.
-FROM golang:1.27.1-alpine3.24 AS tapoctl-build
+FROM golang:1.27.2-alpine3.24 AS tapoctl-build
 WORKDIR /src
 COPY build/tapoctl/ ./
 RUN go test ./... \
     && go list -deps . > /compiled-packages.txt \
     && CGO_ENABLED=0 go build -mod=readonly -trimpath -o /plainnvr-tapoctl .
 
-FROM golang:1.27.1-alpine3.24 AS go2rtc-build
+FROM golang:1.27.2-alpine3.24 AS go2rtc-build
 ADD https://codeload.github.com/AlexxIT/go2rtc/tar.gz/refs/tags/v1.9.14 /tmp/go2rtc.tar.gz
 RUN echo "e3d59e553dfd0085889a2956281cfc0fd78bb7b4d6269d1c90c217d2ffcf2c7b  /tmp/go2rtc.tar.gz" | sha256sum -c - \
     && mkdir /src && tar -xzf /tmp/go2rtc.tar.gz -C /src --strip-components=1
@@ -33,7 +33,7 @@ RUN patch -p1 < /mov-seek-bounds.patch && sh /test-mov-seek-bounds.sh
 RUN sh /configure.sh
 
 FROM python:3.14-alpine3.24
-RUN apk add --no-cache ca-certificates tzdata libssl3 libcrypto3 \
+RUN apk add --no-cache 'zlib>=1.3.2-r1' ca-certificates tzdata libssl3 libcrypto3 \
     && python -m pip uninstall -y pip
 COPY --from=go2rtc-build /go2rtc /usr/local/bin/go2rtc
 COPY --from=tapoctl-build /plainnvr-tapoctl /usr/local/bin/plainnvr-tapoctl
