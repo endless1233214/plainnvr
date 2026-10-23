@@ -737,23 +737,38 @@ small,
   display: none;
 }
 
-.camera-picker-option {
-  display: flex;
-  min-height: 38px;
+.camera-picker-position {
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr);
+  min-height: 44px;
   align-items: center;
-  gap: 8px;
-  border-radius: 8px;
-  padding: 7px 8px;
-  cursor: pointer;
+  gap: 10px;
+  padding: 5px 7px;
 }
 
-.camera-picker-option:hover {
-  background: var(--panel-soft);
+.camera-picker-position span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
 }
 
-.camera-picker-option input {
-  width: auto;
-  min-height: 0;
+.camera-picker-position select {
+  width: 100%;
+  min-width: 0;
+}
+
+.wall-tile-unassigned {
+  display: grid;
+  min-height: 220px;
+  place-items: center;
+  background: var(--video-bg);
+}
+
+.wall-slot-empty {
+  max-width: 220px;
+  padding: 22px;
+  color: #aab2bd;
+  text-align: center;
 }
 
 .live-wall-panel {

@@ -49,6 +49,9 @@ test("multi-camera live wall and camera picker are present", () => {
   assert.match(html, /id=["']liveWall["']/);
   assert.match(html, /id=["']wallCameraPicker["']/);
   assert.match(html, /id=["']wallLayout["']/);
+  assert.match(ui, /Position \$\{index \+ 1\}/);
+  assert.match(ui, /Choose a camera for position \$\{index \+ 1\}/);
+  assert.match(ui, /next\[slotIndex\] = ["']["']/);
 });
 
 test("idle but available relays are not mislabeled as recovering", () => {
