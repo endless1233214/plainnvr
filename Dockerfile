@@ -1,12 +1,12 @@
 # Build media dependencies from pinned source with an auditable dependency lock.
-FROM golang:1.27.2-alpine3.24 AS tapoctl-build
+FROM golang:1.27.3-alpine3.24 AS tapoctl-build
 WORKDIR /src
 COPY build/tapoctl/ ./
 RUN go test ./... \
     && go list -deps . > /compiled-packages.txt \
     && CGO_ENABLED=0 go build -mod=readonly -trimpath -o /plainnvr-tapoctl .
 
-FROM golang:1.27.2-alpine3.24 AS go2rtc-build
+FROM golang:1.27.3-alpine3.24 AS go2rtc-build
 RUN apk add --no-cache curl \
     && curl --fail --location --retry 5 --retry-delay 2 --retry-all-errors \
       --output /tmp/go2rtc.tar.gz \
