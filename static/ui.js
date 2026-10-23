@@ -74,7 +74,9 @@
 
   function wallCapacity() {
     const value = el("wallLayout")?.value || "auto";
-    return value === "auto" ? 9 : Math.max(1, Number(value) || 4);
+    if (value !== "auto") return Math.max(1, Number(value) || 4);
+    const stored = storedWallIds();
+    return Math.min(9, Math.max(1, stored?.length || (state.cameras || []).length || 1));
   }
 
   function storedWallIds() {
@@ -82,24 +84,26 @@
     if (!raw) return null;
     try {
       const value = JSON.parse(raw);
-      return Array.isArray(value) ? value.map(String) : null;
+      return Array.isArray(value) ? value.map((id) => (id == null ? "" : String(id))) : null;
     } catch (_error) {
       return null;
     }
   }
 
-  function selectedWallIds() {
-    const available = new Set((state.cameras || []).map((camera) => camera.id));
+  function selectedWallSlots() {
+    const capacity = wallCapacity();
+    const available = new Set((state.cameras || []).map((camera) => String(camera.id)));
     const stored = storedWallIds();
-    if (stored !== null) return stored.filter((id) => available.has(id));
-    return (state.cameras || [])
+    const slots = stored !== null
+      ? stored.map((id) => (available.has(id) ? id : ""))
+      : (state.cameras || [])
       .filter((camera) => camera.enabled)
-      .map((camera) => camera.id)
-      .slice(0, 9);
+      .map((camera) => String(camera.id));
+    return [...slots.slice(0, capacity), ...Array(Math.max(0, capacity - slots.length)).fill("")];
   }
 
-  function saveWallIds(ids) {
-    safeStorageSet(wallCameraStorageKey, JSON.stringify(ids));
+  function saveWallSlots(slots) {
+    safeStorageSet(wallCameraStorageKey, JSON.stringify(slots));
   }
 
   function cameraState(camera) {
@@ -231,7 +235,7 @@
     const target = el("wallCameraPicker");
     if (!target) return;
 
-    const selected = new Set(selectedWallIds());
+    const slots = selectedWallSlots();
     target.innerHTML = "";
 
     if (!(state.cameras || []).length) {
@@ -239,23 +243,45 @@
       return;
     }
 
-    state.cameras.forEach((camera) => {
-      const option = document.createElement("label");
-      option.className = "camera-picker-option";
-      option.innerHTML = `
-        <input type="checkbox" value="${camera.id}" ${selected.has(camera.id) ? "checked" : ""} />
-        <span>${escapeHtml(camera.name)}</span>
-      `;
-      const checkbox = option.querySelector("input");
-      checkbox.addEventListener("change", () => {
-        const next = new Set(selectedWallIds());
-        if (checkbox.checked) next.add(camera.id);
-        else next.delete(camera.id);
-        saveWallIds([...next]);
+    slots.forEach((cameraId, index) => {
+      const row = document.createElement("label");
+      row.className = "camera-picker-position";
+      const title = document.createElement("span");
+      title.textContent = `Position ${index + 1}`;
+      const select = document.createElement("select");
+      select.setAttribute("aria-label", `Camera for position ${index + 1}`);
+      select.innerHTML = '<option value="">Empty</option>';
+      (state.cameras || []).forEach((camera) => {
+        const option = document.createElement("option");
+        option.value = String(camera.id);
+        option.textContent = camera.name;
+        option.selected = String(camera.id) === cameraId;
+        select.appendChild(option);
+      });
+      select.addEventListener("change", () => {
+        const next = selectedWallSlots();
+        const chosen = select.value;
+        if (chosen) {
+          next.forEach((id, slotIndex) => {
+            if (slotIndex !== index && id === chosen) next[slotIndex] = "";
+          });
+        }
+        next[index] = chosen;
+        saveWallSlots(next);
+        renderWallCameraPicker();
         renderLiveWall();
       });
-      target.appendChild(option);
+      row.append(title, select);
+      target.appendChild(row);
     });
+  }
+
+  function emptyWallTile(index) {
+    const tile = document.createElement("article");
+    tile.className = "wall-tile wall-tile-unassigned";
+    tile.dataset.wallSlot = String(index);
+    tile.innerHTML = `<div class="wall-slot-empty">Choose a camera for position ${index + 1}</div>`;
+    return tile;
   }
 
   function wallTile(camera) {
@@ -379,33 +405,17 @@
     const layout = el("wallLayout")?.value || "auto";
     wall.dataset.layout = layout;
 
-    const selected = new Set(selectedWallIds());
-    const cameras = (state.cameras || [])
-      .filter((camera) => selected.has(camera.id))
-      .slice(0, wallCapacity());
+    const cameras = new Map((state.cameras || []).map((camera) => [String(camera.id), camera]));
+    const slots = selectedWallSlots();
+    stopWallPlayers();
+    wall.innerHTML = "";
 
-    const keep = new Set(cameras.map((camera) => camera.id));
-    wall.querySelectorAll(".wall-tile").forEach((tile) => {
-      if (!keep.has(tile.dataset.cameraId)) {
-        tile.querySelector("plainnvr-live-player")?.stop?.();
-        tile.remove();
-      }
-    });
-    wall.querySelector(".wall-empty")?.remove();
-
-    if (!cameras.length) {
-      stopWallPlayers();
-      wall.innerHTML = '<div class="wall-empty">Choose one or more cameras from the Cameras menu above.</div>';
-      return;
-    }
-
-    cameras.forEach((camera) => {
-      let tile = wall.querySelector(`.wall-tile[data-camera-id="${CSS.escape(camera.id)}"]`);
-      if (!tile) {
-        tile = wallTile(camera);
-        wall.appendChild(tile);
-      }
-      syncWallTile(tile, camera);
+    slots.forEach((cameraId, index) => {
+      const camera = cameras.get(cameraId);
+      const tile = camera ? wallTile(camera) : emptyWallTile(index);
+      tile.dataset.wallSlot = String(index);
+      wall.appendChild(tile);
+      if (camera) syncWallTile(tile, camera);
     });
   }
 
@@ -447,6 +457,7 @@
     }
     el("wallLayout")?.addEventListener("change", () => {
       safeStorageSet(wallLayoutStorageKey, el("wallLayout").value);
+      renderWallCameraPicker();
       renderLiveWall();
     });
 
