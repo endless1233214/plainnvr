@@ -1,5 +1,6 @@
 #!/bin/sh
 set -eu
+umask 022
 
 # Build on Debian 13 amd64. This produces native binaries, not a container.
 repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
