@@ -11,6 +11,8 @@ key=$(realpath -e "$3")
 out=$(realpath -m "$4")
 test ! -e "$out"
 test -f "$root/usr/lib/plainnvr/update/VERSION"
+test -x "$root/usr/lib/plainnvr/update/boot.py"
+test -x "$root/usr/lib/plainnvr/update/hook.py"
 test ! -e "$root/etc/plainnvr/setup-complete"
 test ! -e "$root/etc/plainnvr/runtime.env"
 test ! -e "$root/etc/plainnvr/ab.json"
