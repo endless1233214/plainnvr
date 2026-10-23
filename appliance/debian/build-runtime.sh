@@ -48,7 +48,7 @@ tar -xzf "$work_dir/go2rtc.tar.gz" -C "$work_dir/go2rtc" --strip-components=1
 cp "$repo_dir/build/go2rtc/go.mod" "$repo_dir/build/go2rtc/go.sum" "$work_dir/go2rtc/"
 (
     cd "$work_dir/go2rtc"
-    export GOTOOLCHAIN=go1.27.2
+    export GOTOOLCHAIN=go1.27.3
     go mod download
     go mod verify
     CGO_ENABLED=0 go list -deps . > "$work_dir/go2rtc-deps.txt"
@@ -75,7 +75,7 @@ cp "$repo_dir/build/go2rtc/go.mod" "$repo_dir/build/go2rtc/go.sum" "$work_dir/go
 # appliance runtime rather than relying on the Docker image's /usr/local/bin.
 (
     cd "$repo_dir/build/tapoctl"
-    export GOTOOLCHAIN=go1.27.2
+    export GOTOOLCHAIN=go1.27.3
     go test ./...
     CGO_ENABLED=0 go build -mod=readonly -trimpath -buildvcs=false \
         -o "$release/bin/plainnvr-tapoctl" .
