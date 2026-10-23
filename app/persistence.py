@@ -13,6 +13,7 @@ LOG_LEVEL_ORDER = {
 APP_SETTING_DEFAULTS = {
     "home_assistant_enabled": False,
     "reduce_storage_writes": True,
+    "auto_delete_old_recordings": True,
     "log_level": "info",
 }
 
@@ -257,6 +258,7 @@ def get_app_settings(
             WHERE key IN (
                 'home_assistant_enabled',
                 'reduce_storage_writes',
+                'auto_delete_old_recordings',
                 'log_level'
             )
             """
@@ -294,6 +296,7 @@ def update_app_settings(
     for key in (
         "home_assistant_enabled",
         "reduce_storage_writes",
+        "auto_delete_old_recordings",
     ):
         if key in payload:
             settings[key] = setting_bool(

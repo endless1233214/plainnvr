@@ -1108,6 +1108,8 @@ class RecorderSupervisor(BaseRecorderSupervisor):
             retention_interval_seconds=RETENTION_INTERVAL_SECONDS,
             start_grace_seconds=RECORDER_START_GRACE_SECONDS,
             stale_seconds=RECORDER_STALE_SECONDS,
+            recordings_dir=RECORDINGS_DIR,
+            get_app_settings=get_app_settings,
         )
 
 
