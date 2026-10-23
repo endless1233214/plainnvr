@@ -1,0 +1,12 @@
+.gradle/
+.idea/
+build/
+app/build/
+app/release/
+gradle/gradle-daemon-jvm.properties
+local.properties
+*.iml
+*.jks
+*.keystore
+*.p12
+*.pfx
