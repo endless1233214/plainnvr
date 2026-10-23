@@ -8,6 +8,8 @@ const root = path.join(__dirname, "..");
 const html = fs.readFileSync(path.join(root, "static", "index.html"), "utf8");
 const app = fs.readFileSync(path.join(root, "static", "app.js"), "utf8");
 const ui = fs.readFileSync(path.join(root, "static", "ui.js"), "utf8");
+const osClient = fs.readFileSync(path.join(root, "static", "os-client.js"), "utf8");
+const applianceCss = fs.readFileSync(path.join(root, "static", "appliance.css"), "utf8");
 
 function ids(source) {
   return [...source.matchAll(/\bid=["']([^"']+)["']/g)].map((match) => match[1]);
@@ -62,6 +64,15 @@ test("idle but available relays are not mislabeled as recovering", () => {
 test("frontend scripts parse as JavaScript", () => {
   assert.doesNotThrow(() => new vm.Script(app, { filename: "app.js" }));
   assert.doesNotThrow(() => new vm.Script(ui, { filename: "ui.js" }));
+  assert.doesNotThrow(() => new vm.Script(osClient, { filename: "os-client.js" }));
+});
+
+test("appliance unlock gives visible password-entry feedback and a reveal control", () => {
+  assert.match(osClient, /id="os-unlock-password" type="password"/);
+  assert.match(osClient, /class="os-password-toggle"/);
+  assert.match(osClient, /character\$\{count === 1/);
+  assert.match(applianceCss, /caret-color:\s*#168b7f/);
+  assert.match(applianceCss, /-webkit-text-fill-color:\s*#17231f/);
 });
 
 test("ui controller is loaded after the existing app controller", () => {
