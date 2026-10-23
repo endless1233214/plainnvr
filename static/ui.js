@@ -407,15 +407,26 @@
 
     const cameras = new Map((state.cameras || []).map((camera) => [String(camera.id), camera]));
     const slots = selectedWallSlots();
-    stopWallPlayers();
-    wall.innerHTML = "";
-
     slots.forEach((cameraId, index) => {
       const camera = cameras.get(cameraId);
-      const tile = camera ? wallTile(camera) : emptyWallTile(index);
-      tile.dataset.wallSlot = String(index);
+      let tile = wall.querySelector(`.wall-tile[data-wall-slot="${index}"]`);
+      const matches = camera
+        ? tile?.dataset.cameraId === cameraId
+        : tile?.classList.contains("wall-tile-unassigned");
+      if (!matches) {
+        tile?.querySelector("plainnvr-live-player")?.stop?.();
+        tile?.remove();
+        tile = camera ? wallTile(camera) : emptyWallTile(index);
+        tile.dataset.wallSlot = String(index);
+      }
       wall.appendChild(tile);
       if (camera) syncWallTile(tile, camera);
+    });
+    wall.querySelectorAll(".wall-tile").forEach((tile) => {
+      if (Number(tile.dataset.wallSlot) >= slots.length) {
+        tile.querySelector("plainnvr-live-player")?.stop?.();
+        tile.remove();
+      }
     });
   }
 
