@@ -7,8 +7,11 @@ RUN go test ./... \
     && CGO_ENABLED=0 go build -mod=readonly -trimpath -o /plainnvr-tapoctl .
 
 FROM golang:1.27.2-alpine3.24 AS go2rtc-build
-ADD https://codeload.github.com/AlexxIT/go2rtc/tar.gz/refs/tags/v1.9.14 /tmp/go2rtc.tar.gz
-RUN echo "e3d59e553dfd0085889a2956281cfc0fd78bb7b4d6269d1c90c217d2ffcf2c7b  /tmp/go2rtc.tar.gz" | sha256sum -c - \
+RUN apk add --no-cache curl \
+    && curl --fail --location --retry 5 --retry-delay 2 --retry-all-errors \
+      --output /tmp/go2rtc.tar.gz \
+      https://codeload.github.com/AlexxIT/go2rtc/tar.gz/refs/tags/v1.9.14 \
+    && echo "e3d59e553dfd0085889a2956281cfc0fd78bb7b4d6269d1c90c217d2ffcf2c7b  /tmp/go2rtc.tar.gz" | sha256sum -c - \
     && mkdir /src && tar -xzf /tmp/go2rtc.tar.gz -C /src --strip-components=1
 WORKDIR /src
 COPY build/go2rtc/go.mod build/go2rtc/go.sum ./
@@ -21,9 +24,11 @@ COPY build/go2rtc/collect-licenses.sh /collect-licenses.sh
 RUN sh /collect-licenses.sh
 
 FROM alpine:3.24 AS ffmpeg-build
-RUN apk add --no-cache build-base nasm pkgconf openssl-dev
-ADD https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz /tmp/ffmpeg.tar.xz
-RUN echo "8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e  /tmp/ffmpeg.tar.xz" | sha256sum -c - \
+RUN apk add --no-cache build-base curl nasm pkgconf openssl-dev \
+    && curl --fail --location --retry 5 --retry-delay 2 --retry-all-errors \
+      --output /tmp/ffmpeg.tar.xz \
+      https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz \
+    && echo "8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e  /tmp/ffmpeg.tar.xz" | sha256sum -c - \
     && mkdir /src && tar -xJf /tmp/ffmpeg.tar.xz -C /src --strip-components=1
 WORKDIR /src
 COPY build/ffmpeg/configure.sh /configure.sh
