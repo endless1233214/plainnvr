@@ -308,7 +308,11 @@ class RecorderSupervisor:
         now = time.time()
         for camera in cameras:
             root = self.camera_dir(camera)
-            if not root.exists():
+            if (
+                not root.exists()
+                or root.is_symlink()
+                or root.parent.resolve() != self.recordings_dir.resolve()
+            ):
                 continue
             minimum_age = max(120, 2 * int(camera.get("segment_seconds") or 60))
             for path in root.glob("*.mp4"):
