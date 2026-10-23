@@ -54,6 +54,12 @@ test("multi-camera live wall and camera picker are present", () => {
   assert.match(ui, /next\[slotIndex\] = ["']["']/);
 });
 
+test("refresh explicitly restarts live players before reloading status", () => {
+  assert.match(app, /window\.plainNvrUi\?\.stopWallPlayers\?\.\(\)/);
+  assert.match(app, /if \(restartFocusedPlayer\) stopLiveMedia\(\)/);
+  assert.match(app, /addEventListener\(["']click["'], refreshStatus\)/);
+});
+
 test("idle but available relays are not mislabeled as recovering", () => {
   assert.match(ui, /relay\?\.available !== true \|\| relay\?\.media_state === ["']stalled["']/);
   assert.match(app, /relay\?\.available === true && relay\?\.media_state !== ["']stalled["']/);

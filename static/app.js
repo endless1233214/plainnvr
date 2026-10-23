@@ -832,6 +832,22 @@ async function loadStatus() {
   window.plainNvrUi?.render?.();
 }
 
+async function refreshStatus() {
+  const button = $("refreshStatus");
+  const restartFocusedPlayer = state.liveActive;
+  button.disabled = true;
+  button.textContent = "Refreshing…";
+  window.plainNvrUi?.stopWallPlayers?.();
+  if (restartFocusedPlayer) stopLiveMedia();
+  try {
+    await loadStatus();
+    if (restartFocusedPlayer) startLive();
+  } finally {
+    button.disabled = false;
+    button.textContent = "Refresh";
+  }
+}
+
 async function saveCamera(event) {
   event.preventDefault();
   maskRtspUrl();
@@ -1400,7 +1416,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
   $("readCameraTime").addEventListener("click", readCameraTime);
   $("setCameraTime").addEventListener("click", setCameraTime);
-  $("refreshStatus").addEventListener("click", loadStatus);
+  $("refreshStatus").addEventListener("click", refreshStatus);
   $("logoutButton").addEventListener("click", logout);
   $("loadSegments").addEventListener("click", loadSegments);
   $("userForm").addEventListener("submit", saveUser);
