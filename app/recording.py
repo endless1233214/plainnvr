@@ -1,7 +1,14 @@
 import os
+import shutil
+import sqlite3
 import subprocess
 import threading
 import time
+
+
+MIN_RECORDING_FREE_BYTES = 10 * 1024**3
+RECLAIM_BELOW_BYTES = 20 * 1024**3
+RECLAIM_TARGET_BYTES = 30 * 1024**3
 
 
 class RecorderSupervisor:
@@ -21,6 +28,8 @@ class RecorderSupervisor:
         retention_interval_seconds,
         start_grace_seconds,
         stale_seconds,
+        recordings_dir,
+        get_app_settings,
     ):
         self.relay = relay
         self.build_ffmpeg_command = build_ffmpeg_command
@@ -35,10 +44,14 @@ class RecorderSupervisor:
         self.retention_interval_seconds = retention_interval_seconds
         self.start_grace_seconds = start_grace_seconds
         self.stale_seconds = stale_seconds
+        self.recordings_dir = recordings_dir
+        self.get_app_settings = get_app_settings
 
         self.lock = threading.RLock()
         self.processes = {}
         self.paused_camera_ids = set()
+        self.storage_blocked = {}
+        self.auto_delete_old_recordings = True
         self.stop_event = threading.Event()
         self.last_retention = 0
         self.thread = threading.Thread(target=self.run, daemon=True)
@@ -85,6 +98,14 @@ class RecorderSupervisor:
                         "paused": True,
                     },
                 )
+            for camera_id, message in self.storage_blocked.items():
+                states.setdefault(camera_id, {
+                    "running": False,
+                    "pid": None,
+                    "started_at": None,
+                    "last_error": message,
+                    "paused": False,
+                })
             return states
 
     def restart(self, camera_id):
@@ -120,7 +141,14 @@ class RecorderSupervisor:
         self._terminate_entry(entry)
         self.add_event(camera_id, "info", "Recorder stopped.")
 
-    def ensure_running(self, camera):
+    def ensure_running(self, camera, *, storage_ready=None):
+        if storage_ready is None:
+            storage_ready = self._storage_ready(self.list_cameras())
+        if not storage_ready:
+            self.stop(camera["id"])
+            self._block_for_storage(camera["id"])
+            return
+        self.storage_blocked.pop(camera["id"], None)
         try:
             source_camera = self.relay.source_camera(camera)
         except (OSError, RuntimeError) as exc:
@@ -271,10 +299,70 @@ class RecorderSupervisor:
                 except OSError:
                     continue
 
+    def _free_bytes(self):
+        return shutil.disk_usage(self.recordings_dir).free
+
+    def _reclaim_oldest(self, cameras):
+        # Only completed MP4 segments in configured camera directories are eligible.
+        candidates = []
+        now = time.time()
+        for camera in cameras:
+            root = self.camera_dir(camera)
+            if not root.exists():
+                continue
+            minimum_age = max(120, 2 * int(camera.get("segment_seconds") or 60))
+            for path in root.glob("*.mp4"):
+                try:
+                    if path.is_symlink():
+                        continue
+                    modified = path.stat().st_mtime
+                    if now - modified >= minimum_age:
+                        candidates.append((modified, path))
+                except OSError:
+                    continue
+
+        for _, path in sorted(candidates):
+            if self._free_bytes() >= RECLAIM_TARGET_BYTES:
+                break
+            try:
+                path.unlink()
+            except OSError:
+                continue
+
+    def _storage_ready(self, cameras):
+        try:
+            free = self._free_bytes()
+            if free < RECLAIM_BELOW_BYTES:
+                try:
+                    self.auto_delete_old_recordings = self.get_app_settings().get(
+                        "auto_delete_old_recordings", True
+                    )
+                except (OSError, sqlite3.Error):
+                    # Keep the last known choice if SQLite is temporarily unavailable.
+                    pass
+            if free < RECLAIM_BELOW_BYTES and self.auto_delete_old_recordings:
+                self._reclaim_oldest(cameras)
+                free = self._free_bytes()
+            return free > MIN_RECORDING_FREE_BYTES
+        except OSError:
+            return False
+
+    def _block_for_storage(self, camera_id):
+        message = (
+            "Recording stopped: less than 10 GiB free on recording storage "
+            "or storage is unavailable. Free space or enable automatic "
+            "deletion of oldest recordings in Settings."
+        )
+        if self.storage_blocked.get(camera_id) != message:
+            self.storage_blocked[camera_id] = message
+            self.add_event(camera_id, "error", message)
+
     def run(self):
         while not self.stop_event.is_set():
             cameras = self.list_cameras()
             self.relay.reconcile(cameras)
+            self.run_retention(cameras)
+            storage_ready = self._storage_ready(cameras)
             active_ids = set()
 
             for camera in cameras:
@@ -285,8 +373,9 @@ class RecorderSupervisor:
                 )
                 if should_record:
                     active_ids.add(camera["id"])
-                    self.ensure_running(camera)
+                    self.ensure_running(camera, storage_ready=storage_ready)
                 else:
+                    self.storage_blocked.pop(camera["id"], None)
                     self.stop(camera["id"])
 
             with self.lock:
@@ -297,7 +386,6 @@ class RecorderSupervisor:
                     ):
                         self.stop(camera_id)
 
-            self.run_retention(cameras)
             self.stop_event.wait(self.scan_interval_seconds)
 
 

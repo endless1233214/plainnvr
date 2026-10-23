@@ -3,7 +3,7 @@ const state = {
   recorders: {},
   relays: {},
   go2rtc: {},
-  settings: { home_assistant_enabled: false, reduce_storage_writes: true, log_level: "info" },
+  settings: { home_assistant_enabled: false, reduce_storage_writes: true, auto_delete_old_recordings: true, log_level: "info" },
   users: [],
   username: "",
   coverage: {},
@@ -797,6 +797,7 @@ function renderUsers() {
 function renderSettings() {
   $("homeAssistantEnabled").checked = Boolean(state.settings.home_assistant_enabled);
   $("reduceStorageWrites").checked = state.settings.reduce_storage_writes !== false;
+  $("autoDeleteOldRecordings").checked = state.settings.auto_delete_old_recordings !== false;
   $("logLevel").value = String(state.settings.log_level || "info").toLowerCase();
 }
 
@@ -813,7 +814,7 @@ async function loadStatus() {
   state.recorders = data.recorders;
   state.relays = data.relays || {};
   state.go2rtc = data.go2rtc || {};
-  state.settings = data.settings || { home_assistant_enabled: false, reduce_storage_writes: true, log_level: "info" };
+  state.settings = data.settings || { home_assistant_enabled: false, reduce_storage_writes: true, auto_delete_old_recordings: true, log_level: "info" };
   state.users = data.users || [];
   state.username = data.username || "";
   state.streamToken = data.stream_token || "";
@@ -1024,6 +1025,7 @@ async function saveSettings(event) {
       body: JSON.stringify({
         home_assistant_enabled: $("homeAssistantEnabled").checked,
         reduce_storage_writes: $("reduceStorageWrites").checked,
+        auto_delete_old_recordings: $("autoDeleteOldRecordings").checked,
         log_level: $("logLevel").value,
       }),
     });
