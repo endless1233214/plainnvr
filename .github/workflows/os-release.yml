@@ -70,7 +70,8 @@ jobs:
           # The privileged builder owns bundle/, so write this sidecar in the
           # runner-owned workspace while leaving the signed bundle untouched.
           sha256sum "bundle/plainnvr-os-${VERSION}-amd64.raucb" "$iso" > SHA256SUMS
-          sha256sum "$iso" > "plainnvr-os-${VERSION}-installer${revision}-amd64.hybrid.iso.sha256"
+          (cd "$(dirname "$iso")" && sha256sum "$(basename "$iso")") \
+            > "plainnvr-os-${VERSION}-installer${revision}-amd64.hybrid.iso.sha256.txt"
 
       - name: Publish signed OS release
         env:
@@ -86,7 +87,7 @@ jobs:
           gh release create "$TAG" \
             "bundle/plainnvr-os-${VERSION}-amd64.raucb" \
             iso-build/plainnvr-os-${VERSION}-installer*-amd64.hybrid.iso \
-            plainnvr-os-${VERSION}-installer*-amd64.hybrid.iso.sha256 \
+            plainnvr-os-${VERSION}-installer*-amd64.hybrid.iso.sha256.txt \
             SHA256SUMS \
             --verify-tag --prerelease --title "PlainNVR OS $VERSION (heavy beta)" \
             --notes-file release-notes.md
