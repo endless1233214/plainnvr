@@ -402,6 +402,10 @@
     const wall = el("liveWall");
     if (!wall) return;
 
+    // The server-rendered placeholder is useful before camera state arrives,
+    // but it must not remain as an extra grid item once real slots render.
+    wall.querySelectorAll(".wall-empty").forEach((placeholder) => placeholder.remove());
+
     const layout = el("wallLayout")?.value || "auto";
     wall.dataset.layout = layout;
 

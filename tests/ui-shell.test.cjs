@@ -56,6 +56,13 @@ test("multi-camera live wall and camera picker are present", () => {
   assert.match(ui, /next\[slotIndex\] = ["']["']/);
 });
 
+test("live wall removes its initial loading placeholder before rendering slots", () => {
+  assert.match(
+    ui,
+    /wall\.querySelectorAll\(["']\.wall-empty["']\)\.forEach\(\(placeholder\) => placeholder\.remove\(\)\)/,
+  );
+});
+
 test("refresh explicitly restarts live players before reloading status", () => {
   assert.match(app, /window\.plainNvrUi\?\.stopWallPlayers\?\.\(\)/);
   assert.match(app, /if \(restartFocusedPlayer\) stopLiveMedia\(\)/);
