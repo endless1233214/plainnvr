@@ -1,0 +1,41 @@
+# Scheduled source/dependency and configuration scan. No builds or deployments.
+name: Security - vulnerability and secret scan
+
+on:
+  push:
+    branches: ['main']
+  pull_request:
+  schedule:
+    - cron: '33 9,21 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trivy-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    name: Trivy - CVEs, IaC and secrets
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout (read-only)
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Scan repository against current vulnerability data
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,misconfig,secret
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: 'false'
+          exit-code: '1'
+      - name: Explain security findings
+        if: ${{ failure() }}
+        run: echo 'Review the Trivy step for actionable findings; this workflow never changes dependencies or deploys software.'
