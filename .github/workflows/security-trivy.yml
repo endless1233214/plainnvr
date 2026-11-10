@@ -2,11 +2,9 @@
 name: Security - vulnerability and secret scan
 
 on:
-  push:
-    branches: ['main']
-  pull_request:
   schedule:
-    - cron: '33 9,21 * * *'
+    - cron: '0 7 * * *'
+      timezone: 'America/Detroit'
   workflow_dispatch:
 
 permissions:
