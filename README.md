@@ -251,6 +251,17 @@ PTZ zoom is configured separately from pan and tilt:
 Vendor drivers are explicit compatibility fallbacks, not general camera
 profiles.
 
+The optional [Victure driver package](https://github.com/endless1233214/plainnvr-os-apps)
+can run separately on a private container network or as a native PlainNVR OS
+service. Set `NVR_VICTURE_DRIVER_URL` to its private HTTP endpoint and
+`NVR_VICTURE_DRIVER_TOKEN_FILE` to the same bearer-token file used by the
+driver. When configured, both Victure modes and camera-clock requests go to
+the external service; a driver failure does not silently fall back to the
+in-process implementation. Existing installations continue using their
+current Victure settings until the external service is enabled. The optional
+package requires camera-specific DVRIP credentials and private literal camera
+IPs; see its README before migrating a camera.
+
 - **Victure Direct Stepper** supports compatible Victure/Alloca firmware that
   exposes the direct stepper helper. When **Control URL** is empty, PlainNVR
   derives the camera host from the RTSP URL and uses port `8088`. An explicit
