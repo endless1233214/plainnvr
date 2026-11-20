@@ -37,7 +37,7 @@ COPY build/ffmpeg/test-mov-seek-bounds.sh /test-mov-seek-bounds.sh
 RUN patch -p1 < /mov-seek-bounds.patch && sh /test-mov-seek-bounds.sh
 RUN sh /configure.sh
 
-FROM python:3.14-alpine3.24
+FROM python:3.15-alpine3.24
 RUN apk add --no-cache 'zlib>=1.3.2-r1' ca-certificates tzdata libssl3 libcrypto3 \
     && python -m pip uninstall -y pip
 COPY --from=go2rtc-build /go2rtc /usr/local/bin/go2rtc
